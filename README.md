@@ -52,3 +52,11 @@ Restart your shell; typing `sai how do I run tests?` now calls the wrapper, whic
 
 - The `FOR_CODING_AGENTS/sai.dart` file remains as a reference prototype—do not ship it; use the new Dart implementation instead.
 - Try `scripts/demo_requests.sh [count]` for a quick smoke run; it cycles through sample prompts, measures per-call time, and prints summary statistics.
+
+## rai (Rust TUI prototype)
+
+Alongside the Dart CLI, the repository now hosts a Ratatui-based experiment in `rai/` that mirrors the same LM workflow but offers a richer in-terminal selector.
+
+- Build it with `cargo build --release` inside `rai/` (Rust 1.90+ required); the binary is staged at `build/rai`.
+- Runtime configuration honors the existing `SAI_LM_*` variables plus a few extras (`RAI_SYSTEM_PROMPT`, `RAI_NO_CLIPBOARD`, `RAI_LOG`).
+- Invoke it the same way as `sai`, e.g. `rai "list hidden files"`, and use the highlighted menu to copy either the explanation or the recommended command back into your shell.

@@ -1,1 +1,10 @@
 .dart_tool
+.DS_Store
+
+# Rust artifacts
+rai/target/
+rai/Cargo.lock
+**/*.rs.bk
+
+# Generated binaries
+build/rai
