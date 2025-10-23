@@ -1,0 +1,17 @@
+name: sai
+description: Front-end CLI wrappers for the sai-core assistant.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+
+dependencies:
+  args: ^2.5.0
+  collection: ^1.18.0
+  glob: ^2.1.2
+  path: ^1.9.0
+
+dev_dependencies:
+  lints: ^3.0.0
+  test: ^1.25.0
