@@ -5,9 +5,9 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::tty::IsTty;
 use ratatui::DefaultTerminal;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Margin};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap};
 use std::panic::{self, AssertUnwindSafe};
 use tokio::sync::mpsc;
 
@@ -37,6 +37,16 @@ pub fn resolve_system_prompt(args: &CliArgs) -> String {
         .clone()
         .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string())
 }
+
+const COLOR_ACCENT: Color = Color::Rgb(108, 170, 255);
+const COLOR_ACCENT_DIM: Color = Color::Rgb(70, 110, 180);
+const COLOR_SUCCESS: Color = Color::Rgb(120, 240, 170);
+const COLOR_WARNING: Color = Color::Rgb(255, 210, 120);
+const COLOR_ERROR: Color = Color::Rgb(255, 120, 120);
+const COLOR_SURFACE: Color = Color::Rgb(26, 28, 32);
+const COLOR_SURFACE_ALT: Color = Color::Rgb(36, 39, 45);
+const COLOR_TEXT: Color = Color::Rgb(220, 225, 235);
+const COLOR_MUTED: Color = Color::Rgb(150, 155, 165);
 
 #[derive(Debug)]
 enum Phase {
@@ -480,97 +490,112 @@ impl App {
     }
 
     fn render_header(&self) -> Paragraph<'_> {
-        let (status_text, status_style) = match &self.phase {
-            Phase::Querying { .. } => (
-                format!("{} Thinking…", self.spinner.frame()),
-                Style::default()
-                    .fg(Color::Rgb(255, 165, 0))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Phase::Presenting => (
-                "Response ready — pick your answer.".to_string(),
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Phase::Error(_) => (
-                "Request failed".to_string(),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Phase::Idle => (
-                "Type a prompt below or pass it as args.".to_string(),
-                Style::default().fg(Color::Gray),
-            ),
+        let (icon, message, color) = match &self.phase {
+            Phase::Querying { .. } => (self.spinner.frame().to_string(), "Thinking…", COLOR_ACCENT),
+            Phase::Presenting => ("✔".to_string(), "Response ready", COLOR_SUCCESS),
+            Phase::Error(_) => ("✖".to_string(), "Request failed", COLOR_ERROR),
+            Phase::Idle => ("∙".to_string(), "Awaiting prompt", COLOR_MUTED),
         };
 
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                "rai",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" · "),
-            Span::styled(status_text, status_style),
-        ]))
+        let mut spans = Vec::new();
+        spans.push(Span::styled(
+            " RAI ",
+            Style::default()
+                .fg(COLOR_SURFACE)
+                .bg(COLOR_ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(icon, Style::default().fg(color)));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            message,
+            Style::default().fg(COLOR_TEXT).add_modifier(Modifier::BOLD),
+        ));
+
+        Paragraph::new(Line::from(spans))
+            .style(Style::default().fg(COLOR_TEXT))
+            .block(
+                Block::default()
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(COLOR_SURFACE_ALT)),
+            )
     }
 
     fn render_body(&self, _area: Rect) -> Paragraph<'_> {
         match (&self.phase, &self.response) {
             (Phase::Querying { prompt, .. }, _) => {
-                let content = format!("Prompt:\n{prompt}");
-                Paragraph::new(content)
-                    .block(Block::default().borders(Borders::ALL).title("Request"))
-                    .wrap(Wrap { trim: true })
-            }
-            (Phase::Presenting, Some(response)) => {
-                let explanation = response.structured.explanation.trim();
-                let command = response.structured.recommended_command.trim();
-                let mut lines = vec![
-                    Line::styled("Explanation", Style::default().fg(Color::Green)),
-                    Line::from(explanation),
+                let lines = vec![
+                    Line::styled(
+                        "Prompt",
+                        Style::default()
+                            .fg(COLOR_MUTED)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Line::default(),
+                    Line::from(prompt.as_str()),
                 ];
-                if !command.is_empty() {
-                    lines.push(Line::default());
-                    lines.push(Line::styled("Command", Style::default().fg(Color::Green)));
-                    lines.push(Line::from(command));
-                }
-
                 Paragraph::new(lines)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Model response"),
-                    )
+                    .style(Style::default().fg(COLOR_TEXT).bg(COLOR_SURFACE_ALT))
+                    .block(panel("Request"))
                     .wrap(Wrap { trim: true })
             }
             (Phase::Error(message), _) => Paragraph::new(message.as_str())
-                .block(Block::default().borders(Borders::ALL).title("Error"))
+                .style(Style::default().fg(COLOR_ERROR).bg(COLOR_SURFACE_ALT))
+                .block(panel("Error"))
                 .wrap(Wrap { trim: true }),
             (Phase::Idle, _) => {
-                let caret = Span::styled("▌", Style::default().fg(Color::Cyan));
+                let caret = Span::styled("▌", Style::default().fg(COLOR_ACCENT));
                 let buffer_span: Span<'_> = if self.input_buffer.is_empty() {
-                    Span::styled(" ", Style::default().fg(Color::DarkGray))
+                    Span::styled(" ", Style::default().fg(COLOR_MUTED))
                 } else {
                     Span::raw(self.input_buffer.as_str())
                 };
 
-                let instructions = Line::from(vec![Span::styled(
-                    "Type a prompt, hit Enter to send, Esc to quit.",
-                    Style::default().fg(Color::Gray),
-                )]);
-                let prompt_line = Line::from(vec![
-                    Span::styled("> ", Style::default().fg(Color::Cyan)),
-                    buffer_span,
-                    caret,
-                ]);
-                let lines = vec![instructions, Line::default(), prompt_line];
+                let lines = vec![
+                    Line::styled(
+                        "Quick tips",
+                        Style::default()
+                            .fg(COLOR_MUTED)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Line::from(vec![
+                        Span::styled("› ", Style::default().fg(COLOR_ACCENT)),
+                        Span::styled(
+                            "Type a prompt and press Enter.",
+                            Style::default().fg(COLOR_TEXT),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("› ", Style::default().fg(COLOR_ACCENT)),
+                        Span::styled(
+                            "Ctrl+C exits, Ctrl+U clears the line.",
+                            Style::default().fg(COLOR_TEXT),
+                        ),
+                    ]),
+                    Line::default(),
+                    Line::from(vec![
+                        Span::styled("› ", Style::default().fg(COLOR_MUTED)),
+                        Span::styled(
+                            "Example: rai \"list hidden files\"",
+                            Style::default().fg(COLOR_TEXT),
+                        ),
+                    ]),
+                    Line::default(),
+                    Line::from(vec![
+                        Span::styled("> ", Style::default().fg(COLOR_ACCENT)),
+                        buffer_span,
+                        caret,
+                    ]),
+                ];
 
                 Paragraph::new(lines)
-                    .block(Block::default().borders(Borders::ALL).title("Prompt"))
+                    .style(Style::default().fg(COLOR_TEXT).bg(COLOR_SURFACE_ALT))
+                    .block(panel("Prompt"))
                     .wrap(Wrap { trim: false })
             }
-            _ => Paragraph::new("Provide a prompt, e.g. `rai \"list hidden files\"`.")
+            _ => Paragraph::new("")
+                .style(Style::default().fg(COLOR_TEXT))
                 .wrap(Wrap { trim: true }),
         }
     }
@@ -582,29 +607,47 @@ impl App {
         };
 
         let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(5), Constraint::Length(9)])
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
             .split(area);
+
+        let body_area = layout[0].inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
 
         let explanation = response.structured.explanation.trim();
         let command = response.structured.recommended_command.trim();
         let mut lines = vec![
-            Line::styled("Explanation", Style::default().fg(Color::Green)),
-            Line::from(explanation),
+            Line::styled(
+                "Explanation",
+                Style::default()
+                    .fg(COLOR_MUTED)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::from(vec![
+                Span::styled("• ", Style::default().fg(COLOR_SUCCESS)),
+                Span::styled(explanation, Style::default().fg(COLOR_TEXT)),
+            ]),
         ];
         if !command.is_empty() {
             lines.push(Line::default());
-            lines.push(Line::styled("Command", Style::default().fg(Color::Green)));
-            lines.push(Line::from(command));
+            lines.push(Line::styled(
+                "Recommended command",
+                Style::default()
+                    .fg(COLOR_MUTED)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::from(vec![
+                Span::styled("$ ", Style::default().fg(COLOR_ACCENT)),
+                Span::styled(command, Style::default().fg(COLOR_TEXT)),
+            ]));
         }
         let response_widget = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Model response"),
-            )
+            .style(Style::default().fg(COLOR_TEXT).bg(COLOR_SURFACE_ALT))
+            .block(panel("Model response"))
             .wrap(Wrap { trim: true });
-        frame.render_widget(response_widget, layout[0]);
+        frame.render_widget(response_widget, body_area);
 
         let items: Vec<ListItem> = response
             .menu
@@ -613,39 +656,45 @@ impl App {
             .enumerate()
             .map(|(idx, entry)| {
                 let selected = idx == response.menu.selected;
-                let title = format!("  {}) {}", entry.shortcut, entry.title);
+                let bullet = if selected { "●" } else { "○" };
+                let title = format!("{} {}) {}", bullet, entry.shortcut, entry.title);
                 let preview = preview_text(&entry.preview);
-                let title_style = if selected {
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD)
-                } else if entry.enabled {
-                    Style::default().fg(Color::Cyan)
+                let base_style = if entry.enabled {
+                    Style::default().fg(COLOR_TEXT)
                 } else {
-                    Style::default().fg(Color::Gray)
+                    Style::default().fg(COLOR_MUTED)
                 };
-                let preview_style = if selected {
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::ITALIC)
-                } else if entry.enabled {
-                    Style::default().fg(Color::Green)
+                let text_style = if selected {
+                    base_style.fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::Gray)
+                    base_style
+                };
+                let hint_style = if selected {
+                    Style::default()
+                        .fg(COLOR_ACCENT)
+                        .add_modifier(Modifier::ITALIC)
+                } else {
+                    Style::default().fg(COLOR_MUTED)
                 };
                 ListItem::new(vec![
-                    Line::styled(title, title_style),
-                    Line::from(Span::styled(format!("     {preview}"), preview_style)),
+                    Line::styled(title, text_style),
+                    Line::from(Span::styled(format!("   {preview}"), hint_style)),
                 ])
             })
             .collect();
 
-        let menu = List::new(items).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Pick your answer"),
-        );
-        frame.render_widget(menu, layout[1]);
+        let menu_area = layout[1].inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+        let menu = List::new(items)
+            .block(panel("Pick an action"))
+            .highlight_style(
+                Style::default()
+                    .fg(COLOR_ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            );
+        frame.render_widget(menu, menu_area);
     }
 
     fn render_footer(&self) -> Paragraph<'_> {
@@ -653,20 +702,22 @@ impl App {
 
         if let Some(response) = self.response.as_ref() {
             let secs = response.elapsed.as_secs_f64();
+            spans.push(Span::styled("⏱ ", Style::default().fg(COLOR_ACCENT)));
             spans.push(Span::styled(
-                format!("[Total Response Time] {:.3}s", secs),
-                Style::default().fg(Color::Green),
+                format!("{:.3}s", secs),
+                Style::default().fg(COLOR_TEXT).add_modifier(Modifier::BOLD),
             ));
         }
 
         if let Some(feedback) = self.copy_feedback.as_ref() {
             if !spans.is_empty() {
-                spans.push(Span::raw("  ·  "));
+                spans.push(Span::raw("   "));
             }
             let color = match feedback.kind {
-                CopyKind::Success => Color::Green,
-                CopyKind::Warning => Color::Yellow,
+                CopyKind::Success => COLOR_SUCCESS,
+                CopyKind::Warning => COLOR_WARNING,
             };
+            spans.push(Span::styled("📋 ", Style::default().fg(color)));
             spans.push(Span::styled(
                 feedback.message.as_str(),
                 Style::default().fg(color),
@@ -678,38 +729,41 @@ impl App {
                 let usage_text = format_usage(usage);
                 if !usage_text.is_empty() {
                     if !spans.is_empty() {
-                        spans.push(Span::raw("  ·  "));
+                        spans.push(Span::raw("   "));
                     }
-                    spans.push(Span::styled(usage_text, Style::default().fg(Color::Gray)));
+                    spans.push(Span::styled(usage_text, Style::default().fg(COLOR_MUTED)));
                 }
             }
         }
 
         if matches!(self.phase, Phase::Presenting) {
             if !spans.is_empty() {
-                spans.push(Span::raw("  ·  "));
+                spans.push(Span::raw("   "));
             }
             spans.push(Span::styled(
-                "Use ↑/↓ or press 1/2/0 then Enter.",
-                Style::default().fg(Color::Gray),
+                "↑/↓ move · 1/2/0 choose · Enter confirm",
+                Style::default().fg(COLOR_MUTED),
             ));
         }
 
         if matches!(self.phase, Phase::Idle) {
             if !spans.is_empty() {
-                spans.push(Span::raw("  ·  "));
+                spans.push(Span::raw("   "));
             }
             spans.push(Span::styled(
                 "Tip: type punctuation freely, then Enter to send.",
-                Style::default().fg(Color::Gray),
+                Style::default().fg(COLOR_MUTED),
             ));
         }
 
         if spans.is_empty() {
-            spans.push(Span::raw("Esc/Ctrl+C to exit."));
+            spans.push(Span::styled(
+                "Esc/Ctrl+C to exit.",
+                Style::default().fg(COLOR_MUTED),
+            ));
         }
 
-        Paragraph::new(Line::from(spans))
+        Paragraph::new(Line::from(spans)).style(Style::default().fg(COLOR_TEXT))
     }
 }
 
@@ -924,4 +978,18 @@ fn preview_text(text: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+fn panel<'a>(title: &'a str) -> Block<'a> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(COLOR_ACCENT_DIM))
+        .style(Style::default().bg(COLOR_SURFACE_ALT))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(COLOR_MUTED)
+                .add_modifier(Modifier::BOLD),
+        ))
 }
