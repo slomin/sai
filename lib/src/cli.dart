@@ -7,6 +7,7 @@ import 'package:args/args.dart';
 import 'core_contract.dart';
 import 'context/context_collector.dart';
 import 'init/generator.dart';
+import 'lm_client.dart';
 
 typedef StdStream = IOSink;
 
@@ -171,6 +172,15 @@ class _SaiCli {
       historyProvided: invocation.historyProvided,
     );
 
+    final lmResponse = await _queryLocalModel(
+      collector: collector,
+      payload: payload,
+    );
+    if (lmResponse != null) {
+      io.stdOut.writeln(lmResponse);
+      return SaiExitCode.success;
+    }
+
     final process = await _startSaiCore();
     if (process == null) {
       return SaiExitCode.contextFailure;
@@ -333,6 +343,56 @@ class _SaiCli {
       history: historyLines,
       historyProvided: historyProvided,
     );
+  }
+
+  Future<String?> _queryLocalModel({
+    required SaiContextCollector collector,
+    required SaiContextPayload payload,
+  }) async {
+    final env = Platform.environment;
+    final config = SaiLmConfig.fromEnvironment(env);
+    if (!config.enabled) {
+      return null;
+    }
+
+    final snapshot = collector.collectDirectorySnapshot();
+    final directoryLines = <String>[];
+    if (snapshot.error != null) {
+      directoryLines.add('  (error: ${snapshot.error})');
+    } else if (snapshot.entries.isEmpty) {
+      directoryLines.add('  (none)');
+    } else {
+      for (final entry in snapshot.entries.take(20)) {
+        final suffix = entry.isDir ? '/' : '';
+        directoryLines.add('  - ${entry.name}$suffix');
+      }
+      if (snapshot.truncated) {
+        directoryLines.add('  - ...(truncated)');
+      }
+    }
+
+    final historyLines = payload.history.isEmpty
+        ? const ['  (none)']
+        : payload.history.map((line) => '  - $line').toList();
+
+    final cwdDescription = payload.cwd.isEmpty ? '(redacted)' : payload.cwd;
+    final prompt = payload.message.isEmpty
+        ? '(no direct prompt provided)'
+        : payload.message;
+
+    final sections = <String>[
+      'User prompt: $prompt',
+      '',
+      'Context for you (shell session):',
+      '- Working directory: $cwdDescription',
+      '- Recent commands (oldest -> newest):',
+      ...historyLines,
+      '- Visible files/folders in this directory (sample):',
+      ...directoryLines,
+    ];
+
+    final client = SaiLmClient(config: config);
+    return client.complete(userPrompt: sections.join('\n'));
   }
 }
 

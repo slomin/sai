@@ -6,7 +6,8 @@ void main() {
     test('returns zsh snippet', () {
       final snippet = generateShellInitSnippet(shell: 'zsh');
       expect(snippet, contains("local _sai_shell='zsh'"));
-      expect(snippet, contains('command sai --shell "\$_sai_shell"'));
+      expect(snippet, contains("alias sai='noglob sai'"));
+      expect(snippet, contains('noglob command sai --shell "\$_sai_shell"'));
       expect(snippet, contains('fc -ln -10'));
     });
 

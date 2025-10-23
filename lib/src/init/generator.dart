@@ -6,7 +6,9 @@ String generateShellInitSnippet({required String shell}) {
 
   const template = r'''
 # sai shell wrapper for {shell}
+alias sai='noglob sai'
 sai() {
+  setopt localoptions no_glob
   local _sai_shell='{shell}'
   local _sai_history_capture=""
   if command -v fc >/dev/null 2>&1; then
@@ -15,7 +17,7 @@ sai() {
   if [ -z "$_sai_history_capture" ]; then
     _sai_history_capture="$(history 10 2>/dev/null | sed 's/^ *[0-9][0-9]* *//')"
   fi
-  command sai --shell "$_sai_shell" --history-stdin -- "$@" <<< "$_sai_history_capture"
+  noglob command sai --shell "$_sai_shell" --history-stdin -- "$@" <<< "$_sai_history_capture"
 }
 ''';
 
