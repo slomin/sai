@@ -92,6 +92,7 @@ impl LmClient {
         Ok(CompletionResult {
             structured,
             raw_text: content,
+            raw_response: body,
             usage: parsed.usage,
         })
     }
@@ -101,6 +102,7 @@ impl LmClient {
 pub struct CompletionResult {
     pub structured: StructuredAnswer,
     pub raw_text: String,
+    pub raw_response: String,
     pub usage: Option<Usage>,
 }
 

@@ -12,6 +12,7 @@ use std::panic::{self, AssertUnwindSafe};
 use tokio::sync::mpsc;
 
 use crate::cli::CliArgs;
+use crate::context::compose_prompt;
 use crate::lm::{CompletionResult, LmClient, StructuredAnswer, Usage};
 use crate::spinner::Spinner;
 
@@ -262,10 +263,11 @@ impl App {
 
         let client = self.client.clone();
         let system_prompt = self.system_prompt.clone();
+        let payload = compose_prompt(prompt.trim());
 
         tokio::spawn(async move {
             let begin = Instant::now();
-            let outcome = client.complete(&system_prompt, &prompt).await;
+            let outcome = client.complete(&system_prompt, &payload).await;
             let elapsed = begin.elapsed();
             let event = match outcome {
                 Ok(data) => AppEvent::ModelSuccess { data, elapsed },
@@ -444,11 +446,8 @@ impl App {
         };
 
         let start = Instant::now();
-        match self
-            .client
-            .complete(&self.system_prompt, prompt.trim())
-            .await
-        {
+        let payload = compose_prompt(prompt.trim());
+        match self.client.complete(&self.system_prompt, &payload).await {
             Ok(result) => {
                 let mut output = result.structured.recommended_command.trim().to_string();
                 if output.is_empty() {

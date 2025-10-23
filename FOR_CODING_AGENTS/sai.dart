@@ -159,14 +159,12 @@ void main(List<String> args) async {
       env['SAI_LM_ENDPOINT'] ?? 'http://localhost:1234/v1/chat/completions';
   final lmEndpoint = Uri.tryParse(lmEndpointRaw);
   final lmModel = env['SAI_LM_MODEL'] ?? 'qwen3-vl-4b-instruct-mlx';
-  final lmSystemPrompt =
-      env['SAI_LM_SYSTEM_PROMPT'] ??
+  final lmSystemPrompt = env['SAI_LM_SYSTEM_PROMPT'] ??
       'You are a command line helper, your job is purely to reply questions about command line in zsh, you reply in super short sentences.';
   final lmTemperature = double.tryParse(env['SAI_LM_TEMPERATURE'] ?? '');
 
-  final userPromptForModel = userLine.isEmpty
-      ? '(no direct prompt provided)'
-      : userLine;
+  final userPromptForModel =
+      userLine.isEmpty ? '(no direct prompt provided)' : userLine;
   final historyForModel = historyTail.isEmpty
       ? '  (none)'
       : historyTail.map((line) => '  - $line').join('\n');
@@ -174,8 +172,7 @@ void main(List<String> args) async {
       ? '  (none)'
       : fileSample.map((name) => '  - $name').join('\n');
 
-  final modelUserMessage =
-      'User prompt: ' +
+  final modelUserMessage = 'User prompt: ' +
       userPromptForModel +
       '\n\nContext for you (zsh session):\n' +
       '- Working directory to run commands from: ' +
@@ -252,9 +249,8 @@ void main(List<String> args) async {
 
   final trimmedSuggestion = aiSuggestion?.trim();
   final usedLmSuggestion = (trimmedSuggestion?.isNotEmpty ?? false);
-  final suggestionText = usedLmSuggestion
-      ? trimmedSuggestion!
-      : fallbackSuggestion;
+  final suggestionText =
+      usedLmSuggestion ? trimmedSuggestion! : fallbackSuggestion;
   final elapsed = DateTime.now().difference(start);
 
   // If you ever need the context, keep it handy (not printed):
@@ -317,12 +313,15 @@ void main(List<String> args) async {
       .map((line) => line.trimRight())
       .where((line) => line.isNotEmpty)
       .toList();
-  final outputLabel = usedLmSuggestion
-      ? 'Sai output (LM Studio)'
-      : 'Sai output (fallback)';
+  final responseLines = <String>[
+    'Question: ${userLine.isEmpty ? '(none)' : userLine}',
+    ...suggestionLines,
+  ];
+  final outputLabel =
+      usedLmSuggestion ? 'Sai output (LM Studio)' : 'Sai output (fallback)';
   _emitBlock(
     outputLabel,
-    suggestionLines.isEmpty ? ['(none)'] : suggestionLines,
+    responseLines.isEmpty ? ['(none)'] : responseLines,
     useColor: useColor,
     labelAnsi: usedLmSuggestion ? _ansiGreenBold : _ansiMagentaBold,
     lineAnsi: usedLmSuggestion ? _ansiGreen : _ansiMagenta,

@@ -1,5 +1,6 @@
 mod app;
 mod cli;
+mod context;
 mod lm;
 mod spinner;
 
@@ -7,9 +8,11 @@ use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
+use serde_json::json;
 
 use crate::app::{App, AppExit, initial_prompt_from_args, resolve_system_prompt};
 use crate::cli::CliArgs;
+use crate::context::compose_prompt;
 use crate::lm::LmClient;
 
 #[tokio::main]
@@ -24,9 +27,15 @@ async fn main() -> Result<()> {
         args.model.clone(),
         args.api_key.clone(),
     )?;
+    let dump_debug = args.debug;
+
+    if args.debug {
+        run_debug_once(&args, &client, true).await?;
+        return Ok(());
+    }
 
     if args.debug_performance {
-        run_debug_performance(&args, &client).await?;
+        run_debug_once(&args, &client, dump_debug).await?;
         return Ok(());
     }
 
@@ -52,16 +61,32 @@ fn init_tracing(args: &CliArgs) {
         .try_init();
 }
 
-async fn run_debug_performance(args: &CliArgs, client: &LmClient) -> Result<()> {
+async fn run_debug_once(args: &CliArgs, client: &LmClient, dump_debug: bool) -> Result<()> {
     let prompt = initial_prompt_from_args(args)
         .ok_or_else(|| anyhow!("prompt required for --debug-performance mode"))?;
     let system_prompt = resolve_system_prompt(args);
+    let trimmed_prompt = prompt.trim().to_string();
+    let composed_prompt = compose_prompt(&trimmed_prompt);
+
+    if dump_debug {
+        let request_preview = json!({
+            "model": args.model,
+            "messages": [
+                {"role": "system", "content": system_prompt.clone()},
+                {"role": "user", "content": composed_prompt.clone()},
+            ],
+            "temperature": 0.2,
+        });
+        println!("--- Request --------------------------------------------------");
+        println!("{}", serde_json::to_string_pretty(&request_preview)?);
+        println!();
+    }
 
     let started = Instant::now();
-    let completion = client.complete(&system_prompt, prompt.trim()).await?;
+    let completion = client.complete(&system_prompt, &composed_prompt).await?;
     let elapsed = started.elapsed().as_secs_f64();
 
-    println!("Prompt: {}", prompt.trim());
+    println!("Prompt: {}", trimmed_prompt);
     println!();
     println!("Explanation:");
     for line in completion.structured.explanation.trim().lines() {
@@ -82,6 +107,15 @@ async fn run_debug_performance(args: &CliArgs, client: &LmClient) -> Result<()> 
             (usage.prompt_tokens, usage.completion_tokens)
         {
             println!("Usage: prompt {prompt_tokens} · completion {completion_tokens} tokens");
+        }
+    }
+
+    if dump_debug {
+        println!();
+        println!("--- Raw Response --------------------------------------------");
+        match serde_json::from_str::<serde_json::Value>(&completion.raw_response) {
+            Ok(value) => println!("{}", serde_json::to_string_pretty(&value)?),
+            Err(_) => println!("{}", completion.raw_response),
         }
     }
 

@@ -64,3 +64,5 @@ Alongside the Dart CLI, the repository now hosts a Ratatui-based experiment in `
 - Launching `rai` with no arguments drops you into an inline prompt so you can type questions (including `?` or `'`) without wrestling with shell quoting.
 - To avoid shell globbing, source `scripts/rai.zsh` (or create a similar alias in bash) which just runs the compiled binary with `noglob`.
 - Add `--debug-performance` to skip the UI and print a formatted explanation/command directly—ideal for scripts or the new `scripts/rai_demo_requests.sh` smoke test runner.
+- Use `--debug` to dump the full JSON request/response around a single prompt; perfect for inspecting what goes over the wire to LM Studio.
+- Every request automatically prepends context (recent history, current directory snapshot, and system diagnostics) so the model understands your environment.

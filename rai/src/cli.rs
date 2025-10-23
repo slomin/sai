@@ -37,6 +37,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub debug_performance: bool,
 
+    /// Dump request/response JSON for LLM calls.
+    #[arg(long)]
+    pub debug: bool,
+
     /// Prompt to send to the model. If omitted, rai reads from stdin.
     #[arg(value_hint = ValueHint::CommandString, trailing_var_arg=true)]
     pub prompt: Vec<String>,
