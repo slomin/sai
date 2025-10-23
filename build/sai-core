@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ $# -ge 1 && "$1" == "--version" ]]; then
+  echo "sai-core stub 0.0.0"
+  exit 0
+fi
+
+if [[ $# -ge 2 && "$1" == "--json" && "$2" == "@-" ]]; then
+  payload="$(cat)"
+  echo "sai-core stub reply"
+  echo "$payload" >/dev/null
+  exit 0
+fi
+
+echo "sai-core stub: unsupported args $*" >&2
+exit 0

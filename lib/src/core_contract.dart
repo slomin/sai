@@ -58,9 +58,8 @@ Future<void> writePayloadJson(
   required IOSink sink,
 }) async {
   final encoder = JsonEncoder.withIndent('  ');
-  sink
-    ..writeln(encoder.convert(payload.toJson()))
-    ..flush();
+  sink.writeln(encoder.convert(payload.toJson()));
+  await sink.flush();
 }
 
 /// Reads JSON payload from stdin.

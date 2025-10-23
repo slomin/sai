@@ -179,10 +179,42 @@ class _SaiCli {
     await writePayloadJson(payload, sink: process.stdin);
     await process.stdin.close();
 
-    unawaited(io.stdOut.addStream(process.stdout));
-    unawaited(io.stdErr.addStream(process.stderr));
+    final stdoutDone = Completer<void>();
+    final stderrDone = Completer<void>();
+
+    process.stdout.listen(
+      io.stdOut.add,
+      onDone: () {
+        if (!stdoutDone.isCompleted) {
+          stdoutDone.complete();
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!stdoutDone.isCompleted) {
+          stdoutDone.completeError(error, stackTrace);
+        }
+      },
+      cancelOnError: true,
+    );
+
+    process.stderr.listen(
+      io.stdErr.add,
+      onDone: () {
+        if (!stderrDone.isCompleted) {
+          stderrDone.complete();
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!stderrDone.isCompleted) {
+          stderrDone.completeError(error, stackTrace);
+        }
+      },
+      cancelOnError: true,
+    );
 
     final exitCode = await process.exitCode;
+    await stdoutDone.future;
+    await stderrDone.future;
     return exitCode;
   }
 
