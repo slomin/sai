@@ -12,7 +12,7 @@ class SaiSpinner {
   final String message;
   final Duration interval;
 
-  static const _frames = ['⠋', '⠙', '⠚', '⠞', '⠖', '⠦', '⠴', '⠲', '⠳', '⠓'];
+  static const _frames = ['|', '/', '-', '\\'];
 
   Timer? _timer;
   int _index = 0;
