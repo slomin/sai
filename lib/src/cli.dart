@@ -8,6 +8,7 @@ import 'core_contract.dart';
 import 'context/context_collector.dart';
 import 'init/generator.dart';
 import 'lm_client.dart';
+import 'ui/spinner.dart';
 
 typedef StdStream = IOSink;
 
@@ -172,10 +173,22 @@ class _SaiCli {
       historyProvided: invocation.historyProvided,
     );
 
+    SaiSpinner? spinner;
+    if (_shouldShowSpinner()) {
+      spinner = SaiSpinner(
+        sink: io.stdErr,
+        message: 'thinking',
+      )
+        ..start();
+    }
+
     final lmResponse = await _queryLocalModel(
       collector: collector,
       payload: payload,
     );
+
+    await spinner?.stop();
+
     if (lmResponse != null) {
       io.stdOut.writeln(lmResponse);
       return SaiExitCode.success;
@@ -383,16 +396,37 @@ class _SaiCli {
     final sections = <String>[
       'User prompt: $prompt',
       '',
-      'Context for you (shell session):',
-      '- Working directory: $cwdDescription',
-      '- Recent commands (oldest -> newest):',
+      'Context for you (zsh session):',
+      '- Working directory to run commands from: $cwdDescription',
+      '- Recent zsh commands (oldest -> newest):',
       ...historyLines,
       '- Visible files/folders in this directory (sample):',
       ...directoryLines,
+      '',
+      'Reply with the shortest helpful zsh command or tip (max two short sentences, no code fences).',
     ];
 
     final client = SaiLmClient(config: config);
     return client.complete(userPrompt: sections.join('\n'));
+  }
+
+  bool _shouldShowSpinner() {
+    final env = Platform.environment;
+    if (_isTruthy(env['SAI_NO_SPINNER'])) {
+      return false;
+    }
+    return stderr.hasTerminal;
+  }
+
+  static bool _isTruthy(String? value) {
+    if (value == null) {
+      return false;
+    }
+    final normalized = value.trim().toLowerCase();
+    return normalized == '1' ||
+        normalized == 'true' ||
+        normalized == 'yes' ||
+        normalized == 'on';
   }
 }
 
