@@ -24,8 +24,8 @@ async fn main() -> Result<()> {
     )?;
     let app = App::new(args, client);
 
-    if let AppExit::Print(output) = app.run().await? {
-        println!("{output}");
+    if let AppExit::Output { text } = app.run().await? {
+        println!("{text}");
     }
 
     Ok(())

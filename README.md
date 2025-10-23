@@ -48,7 +48,7 @@ Restart your shell; typing `sai how do I run tests?` now calls the wrapper, whic
 - Format and analyze via `dart format .` and `dart analyze`.
 - The codebase targets Dart `>=3.2.0`, macOS focused; future roadmap includes PowerShell/fish snippets and richer context.
 - LM Studio integration is on by default; adjust env vars above to point at a different local server. Disable the spinner with `SAI_NO_SPINNER=1` if you prefer silent mode.
-- The interactive selector injects the chosen text into your prompt using bracketed paste on capable terminals (iTerm, Kitty, Warp). When insertion isn’t possible, the selection is copied to the macOS clipboard unless `SAI_NO_CLIPBOARD=1`.
+- The interactive selector surfaces explanation/command choices and copies them to the macOS clipboard (unless `SAI_NO_CLIPBOARD=1`). If you want a convenience wrapper that simply forwards to the binary without glob expansion, source `scripts/rai.zsh`.
 
 - The `FOR_CODING_AGENTS/sai.dart` file remains as a reference prototype—do not ship it; use the new Dart implementation instead.
 - Try `scripts/demo_requests.sh [count]` for a quick smoke run; it cycles through sample prompts, measures per-call time, and prints summary statistics.
@@ -59,4 +59,6 @@ Alongside the Dart CLI, the repository now hosts a Ratatui-based experiment in `
 
 - Build it with `cargo build --release` inside `rai/` (Rust 1.90+ required); the binary is staged at `build/rai`.
 - Runtime configuration honors the existing `SAI_LM_*` variables plus a few extras (`RAI_SYSTEM_PROMPT`, `RAI_NO_CLIPBOARD`, `RAI_LOG`).
-- Invoke it the same way as `sai`, e.g. `rai "list hidden files"`, and use the highlighted menu to copy either the explanation or the recommended command back into your shell.
+- Invoke it the same way as `sai`, e.g. `rai "list hidden files"`, and use the highlighted menu to copy either the explanation or the recommended command.
+- Launching `rai` with no arguments drops you into an inline prompt so you can type questions (including `?` or `'`) without wrestling with shell quoting.
+- To avoid shell globbing, source `scripts/rai.zsh` (or create a similar alias in bash) which just runs the compiled binary with `noglob`.

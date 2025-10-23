@@ -1,12 +1,14 @@
 use std::io::Read;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::tty::IsTty;
+use ratatui::DefaultTerminal;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
-use ratatui::DefaultTerminal;
+use std::panic::{self, AssertUnwindSafe};
 use tokio::sync::mpsc;
 
 use crate::cli::CliArgs;
@@ -83,6 +85,12 @@ enum CopyKind {
 }
 
 #[derive(Debug)]
+enum ClipboardOutcome {
+    Copied,
+    Skipped,
+    Failed(String),
+}
+#[derive(Debug)]
 enum AppEvent {
     Input(Event),
     Tick,
@@ -95,7 +103,7 @@ enum AppEvent {
 
 pub enum AppExit {
     None,
-    Print(String),
+    Output { text: String },
 }
 
 pub struct App {
@@ -108,6 +116,7 @@ pub struct App {
     copy_feedback: Option<CopyStatus>,
     pending_prompt: Option<String>,
     exit_request: Option<AppExit>,
+    input_buffer: String,
 }
 
 impl App {
@@ -129,10 +138,68 @@ impl App {
             copy_feedback: None,
             pending_prompt,
             exit_request: None,
+            input_buffer: String::new(),
         }
     }
 
+    fn handle_idle_key(&mut self, key: KeyEvent, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('u') => self.input_buffer.clear(),
+                KeyCode::Char('w') => {
+                    let trimmed = self
+                        .input_buffer
+                        .trim_end_matches(|c: char| c.is_whitespace())
+                        .to_string();
+                    let without_word = trimmed
+                        .trim_end_matches(|c: char| !c.is_whitespace())
+                        .to_string();
+                    self.input_buffer = without_word;
+                }
+                KeyCode::Char('h') | KeyCode::Backspace => {
+                    self.input_buffer.pop();
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        match key.code {
+            KeyCode::Enter => {
+                let prompt = self.input_buffer.trim();
+                if !prompt.is_empty() {
+                    let prompt = prompt.to_string();
+                    self.input_buffer.clear();
+                    self.submit_prompt(prompt, tx.clone());
+                }
+            }
+            KeyCode::Esc => {
+                self.exit_request = Some(AppExit::None);
+            }
+            KeyCode::Char(c) => {
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
+                    self.input_buffer.push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                self.input_buffer.pop();
+            }
+            KeyCode::Delete => {
+                self.input_buffer.pop();
+            }
+            KeyCode::Tab => {}
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {}
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     pub async fn run(mut self) -> Result<AppExit> {
+        if !std::io::stdout().is_tty() {
+            return self.run_headless().await;
+        }
+
         let mut terminal = ratatui::init();
         let result = self.event_loop(&mut terminal).await;
         ratatui::restore();
@@ -215,7 +282,7 @@ impl App {
         Ok(())
     }
 
-    async fn handle_key(&mut self, key: KeyEvent, _tx: &mpsc::Sender<AppEvent>) -> Result<()> {
+    async fn handle_key(&mut self, key: KeyEvent, tx: &mpsc::Sender<AppEvent>) -> Result<()> {
         if matches!(key.code, KeyCode::Char('c')) && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.exit_request = Some(AppExit::None);
             return Ok(());
@@ -233,7 +300,7 @@ impl App {
                     self.exit_request = Some(AppExit::None);
                 }
             }
-            Phase::Idle => {}
+            Phase::Idle => self.handle_idle_key(key, tx)?,
         }
 
         Ok(())
@@ -285,14 +352,14 @@ impl App {
             None => return,
         };
 
-        let (text, message) = match selection.kind {
+        let (text, label) = match selection.kind {
             MenuKind::Explanation => {
                 let explanation = format!("# {}", response.structured.explanation.trim());
-                (explanation, "Copied explanation to clipboard.")
+                (explanation, "explanation")
             }
             MenuKind::Command => {
                 let command = response.structured.recommended_command.trim().to_owned();
-                (command, "Copied command to clipboard.")
+                (command, "command")
             }
             MenuKind::Cancel => {
                 self.exit_request = Some(AppExit::None);
@@ -301,16 +368,20 @@ impl App {
         };
 
         match self.copy_to_clipboard(&text) {
-            Ok(_) => {
-                self.copy_feedback = Some(CopyStatus::success(message));
+            ClipboardOutcome::Copied => {
+                self.copy_feedback =
+                    Some(CopyStatus::success(format!("Copied {label} to clipboard.")));
             }
-            Err(err) => {
+            ClipboardOutcome::Skipped => {
+                self.copy_feedback = Some(CopyStatus::success(format!("Prepared {label} output.")));
+            }
+            ClipboardOutcome::Failed(err) => {
                 let msg = format!("Clipboard unavailable: {err}");
                 self.copy_feedback = Some(CopyStatus::warning(msg));
             }
         }
 
-        self.exit_request = Some(AppExit::Print(text));
+        self.exit_request = Some(AppExit::None);
     }
 
     fn on_model_success(&mut self, data: CompletionResult, elapsed: Duration) {
@@ -324,16 +395,63 @@ impl App {
         self.spinner.reset();
     }
 
-    fn copy_to_clipboard(&self, text: &str) -> Result<()> {
+    fn copy_to_clipboard(&self, text: &str) -> ClipboardOutcome {
         if self.args.no_clipboard {
-            return Ok(());
+            return ClipboardOutcome::Skipped;
         }
 
-        let mut clipboard = arboard::Clipboard::new().context("failed to access clipboard")?;
-        clipboard
-            .set_text(text.to_owned())
-            .context("failed to copy text to clipboard")?;
-        Ok(())
+        let clipboard_result = panic::catch_unwind(AssertUnwindSafe(arboard::Clipboard::new));
+        let mut clipboard = match clipboard_result {
+            Ok(Ok(clipboard)) => clipboard,
+            Ok(Err(err)) => {
+                return ClipboardOutcome::Failed(format!("{err}"));
+            }
+            Err(_) => {
+                return ClipboardOutcome::Failed("clipboard backend panicked".to_string());
+            }
+        };
+
+        let set_result =
+            panic::catch_unwind(AssertUnwindSafe(|| clipboard.set_text(text.to_owned())));
+
+        match set_result {
+            Ok(Ok(())) => ClipboardOutcome::Copied,
+            Ok(Err(err)) => ClipboardOutcome::Failed(format!("{err}")),
+            Err(_) => ClipboardOutcome::Failed("clipboard backend panicked".to_string()),
+        }
+    }
+
+    async fn run_headless(&mut self) -> Result<AppExit> {
+        let prompt = if let Some(pending) = self.pending_prompt.take() {
+            pending
+        } else if let Some(from_args) = derive_initial_prompt(&self.args) {
+            from_args
+        } else {
+            return Ok(AppExit::None);
+        };
+
+        let start = Instant::now();
+        match self
+            .client
+            .complete(&self.system_prompt, prompt.trim())
+            .await
+        {
+            Ok(result) => {
+                let mut output = result.structured.recommended_command.trim().to_string();
+                if output.is_empty() {
+                    output = format!("# {}", result.structured.explanation.trim());
+                }
+                eprintln!(
+                    "[Total Response Time] {:.3}s",
+                    start.elapsed().as_secs_f64()
+                );
+                Ok(AppExit::Output { text: output })
+            }
+            Err(err) => {
+                eprintln!("Error: {err}");
+                Ok(AppExit::None)
+            }
+        }
     }
 
     fn render(&mut self, frame: &mut Frame) {
@@ -377,7 +495,7 @@ impl App {
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
             Phase::Idle => (
-                "Enter a prompt to begin.".to_string(),
+                "Type a prompt below or pass it as args.".to_string(),
                 Style::default().fg(Color::Gray),
             ),
         };
@@ -426,6 +544,29 @@ impl App {
             (Phase::Error(message), _) => Paragraph::new(message.as_str())
                 .block(Block::default().borders(Borders::ALL).title("Error"))
                 .wrap(Wrap { trim: true }),
+            (Phase::Idle, _) => {
+                let caret = Span::styled("▌", Style::default().fg(Color::Cyan));
+                let buffer_span: Span<'_> = if self.input_buffer.is_empty() {
+                    Span::styled(" ", Style::default().fg(Color::DarkGray))
+                } else {
+                    Span::raw(self.input_buffer.as_str())
+                };
+
+                let instructions = Line::from(vec![Span::styled(
+                    "Type a prompt, hit Enter to send, Esc to quit.",
+                    Style::default().fg(Color::Gray),
+                )]);
+                let prompt_line = Line::from(vec![
+                    Span::styled("> ", Style::default().fg(Color::Cyan)),
+                    buffer_span,
+                    caret,
+                ]);
+                let lines = vec![instructions, Line::default(), prompt_line];
+
+                Paragraph::new(lines)
+                    .block(Block::default().borders(Borders::ALL).title("Prompt"))
+                    .wrap(Wrap { trim: false })
+            }
             _ => Paragraph::new("Provide a prompt, e.g. `rai \"list hidden files\"`.")
                 .wrap(Wrap { trim: true }),
         }
@@ -547,6 +688,16 @@ impl App {
             }
             spans.push(Span::styled(
                 "Use ↑/↓ or press 1/2/0 then Enter.",
+                Style::default().fg(Color::Gray),
+            ));
+        }
+
+        if matches!(self.phase, Phase::Idle) {
+            if !spans.is_empty() {
+                spans.push(Span::raw("  ·  "));
+            }
+            spans.push(Span::styled(
+                "Tip: type punctuation freely, then Enter to send.",
                 Style::default().fg(Color::Gray),
             ));
         }

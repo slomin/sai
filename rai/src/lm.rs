@@ -36,6 +36,7 @@ impl LmClient {
 
         let client = Client::builder()
             .default_headers(headers)
+            .no_proxy()
             .timeout(Duration::from_secs(120))
             .build()
             .context("failed to build HTTP client")?;
