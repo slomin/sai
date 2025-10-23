@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'ansi.dart';
+
 class SaiSpinner {
   SaiSpinner({
     required this.sink,
-    this.message = 'thinking',
+    this.message = 'Sai thinking…',
     this.interval = const Duration(milliseconds: 120),
   });
 
@@ -12,7 +14,18 @@ class SaiSpinner {
   final String message;
   final Duration interval;
 
-  static const _frames = ['|', '/', '-', '\\'];
+  static const List<String> _frames = [
+    '⠋',
+    '⠙',
+    '⠹',
+    '⠸',
+    '⠼',
+    '⠴',
+    '⠦',
+    '⠧',
+    '⠇',
+    '⠏',
+  ];
 
   Timer? _timer;
   int _index = 0;
@@ -24,7 +37,7 @@ class SaiSpinner {
     _timer = Timer.periodic(interval, (_) {
       final frame = _frames[_index % _frames.length];
       _index++;
-      final text = '$frame $message...';
+      final text = Ansi.wrap('$frame $message', Ansi.orange);
       sink
         ..write('\r$text')
         ..flush();

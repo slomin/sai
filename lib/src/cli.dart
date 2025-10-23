@@ -8,6 +8,7 @@ import 'core_contract.dart';
 import 'context/context_collector.dart';
 import 'init/generator.dart';
 import 'lm_client.dart';
+import 'ui/ansi.dart';
 import 'ui/spinner.dart';
 
 typedef StdStream = IOSink;
@@ -173,11 +174,12 @@ class _SaiCli {
       historyProvided: invocation.historyProvided,
     );
 
+    final start = DateTime.now();
+
     SaiSpinner? spinner;
     if (_shouldShowSpinner()) {
       spinner = SaiSpinner(
         sink: io.stdErr,
-        message: 'thinking',
       )
         ..start();
     }
@@ -190,7 +192,10 @@ class _SaiCli {
     await spinner?.stop();
 
     if (lmResponse != null) {
-      io.stdOut.writeln(lmResponse);
+      final duration = DateTime.now().difference(start);
+      io.stdOut
+        ..writeln(Ansi.wrap(lmResponse, Ansi.green))
+        ..writeln(_formatTiming(duration));
       return SaiExitCode.success;
     }
 
@@ -238,6 +243,8 @@ class _SaiCli {
     final exitCode = await process.exitCode;
     await stdoutDone.future;
     await stderrDone.future;
+    final duration = DateTime.now().difference(start);
+    io.stdOut.writeln(_formatTiming(duration));
     return exitCode;
   }
 
@@ -427,6 +434,11 @@ class _SaiCli {
         normalized == 'true' ||
         normalized == 'yes' ||
         normalized == 'on';
+  }
+
+  String _formatTiming(Duration duration) {
+    final seconds = duration.inMilliseconds / 1000.0;
+    return '[Total Response Time] ${seconds.toStringAsFixed(3)}s';
   }
 }
 
