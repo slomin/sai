@@ -58,7 +58,9 @@ Restart your shell; typing `sai how do I run tests?` now calls the wrapper, whic
 Alongside the Dart CLI, the repository now hosts a Ratatui-based experiment in `rai/` that mirrors the same LM workflow but offers a richer in-terminal selector.
 
 - Build it with `cargo build --release` inside `rai/` (Rust 1.90+ required); the binary is staged at `build/rai`.
+- After each build, the helper script runs `codesign --force --sign - build/rai` so macOS trusts the CLI (the ad-hoc signature is enough for local use; replace `-` with a real identity if you have one).
 - Runtime configuration honors the existing `SAI_LM_*` variables plus a few extras (`RAI_SYSTEM_PROMPT`, `RAI_NO_CLIPBOARD`, `RAI_LOG`).
 - Invoke it the same way as `sai`, e.g. `rai "list hidden files"`, and use the highlighted menu to copy either the explanation or the recommended command.
 - Launching `rai` with no arguments drops you into an inline prompt so you can type questions (including `?` or `'`) without wrestling with shell quoting.
 - To avoid shell globbing, source `scripts/rai.zsh` (or create a similar alias in bash) which just runs the compiled binary with `noglob`.
+- Add `--debug-performance` to skip the UI and print a formatted explanation/command directly—ideal for scripts or the new `scripts/rai_demo_requests.sh` smoke test runner.

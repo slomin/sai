@@ -32,6 +32,12 @@ Example response:
 }
 "#;
 
+pub fn resolve_system_prompt(args: &CliArgs) -> String {
+    args.system_prompt
+        .clone()
+        .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string())
+}
+
 #[derive(Debug)]
 enum Phase {
     Idle,
@@ -121,12 +127,9 @@ pub struct App {
 
 impl App {
     pub fn new(args: CliArgs, client: LmClient) -> Self {
-        let system_prompt = args
-            .system_prompt
-            .clone()
-            .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string());
+        let system_prompt = resolve_system_prompt(&args);
 
-        let pending_prompt = derive_initial_prompt(&args);
+        let pending_prompt = initial_prompt_from_args(&args);
 
         Self {
             args,
@@ -424,7 +427,7 @@ impl App {
     async fn run_headless(&mut self) -> Result<AppExit> {
         let prompt = if let Some(pending) = self.pending_prompt.take() {
             pending
-        } else if let Some(from_args) = derive_initial_prompt(&self.args) {
+        } else if let Some(from_args) = initial_prompt_from_args(&self.args) {
             from_args
         } else {
             return Ok(AppExit::None);
@@ -746,7 +749,7 @@ fn spawn_tick_timer(tx: mpsc::Sender<AppEvent>) {
     });
 }
 
-fn derive_initial_prompt(args: &CliArgs) -> Option<String> {
+pub fn initial_prompt_from_args(args: &CliArgs) -> Option<String> {
     if !args.prompt.is_empty() {
         return Some(args.prompt.join(" "));
     }

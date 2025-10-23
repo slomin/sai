@@ -33,6 +33,10 @@ pub struct CliArgs {
     #[arg(long, env = "RAI_LOG", value_hint = ValueHint::Other)]
     pub log_filter: Option<String>,
 
+    /// Print formatted output and skip interactive UI.
+    #[arg(long)]
+    pub debug_performance: bool,
+
     /// Prompt to send to the model. If omitted, rai reads from stdin.
     #[arg(value_hint = ValueHint::CommandString, trailing_var_arg=true)]
     pub prompt: Vec<String>,
