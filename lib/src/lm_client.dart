@@ -67,6 +67,61 @@ class SaiLmConfig {
   }
 }
 
+class SaiModelResponse {
+  SaiModelResponse({
+    this.explanation,
+    this.recommendedCommand,
+    this.rawText,
+  });
+
+  factory SaiModelResponse.fromContent(String content) {
+    final cleaned = _stripCodeFence(content.trim());
+    try {
+      final decoded = jsonDecode(cleaned);
+      if (decoded is Map<String, Object?>) {
+        final explanation = decoded['explanation'];
+        final command = decoded['recommended_command'];
+        if (explanation is String && command is String) {
+          return SaiModelResponse(
+            explanation: explanation.trim(),
+            recommendedCommand: command.trim(),
+            rawText: content.trim(),
+          );
+        }
+      }
+    } catch (_) {
+      // fall through to raw text
+    }
+    return SaiModelResponse(rawText: content.trim());
+  }
+
+  final String? explanation;
+  final String? recommendedCommand;
+  final String? rawText;
+
+  bool get hasStructured =>
+      explanation != null &&
+      explanation!.isNotEmpty &&
+      recommendedCommand != null &&
+      recommendedCommand!.isNotEmpty;
+
+  String get displayText =>
+      rawText?.isNotEmpty == true ? rawText! : (explanation ?? '');
+
+  static String _stripCodeFence(String text) {
+    final trimmed = text.trim();
+    if (trimmed.startsWith('```') && trimmed.endsWith('```')) {
+      final withoutFence = trimmed.substring(3, trimmed.length - 3);
+      final newlineIndex = withoutFence.indexOf('\n');
+      if (newlineIndex >= 0) {
+        return withoutFence.substring(newlineIndex + 1).trim();
+      }
+      return withoutFence.trim();
+    }
+    return trimmed;
+  }
+}
+
 class SaiLmClient {
   SaiLmClient({
     required this.config,
@@ -76,7 +131,7 @@ class SaiLmClient {
   final SaiLmConfig config;
   final http.Client? _httpClient;
 
-  Future<String?> complete({
+  Future<SaiModelResponse?> complete({
     required String userPrompt,
   }) async {
     final client = _httpClient ?? http.Client();
@@ -111,7 +166,11 @@ class SaiLmClient {
       }
 
       final data = jsonDecode(response.body);
-      return _extractMessage(data);
+      final content = _extractMessage(data);
+      if (content == null || content.trim().isEmpty) {
+        return null;
+      }
+      return SaiModelResponse.fromContent(content);
     } on TimeoutException {
       return null;
     } on http.ClientException {

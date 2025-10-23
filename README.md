@@ -21,7 +21,7 @@ Restart your shell; typing `sai how do I run tests?` now calls the wrapper, whic
 
 - `sai init <zsh|bash>` – print the shell function that captures history and delegates to the binary (use `eval "$(sai init zsh)"` in `~/.zshrc`).
 - `sai doctor` – check that `sai-core` is reachable and that the current directory is readable. Non-zero exit codes highlight actionable failures.
-- `sai ...` – free-form natural language; while the spinner shows activity the Dart CLI gathers context, redacts secrets, queries LM Studio, and only falls back to `sai-core` if needed.
+- `sai ...` – free-form natural language; while the spinner shows activity the Dart CLI gathers context, redacts secrets, queries LM Studio, and only falls back to `sai-core` if needed. Structured LM replies surface in an interactive selector so you can paste the explanation or command straight into your prompt.
 
 ## Environment knobs
 
@@ -38,6 +38,8 @@ Restart your shell; typing `sai how do I run tests?` now calls the wrapper, whic
 | `SAI_LM_TIMEOUT_SECONDS` | HTTP timeout for the LLM call | `15` |
 | `SAI_LM_DISABLED` | Set to `1`/`true` to skip HTTP calls and rely on `sai-core` | _(unset)_ |
 | `SAI_NO_SPINNER` | Set to disable the thinking spinner | _(unset)_ |
+| `SAI_NO_MENU` | Disable the interactive explanation/command selector | _(unset)_ |
+| `SAI_NO_CLIPBOARD` | Skip copying selections to the clipboard fallback | _(unset)_ |
 | `SAI_HISTORY_FILE` | Fallback history file when wrapper stdout is absent | _(unset)_ |
 
 ## Development
@@ -46,5 +48,7 @@ Restart your shell; typing `sai how do I run tests?` now calls the wrapper, whic
 - Format and analyze via `dart format .` and `dart analyze`.
 - The codebase targets Dart `>=3.2.0`, macOS focused; future roadmap includes PowerShell/fish snippets and richer context.
 - LM Studio integration is on by default; adjust env vars above to point at a different local server. Disable the spinner with `SAI_NO_SPINNER=1` if you prefer silent mode.
+- The interactive selector injects the chosen text into your prompt using bracketed paste on capable terminals (iTerm, Kitty, Warp). When insertion isn’t possible, the selection is copied to the macOS clipboard unless `SAI_NO_CLIPBOARD=1`.
 
-The `FOR_CODING_AGENTS/sai.dart` file remains as a reference prototype—do not ship it; use the new Dart implementation instead.
+- The `FOR_CODING_AGENTS/sai.dart` file remains as a reference prototype—do not ship it; use the new Dart implementation instead.
+- Try `scripts/demo_requests.sh [count]` for a quick smoke run; it cycles through sample prompts, measures per-call time, and prints summary statistics.

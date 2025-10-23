@@ -145,7 +145,8 @@ class _SaiCli {
       }).join(', ');
       sb.writeln('  directory sample: ${sample.isEmpty ? '(empty)' : sample}');
       if (snapshot.truncated) {
-        sb.writeln('  directory sample truncated after ${snapshot.entries.length} entries');
+        sb.writeln(
+            '  directory sample truncated after ${snapshot.entries.length} entries');
       }
     }
 
@@ -180,8 +181,7 @@ class _SaiCli {
     if (_shouldShowSpinner()) {
       spinner = SaiSpinner(
         sink: io.stdErr,
-      )
-        ..start();
+      )..start();
     }
 
     final lmResponse = await _queryLocalModel(
@@ -193,10 +193,13 @@ class _SaiCli {
 
     if (lmResponse != null) {
       final duration = DateTime.now().difference(start);
-      io.stdOut
-        ..writeln(Ansi.wrap(lmResponse, Ansi.green))
-        ..writeln(_formatTiming(duration));
-      return SaiExitCode.success;
+      final exitCode = await _handleModelResponse(
+        response: lmResponse,
+        duration: duration,
+      );
+      if (exitCode != null) {
+        return exitCode;
+      }
     }
 
     final process = await _startSaiCore();
@@ -365,7 +368,7 @@ class _SaiCli {
     );
   }
 
-  Future<String?> _queryLocalModel({
+  Future<SaiModelResponse?> _queryLocalModel({
     required SaiContextCollector collector,
     required SaiContextPayload payload,
   }) async {
@@ -410,7 +413,11 @@ class _SaiCli {
       '- Visible files/folders in this directory (sample):',
       ...directoryLines,
       '',
-      'Reply with the shortest helpful zsh command or tip (max two short sentences, no code fences).',
+      'Respond ONLY with compact JSON exactly in this form:',
+      '{"explanation": "...", "recommended_command": "..."}',
+      'Example: {"explanation": "List all files including hidden ones", "recommended_command": "ls -a"}',
+      'Where "explanation" is a short description (max two sentences) and "recommended_command" is a single zsh command ready to run.',
+      'Do not add code fences, additional keys, or commentary outside the JSON object.',
     ];
 
     final client = SaiLmClient(config: config);
@@ -425,6 +432,152 @@ class _SaiCli {
     return stderr.hasTerminal;
   }
 
+  String _formatTiming(Duration duration) {
+    final seconds = duration.inMilliseconds / 1000.0;
+    return '[Total Response Time] ${seconds.toStringAsFixed(3)}s';
+  }
+
+  Future<int?> _handleModelResponse({
+    required SaiModelResponse response,
+    required Duration duration,
+  }) async {
+    if (response.hasStructured && _isMenuEnabled()) {
+      await _presentInteractiveMenu(response);
+      io.stdOut.writeln(_formatTiming(duration));
+      return SaiExitCode.success;
+    }
+
+    final text = response.hasStructured
+        ? '${_green('Explanation: ${response.explanation}')}'
+            '\n'
+            '${_green('Command: ${response.recommendedCommand}')}'
+        : response.displayText.trim();
+
+    if (text.trim().isNotEmpty) {
+      io.stdOut.writeln(
+        response.hasStructured ? text.trim() : _green(text.trim()),
+      );
+    }
+    io.stdOut.writeln(_formatTiming(duration));
+    return SaiExitCode.success;
+  }
+
+  bool _isMenuEnabled() {
+    final env = Platform.environment;
+    if (_isTruthy(env['SAI_NO_MENU'])) {
+      return false;
+    }
+    if (!_hasInteractiveOutput()) {
+      return false;
+    }
+    if (!stdin.hasTerminal && !_hasTty()) {
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _presentInteractiveMenu(SaiModelResponse response) async {
+    final explanation = response.explanation?.trim() ?? '';
+    final command = response.recommendedCommand?.trim() ?? '';
+
+    io.stdOut
+      ..writeln(_green('Pick your answer:'))
+      ..writeln(_green('  1) Explanation'))
+      ..writeln('     ${_green(_preview(explanation))}')
+      ..writeln(_green('  2) Command'))
+      ..writeln('     ${_green(_preview(command))}')
+      ..writeln(_green('  0) Cancel'));
+
+    int? choice;
+    while (choice == null) {
+      final line = _readLine('Select [0-2]: ');
+      if (line == null) {
+        break;
+      }
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) {
+        continue;
+      }
+      final parsed = int.tryParse(trimmed);
+      if (parsed == null || parsed < 0 || parsed > 2) {
+        continue;
+      }
+      choice = parsed;
+    }
+
+    if (choice == null || choice == 0) {
+      io.stdErr.writeln(_green('↳ Selection cancelled.'));
+      return;
+    }
+
+    final text = choice == 1 ? '# $explanation' : command;
+    await _applySelection(text.trim(), choice == 1 ? 'explanation' : 'command');
+  }
+
+  String _preview(String text) {
+    final firstLine = text.split('\n').first.trim();
+    const maxLen = 70;
+    if (firstLine.isEmpty) {
+      return '(empty)';
+    }
+    if (firstLine.length <= maxLen) {
+      return firstLine;
+    }
+    return '${firstLine.substring(0, maxLen - 1)}…';
+  }
+
+  Future<void> _applySelection(String text, String label) async {
+    if (text.isEmpty) {
+      io.stdErr.writeln(_green('↳ Nothing to insert for $label.'));
+      return;
+    }
+
+    final inserted = await _insertIntoPrompt(text);
+    var copied = false;
+    if (!inserted) {
+      copied = await _copyToClipboard(text);
+    }
+
+    if (inserted) {
+      io.stdErr.writeln(
+          _green('↳ Inserted $label into prompt. Press Enter to run.'));
+    } else if (copied) {
+      io.stdErr.writeln(_green('↳ Copied $label to clipboard.'));
+    } else {
+      io.stdOut.writeln(_green(text));
+    }
+  }
+
+  Future<bool> _insertIntoPrompt(String text) async {
+    if (!_hasInteractiveOutput()) {
+      return false;
+    }
+    final sanitized = text.replaceAll('\u001B', '');
+    try {
+      await _writeToTerminal('\u001B[200~$sanitized\u001B[201~');
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _copyToClipboard(String text) async {
+    final env = Platform.environment;
+    if (_isTruthy(env['SAI_NO_CLIPBOARD'])) {
+      return false;
+    }
+    try {
+      final process = await Process.start('pbcopy', const []);
+      process.stdin
+        ..write(text)
+        ..close();
+      final exitCode = await process.exitCode;
+      return exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static bool _isTruthy(String? value) {
     if (value == null) {
       return false;
@@ -436,10 +589,103 @@ class _SaiCli {
         normalized == 'on';
   }
 
-  String _formatTiming(Duration duration) {
-    final seconds = duration.inMilliseconds / 1000.0;
-    return '[Total Response Time] ${seconds.toStringAsFixed(3)}s';
+  bool _hasInteractiveOutput() {
+    if (_stdoutHasTerminal()) {
+      return true;
+    }
+    return _hasTty();
   }
+
+  bool _hasTty() {
+    if (io.stdOut is Stdout && (io.stdOut as Stdout).hasTerminal) {
+      return true;
+    }
+    if (io.stdIn.hasTerminal) {
+      return true;
+    }
+    try {
+      return File('/dev/tty').existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _stdoutHasTerminal() {
+    return io.stdOut is Stdout && (io.stdOut as Stdout).hasTerminal;
+  }
+
+  Future<void> _writeToTerminal(String text) async {
+    if (_stdoutHasTerminal()) {
+      io.stdOut.write(text);
+      await io.stdOut.flush();
+      return;
+    }
+    try {
+      File('/dev/tty').writeAsStringSync(
+        text,
+        mode: FileMode.append,
+      );
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  String? _readLine(String prompt) {
+    _writeToTerminalSync(prompt);
+    if (io.stdIn.hasTerminal) {
+      return io.stdIn.readLineSync();
+    }
+    try {
+      final tty = File('/dev/tty');
+      if (!tty.existsSync()) {
+        return null;
+      }
+      final raf = tty.openSync(mode: FileMode.read);
+      final bytes = <int>[];
+      while (true) {
+        int byte;
+        try {
+          byte = raf.readByteSync();
+        } on FileSystemException {
+          raf.closeSync();
+          return null;
+        }
+        if (byte == 10) {
+          break;
+        }
+        if (byte == 13) {
+          final next = raf.readByteSync();
+          if (next != 10) {
+            bytes.add(next);
+          }
+          break;
+        }
+        bytes.add(byte);
+      }
+      raf.closeSync();
+      return utf8.decode(bytes);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _writeToTerminalSync(String text) {
+    if (_stdoutHasTerminal()) {
+      io.stdOut.write(text);
+      io.stdOut.flush();
+      return;
+    }
+    try {
+      File('/dev/tty').writeAsStringSync(
+        text,
+        mode: FileMode.append,
+      );
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  String _green(String text) => Ansi.wrap(text, Ansi.green);
 }
 
 class _DoctorCheckResult {
