@@ -19,6 +19,8 @@ type Options struct {
 	Context      context.Context
 	Client       *lm.Client
 	SystemPrompt string
+	Title        string
+	AutoPrompt   string
 }
 
 // NewProgram wires the chat model.
@@ -32,10 +34,12 @@ func NewProgram(opts Options) *tea.Program {
 }
 
 type model struct {
-	ctx     context.Context
-	client  *lm.Client
-	system  string
-	history []lm.ChatMessage
+	ctx        context.Context
+	client     *lm.Client
+	system     string
+	title      string
+	autoPrompt string
+	history    []lm.ChatMessage
 
 	viewport viewport.Model
 	input    textinput.Model
@@ -43,6 +47,8 @@ type model struct {
 	sending bool
 	err     error
 }
+
+type autoStartMsg struct{}
 
 type assistantResponseMsg struct {
 	content string
@@ -62,12 +68,14 @@ func newModel(opts Options) model {
 	input.Focus()
 
 	return model{
-		ctx:      opts.Context,
-		client:   opts.Client,
-		system:   opts.SystemPrompt,
-		history:  make([]lm.ChatMessage, 0, 16),
-		viewport: vp,
-		input:    input,
+		ctx:        opts.Context,
+		client:     opts.Client,
+		system:     opts.SystemPrompt,
+		title:      defaultTitle(opts.Title),
+		autoPrompt: strings.TrimSpace(opts.AutoPrompt),
+		history:    make([]lm.ChatMessage, 0, 16),
+		viewport:   vp,
+		input:      input,
 	}
 }
 
@@ -79,7 +87,11 @@ var chatSnapshotConfig = appctx.SnapshotConfig{
 }
 
 func (m model) Init() tea.Cmd {
-	return textinput.Blink
+	cmds := []tea.Cmd{textinput.Blink}
+	if m.autoPrompt != "" {
+		cmds = append(cmds, func() tea.Msg { return autoStartMsg{} })
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -105,6 +117,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, nil
 
+	case autoStartMsg:
+		return m.handleAutoStart()
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
@@ -123,7 +137,7 @@ func (m model) View() string {
 	header := lipgloss.NewStyle().
 		Foreground(colorAccent).
 		Bold(true).
-		Render("SAI Chat")
+		Render(m.title)
 
 	status := m.renderStatus()
 
@@ -177,6 +191,29 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(sendChatCmd(m.ctx, m.client, m.system, historyCopy))
 }
 
+func (m model) handleAutoStart() (tea.Model, tea.Cmd) {
+	if m.autoPrompt == "" || m.sending {
+		return m, nil
+	}
+	prompt := m.autoPrompt
+	m.autoPrompt = ""
+	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: prompt})
+	m.sending = true
+	m.err = nil
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+
+	historyCopy := append([]lm.ChatMessage(nil), m.history...)
+	composed, err := appctx.ComposePromptWithConfig(prompt, chatSnapshotConfig)
+	if err != nil {
+		m.sending = false
+		m.err = err
+		return m, nil
+	}
+	historyCopy[len(historyCopy)-1].Content = composed
+	return m, tea.Batch(sendChatCmd(m.ctx, m.client, m.system, historyCopy))
+}
+
 func (m *model) refreshViewport() {
 	var b strings.Builder
 	for _, entry := range m.history {
@@ -212,6 +249,13 @@ var (
 	colorError  = lipgloss.Color("#FF7878")
 	colorMuted  = lipgloss.Color("#969BA5")
 )
+
+func defaultTitle(in string) string {
+	if strings.TrimSpace(in) != "" {
+		return strings.TrimSpace(in)
+	}
+	return "SAI Chat"
+}
 
 func max(a, b int) int {
 	if a > b {

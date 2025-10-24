@@ -6,6 +6,7 @@ type Config struct {
 	Model            string
 	APIKey           string
 	RemotePreset     bool
+	GuessMode        bool
 	DisableClipboard bool
 	SystemPrompt     string
 	LogFilter        string

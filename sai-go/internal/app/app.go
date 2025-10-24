@@ -25,6 +25,8 @@ const (
 
 	remoteEndpoint = "http://192.168.1.90:8080/v1/chat/completions"
 	remoteModel    = "models/qwen3.gguf"
+
+	defaultIntentPrompt = "Please review the entire context snapshot and infer my most likely intent, highlighting relevant commands or next steps."
 )
 
 // Run orchestrates debug modes or the interactive Bubble Tea program.
@@ -64,8 +66,9 @@ func Run(ctx context.Context, cfg Config) error {
 		return nil
 	}
 
-	if strings.TrimSpace(pendingPrompt) == "" {
-		return runChat(ctx, cfg, client)
+	trimmedPrompt := strings.TrimSpace(pendingPrompt)
+	if launch, ok := selectChatLaunch(cfg, trimmedPrompt); ok {
+		return runChat(ctx, client, launch.SystemPrompt, launch.Title, launch.AutoPrompt)
 	}
 
 	enterAltScreen(os.Stdout)
@@ -258,16 +261,16 @@ func runHeadless(ctx context.Context, client *lm.Client, systemPrompt, pendingPr
 	return nil
 }
 
-func runChat(ctx context.Context, cfg Config, client *lm.Client) error {
-	chatPrompt := resolveChatPrompt(cfg.SystemPrompt)
-
+func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title string, autoPrompt string) error {
 	enterAltScreen(os.Stdout)
 	defer leaveAltScreen(os.Stdout)
 
 	program := chatu.NewProgram(chatu.Options{
 		Context:      ctx,
 		Client:       client,
-		SystemPrompt: chatPrompt,
+		SystemPrompt: systemPrompt,
+		Title:        title,
+		AutoPrompt:   autoPrompt,
 	})
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("run chat ui: %w", err)
@@ -308,6 +311,13 @@ func resolveChatPrompt(custom string) string {
 	return prompts.ChatDeepPrompt
 }
 
+func resolveIntentPrompt(custom string) string {
+	if strings.TrimSpace(custom) != "" {
+		return custom
+	}
+	return prompts.ChatIntentPrompt
+}
+
 func enterAltScreen(out *os.File) {
 	if out == nil {
 		return
@@ -326,4 +336,28 @@ func leaveAltScreen(out *os.File) {
 		return
 	}
 	_, _ = fmt.Fprint(out, "\x1b[?1049l")
+}
+
+type chatLaunch struct {
+	SystemPrompt string
+	Title        string
+	AutoPrompt   string
+}
+
+func selectChatLaunch(cfg Config, trimmedPrompt string) (chatLaunch, bool) {
+	if cfg.GuessMode {
+		return chatLaunch{
+			SystemPrompt: resolveIntentPrompt(cfg.SystemPrompt),
+			Title:        "SAI Intent Chat",
+			AutoPrompt:   defaultIntentPrompt,
+		}, true
+	}
+	if trimmedPrompt == "" {
+		return chatLaunch{
+			SystemPrompt: resolveChatPrompt(cfg.SystemPrompt),
+			Title:        "SAI Chat",
+			AutoPrompt:   "",
+		}, true
+	}
+	return chatLaunch{}, false
 }

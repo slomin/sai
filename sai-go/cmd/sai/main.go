@@ -39,6 +39,8 @@ func parseFlags() app.Config {
 	flag.StringVar(&cfg.LogFilter, "log-filter", defaultLogFilter, "log filter (zap-style)")
 	flag.BoolVar(&cfg.DebugPerformance, "debug-performance", false, "print formatted output and skip interactive UI")
 	flag.BoolVar(&cfg.Debug, "debug", false, "dump request/response JSON for LLM calls")
+	flag.BoolVar(&cfg.GuessMode, "guess", false, "start intent-prediction chat mode")
+	flag.BoolVar(&cfg.GuessMode, "g", false, "start intent-prediction chat mode (alias)")
 
 	flag.Parse()
 	cfg.Args = flag.Args()
