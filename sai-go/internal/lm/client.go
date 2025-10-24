@@ -73,7 +73,7 @@ type ChatMessage struct {
 // Complete issues the request and parses the structured response.
 func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) (CompletionResult, error) {
 	messages := buildMessages(systemPrompt, []ChatMessage{{Role: "user", Content: userPrompt}})
-	parsed, rawBody, err := c.send(ctx, messages, defaultTemperature)
+	parsed, rawBody, err := c.send(ctx, messages, defaultTemperature, false)
 	if err != nil {
 		return CompletionResult{}, err
 	}
@@ -99,7 +99,7 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 // Chat issues a conversational request and returns the assistant reply text.
 func (c *Client) Chat(ctx context.Context, systemPrompt string, history []ChatMessage) (string, error) {
 	messages := buildMessages(systemPrompt, history)
-	parsed, _, err := c.send(ctx, messages, defaultChatTemperature)
+	parsed, _, err := c.send(ctx, messages, defaultChatTemperature, false)
 	if err != nil {
 		return "", err
 	}
@@ -149,6 +149,7 @@ type chatRequest struct {
 	Model       string        `json:"model"`
 	Messages    []chatMessage `json:"messages"`
 	Temperature float32       `json:"temperature,omitempty"`
+	Stream      bool          `json:"stream,omitempty"`
 }
 
 type chatMessage struct {
@@ -163,9 +164,14 @@ type chatResponse struct {
 
 type chatChoice struct {
 	Message chatMessageResponse `json:"message"`
+	Delta   deltaResponse       `json:"delta"`
 }
 
 type chatMessageResponse struct {
+	Content string `json:"content"`
+}
+
+type deltaResponse struct {
 	Content string `json:"content"`
 }
 
@@ -174,11 +180,12 @@ type structuredPayload struct {
 	RecommendedCommand string `json:"recommended_command"`
 }
 
-func (c *Client) send(ctx context.Context, messages []chatMessage, temperature float32) (chatResponse, []byte, error) {
+func (c *Client) send(ctx context.Context, messages []chatMessage, temperature float32, stream bool) (chatResponse, []byte, error) {
 	reqBody := chatRequest{
 		Model:       c.model,
 		Messages:    messages,
 		Temperature: temperature,
+		Stream:      stream,
 	}
 
 	body, err := json.Marshal(reqBody)
