@@ -50,8 +50,14 @@ async fn main() -> Result<()> {
 
     let app = App::new(args, client);
 
-    if let AppExit::Output { text } = app.run().await? {
-        println!("{text}");
+    match app.run().await? {
+        AppExit::Output { text } => println!("{text}"),
+        AppExit::None => {
+            use std::io::Write;
+            let mut stdout = std::io::stdout();
+            let _ = stdout.write_all(b"\r\x1b[2K");
+            let _ = stdout.flush();
+        }
     }
 
     Ok(())

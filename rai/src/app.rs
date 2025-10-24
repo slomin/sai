@@ -339,6 +339,11 @@ impl App {
                 if let Some(index) = menu.options.iter().position(|entry| entry.shortcut == ch) {
                     menu.selected = index;
                     self.activate_selection();
+                    return Ok(());
+                }
+                if matches!(ch, 'q' | 'Q') {
+                    self.exit_request = Some(AppExit::None);
+                    return Ok(());
                 }
             }
             KeyCode::Enter => self.activate_selection(),
@@ -740,7 +745,7 @@ impl App {
                 spans.push(Span::raw("   "));
             }
             spans.push(Span::styled(
-                "↑/↓ move · 1/2/0 choose · Enter confirm",
+                "↑/↓ move · 1/2 copy · 0 exit · Enter confirm",
                 Style::default().fg(COLOR_MUTED),
             ));
         }
