@@ -33,6 +33,7 @@ func parseFlags() app.Config {
 	flag.StringVar(&cfg.Model, "model", defaultModel, "model identifier to request")
 	flag.StringVar(&cfg.APIKey, "api-key", defaultAPIKey, "optional API key or bearer token")
 	flag.BoolVar(&cfg.RemotePreset, "remote", false, "use the remote llama preset")
+	flag.BoolVar(&cfg.RemotePreset, "r", false, "use the remote llama preset (alias)")
 	flag.BoolVar(&cfg.DisableClipboard, "no-clipboard", defaultNoClipboard, "disable clipboard integration")
 	flag.StringVar(&cfg.SystemPrompt, "system-prompt", defaultSystemPrompt, "custom system prompt (optional)")
 	flag.StringVar(&cfg.LogFilter, "log-filter", defaultLogFilter, "log filter (zap-style)")
