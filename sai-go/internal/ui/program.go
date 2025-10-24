@@ -65,7 +65,8 @@ type model struct {
 	width        int
 	height       int
 
-	err error
+	err      error
+	quitting bool
 
 	keys keyMap
 }
@@ -184,7 +185,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case phaseIdle:
 		switch {
 		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
+			return m.quit()
 		case key.Matches(msg, m.keys.Confirm):
 			return m.handleSubmit(m.textInput.Value())
 		case msg.Type == tea.KeyCtrlU:
@@ -204,7 +205,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case phaseQuerying:
 		if key.Matches(msg, m.keys.Quit) {
-			return m, tea.Quit
+			return m.quit()
 		}
 		return m, nil
 
@@ -213,7 +214,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case phaseError:
 		if key.Matches(msg, m.keys.Quit) || key.Matches(msg, m.keys.Confirm) {
-			return m, tea.Quit
+			return m.quit()
 		}
 	}
 
@@ -255,7 +256,7 @@ func (m model) handleError(err error) (tea.Model, tea.Cmd) {
 
 func (m model) handleMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Quit) {
-		return m, tea.Quit
+		return m.quit()
 	}
 
 	if m.response == nil {
@@ -314,7 +315,7 @@ func (m model) activateSelection() (tea.Model, tea.Cmd) {
 	case menuCommand:
 		return m.copyAndMaybeQuit(m.response.structured.RecommendedCommand, "command")
 	case menuCancel:
-		return m, tea.Quit
+		return m.quit()
 	}
 
 	return m, nil
@@ -360,6 +361,10 @@ func feedbackTimerCmd() tea.Cmd {
 }
 
 func (m model) View() string {
+	if m.quitting {
+		return ""
+	}
+
 	switch m.phase {
 	case phaseIdle:
 		return m.renderLayout(m.renderHeader(), m.renderInput(), m.renderFooter())
@@ -563,6 +568,11 @@ func (m model) bodyWidth() int {
 		return 80
 	}
 	return max(40, m.width-4)
+}
+
+func (m model) quit() (tea.Model, tea.Cmd) {
+	m.quitting = true
+	return m, tea.Sequence(tea.ExitAltScreen, tea.Quit)
 }
 
 // Supporting types -----------------------------------------------------------

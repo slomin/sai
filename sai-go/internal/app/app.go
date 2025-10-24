@@ -69,10 +69,12 @@ func Run(ctx context.Context, cfg Config) error {
 		DisableClipboard: cfg.DisableClipboard,
 		PendingPrompt:    pendingPrompt,
 	})
-
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("run program: %w", err)
 	}
+	program.ExitAltScreen()
+	_ = program.ReleaseTerminal()
+	clearPromptLine()
 
 	return nil
 }
@@ -264,4 +266,12 @@ func initLogging(filter string) {
 		Level: level,
 	})
 	slog.SetDefault(slog.New(handler))
+}
+
+func clearPromptLine() {
+	if !isTerminal(os.Stdout.Fd()) {
+		return
+	}
+
+	_, _ = fmt.Fprint(os.Stdout, "\r\x1b[2K")
 }
