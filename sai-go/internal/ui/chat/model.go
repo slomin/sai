@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	appctx "github.com/sai-project/sai-go/internal/context"
 	"github.com/sai-project/sai-go/internal/lm"
 )
 
@@ -68,6 +69,13 @@ func newModel(opts Options) model {
 		viewport: vp,
 		input:    input,
 	}
+}
+
+var chatSnapshotConfig = appctx.SnapshotConfig{
+	DirectoryLimit: 50,
+	HistoryLimit:   25,
+	IncludeGit:     true,
+	IncludeEnv:     true,
 }
 
 func (m model) Init() tea.Cmd {
@@ -159,6 +167,13 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	m.viewport.GotoBottom()
 
 	historyCopy := append([]lm.ChatMessage(nil), m.history...)
+	composed, err := appctx.ComposePromptWithConfig(trimmed, chatSnapshotConfig)
+	if err != nil {
+		m.sending = false
+		m.err = err
+		return m, nil
+	}
+	historyCopy[len(historyCopy)-1].Content = composed
 	return m, tea.Batch(sendChatCmd(m.ctx, m.client, m.system, historyCopy))
 }
 

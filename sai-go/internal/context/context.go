@@ -3,7 +3,9 @@ package context
 import (
 	"bufio"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -13,18 +15,42 @@ import (
 )
 
 const (
-	maxDirEntries = 20
-	historyLimit  = 10
+	maxDirEntries     = 20
+	historyLimit      = 10
+	maxGitStatusLines = 20
 )
 
 // Snapshot captures the filesystem, shell, and environment context that
 // accompanies each prompt.
 type Snapshot struct {
-	CWD       string
-	Directory *DirectoryListing
-	History   []string
-	System    SystemInfo
-	Warnings  []string
+	CWD            string
+	Directory      *DirectoryListing
+	History        []string
+	System         SystemInfo
+	Git            *GitSummary
+	Environment    []EnvEntry
+	includeGit     bool
+	includeEnv     bool
+	directoryLimit int
+	historyLimit   int
+	warnings       []string
+}
+
+type SnapshotConfig struct {
+	DirectoryLimit int
+	HistoryLimit   int
+	IncludeGit     bool
+	IncludeEnv     bool
+}
+
+type GitSummary struct {
+	Branch string
+	Status []string
+}
+
+type EnvEntry struct {
+	Key   string
+	Value string
 }
 
 // DirectoryListing contains a truncated and formatted view of the current
@@ -78,6 +104,17 @@ type SystemInfo struct {
 
 // Capture builds a snapshot and records best-effort warnings on failure.
 func Capture() Snapshot {
+	cfg := SnapshotConfig{
+		DirectoryLimit: maxDirEntries,
+		HistoryLimit:   historyLimit,
+		IncludeGit:     false,
+		IncludeEnv:     false,
+	}
+	return CaptureWithConfig(cfg)
+}
+
+// CaptureWithConfig builds a snapshot according to the provided configuration.
+func CaptureWithConfig(cfg SnapshotConfig) Snapshot {
 	var warnings []string
 
 	sys := collectSystemInfo()
@@ -89,31 +126,57 @@ func Capture() Snapshot {
 
 	var listing *DirectoryListing
 	if err == nil {
-		if l, derr := directoryListing(cwd, maxDirEntries); derr != nil {
+		if l, derr := directoryListing(cwd, cfg.DirectoryLimit); derr != nil {
 			warnings = append(warnings, fmt.Sprintf("could not list directory entries: %v", derr))
 		} else {
 			listing = &l
 		}
 	}
 
-	history, err := captureHistory(historyLimit)
-	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("could not read shell history: %v", err))
+	history, herr := captureHistory(cfg.HistoryLimit)
+	if herr != nil {
+		warnings = append(warnings, fmt.Sprintf("could not read shell history: %v", herr))
 	}
 
-	return Snapshot{
-		CWD:       cwd,
-		Directory: listing,
-		History:   history,
-		System:    sys,
-		Warnings:  warnings,
+	snapshot := Snapshot{
+		CWD:            cwd,
+		Directory:      listing,
+		History:        history,
+		System:         sys,
+		includeGit:     cfg.IncludeGit,
+		includeEnv:     cfg.IncludeEnv,
+		directoryLimit: cfg.DirectoryLimit,
+		historyLimit:   cfg.HistoryLimit,
+		warnings:       warnings,
 	}
+
+	if cfg.IncludeGit {
+		if gitSummary, gerr := collectGitSummary(cwd); gerr != nil {
+			logDebug("context: git summary unavailable", gerr)
+		} else if gitSummary != nil {
+			snapshot.Git = gitSummary
+		}
+	}
+
+	if cfg.IncludeEnv {
+		snapshot.Environment = collectEnvironment()
+	}
+
+	return snapshot
 }
 
 // ComposePrompt trims the user prompt, appends the rendered snapshot, and
 // returns the final payload sent to the language model.
 func ComposePrompt(userPrompt string) (string, error) {
-	snapshot := Capture()
+	cfg := SnapshotConfig{
+		DirectoryLimit: maxDirEntries,
+		HistoryLimit:   historyLimit,
+	}
+	return ComposePromptWithConfig(userPrompt, cfg)
+}
+
+func ComposePromptWithConfig(userPrompt string, cfg SnapshotConfig) (string, error) {
+	snapshot := CaptureWithConfig(cfg)
 
 	var b strings.Builder
 	trimmed := strings.TrimSpace(userPrompt)
@@ -175,10 +238,25 @@ func (s Snapshot) Render() string {
 		fmt.Fprintln(&b, "- Recent commands: unavailable")
 	}
 
-	if len(s.Warnings) > 0 {
-		fmt.Fprintln(&b, "- Warnings:")
-		for _, w := range s.Warnings {
-			fmt.Fprintf(&b, "  • %s\n", w)
+	if s.Git != nil {
+		fmt.Fprintln(&b, "- Git:")
+		if s.Git.Branch != "" {
+			fmt.Fprintf(&b, "  • Branch: %s\n", s.Git.Branch)
+		}
+		if len(s.Git.Status) > 0 {
+			fmt.Fprintln(&b, "  • Status:")
+			for _, line := range s.Git.Status {
+				fmt.Fprintf(&b, "      %s\n", line)
+			}
+		} else if s.Git.Branch != "" {
+			fmt.Fprintln(&b, "  • Status: clean")
+		}
+	}
+
+	if len(s.Environment) > 0 {
+		fmt.Fprintln(&b, "- Environment:")
+		for _, entry := range s.Environment {
+			fmt.Fprintf(&b, "  • %s=%s\n", entry.Key, entry.Value)
 		}
 	}
 
@@ -365,4 +443,71 @@ func parseHistoryLine(line string) string {
 		return strings.TrimSpace(line[idx+1:])
 	}
 	return line
+}
+
+func collectGitSummary(cwd string) (*GitSummary, error) {
+	if cwd == "" {
+		return nil, fmt.Errorf("cwd unavailable")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return nil, err
+	}
+
+	branchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	branchCmd.Dir = cwd
+	branchBytes, err := branchCmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	branch := strings.TrimSpace(string(branchBytes))
+
+	statusCmd := exec.Command("git", "status", "--short")
+	statusCmd.Dir = cwd
+	statusBytes, err := statusCmd.Output()
+	if err != nil {
+		return &GitSummary{Branch: branch}, nil
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(statusBytes)), "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		filtered = append(filtered, line)
+		if len(filtered) >= maxGitStatusLines {
+			break
+		}
+	}
+
+	return &GitSummary{
+		Branch: branch,
+		Status: filtered,
+	}, nil
+}
+
+func collectEnvironment() []EnvEntry {
+	keys := []string{"TERM", "LANG", "LC_ALL", "SHELL", "EDITOR"}
+	entries := make([]EnvEntry, 0, len(keys))
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			value = strings.TrimSpace(value)
+			if value != "" {
+				entries = append(entries, EnvEntry{Key: key, Value: value})
+			}
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Key < entries[j].Key
+	})
+	return entries
+}
+
+func logDebug(msg string, err error) {
+	if err != nil {
+		slog.Debug(msg, "error", err)
+		return
+	}
+	slog.Debug(msg)
 }

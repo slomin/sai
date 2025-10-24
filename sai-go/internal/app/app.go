@@ -305,7 +305,7 @@ func resolveChatPrompt(custom string) string {
 	if strings.TrimSpace(custom) != "" {
 		return custom
 	}
-	return prompts.ChatPrompt
+	return prompts.ChatDeepPrompt
 }
 
 func enterAltScreen(out *os.File) {
