@@ -15,11 +15,13 @@ import (
 
 	appctx "github.com/sai-project/sai-go/internal/context"
 	"github.com/sai-project/sai-go/internal/lm"
+	"github.com/sai-project/sai-go/internal/prompts"
 	"github.com/sai-project/sai-go/internal/ui"
+	chatu "github.com/sai-project/sai-go/internal/ui/chat"
 )
 
 const (
-	defaultSystemPrompt = "You are an expert macOS terminal assistant.\nYou MUST answer every user message with a single JSON object that has these string keys:\n- explanation: concise, high-signal guidance for the user (one short paragraph max)\n- recommended_command: the exact command the user should run (omit shell prompt and trailing comments)\n\nRules:\n- Only return JSON; do not use backticks or additional commentary.\n- If no safe or relevant command exists, set recommended_command to an empty string.\n- Tailor answers to zsh on macOS.\n\nExample response:\n{\n  \"explanation\": \"Hidden files start with a dot. Use ls -a to show them.\",\n  \"recommended_command\": \"ls -a\"\n}\n"
+	defaultSystemPrompt = prompts.StructuredPrompt
 
 	remoteEndpoint = "http://192.168.1.90:8080/v1/chat/completions"
 	remoteModel    = "models/qwen3.gguf"
@@ -60,6 +62,10 @@ func Run(ctx context.Context, cfg Config) error {
 			return fmt.Errorf("headless run: %w", err)
 		}
 		return nil
+	}
+
+	if strings.TrimSpace(pendingPrompt) == "" {
+		return runChat(ctx, cfg, client)
 	}
 
 	enterAltScreen(os.Stdout)
@@ -252,6 +258,24 @@ func runHeadless(ctx context.Context, client *lm.Client, systemPrompt, pendingPr
 	return nil
 }
 
+func runChat(ctx context.Context, cfg Config, client *lm.Client) error {
+	chatPrompt := resolveChatPrompt(cfg.SystemPrompt)
+
+	enterAltScreen(os.Stdout)
+	defer leaveAltScreen(os.Stdout)
+
+	program := chatu.NewProgram(chatu.Options{
+		Context:      ctx,
+		Client:       client,
+		SystemPrompt: chatPrompt,
+	})
+	if _, err := program.Run(); err != nil {
+		return fmt.Errorf("run chat ui: %w", err)
+	}
+	clearPromptLine()
+	return nil
+}
+
 func initLogging(filter string) {
 	level := slog.LevelInfo
 	switch strings.ToLower(strings.TrimSpace(filter)) {
@@ -275,6 +299,13 @@ func clearPromptLine() {
 	}
 
 	_, _ = fmt.Fprint(os.Stdout, "\r\x1b[2K")
+}
+
+func resolveChatPrompt(custom string) string {
+	if strings.TrimSpace(custom) != "" {
+		return custom
+	}
+	return prompts.ChatPrompt
 }
 
 func enterAltScreen(out *os.File) {

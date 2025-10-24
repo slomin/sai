@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-const defaultTemperature = 0.2
+const (
+	defaultTemperature     = 0.2
+	defaultChatTemperature = 0.5
+)
 
 // Client performs chat completion requests against the configured endpoint.
 type Client struct {
@@ -61,52 +64,19 @@ type CompletionResult struct {
 	Usage       *Usage
 }
 
+// ChatMessage represents a single message exchanged with the language model.
+type ChatMessage struct {
+	Role    string
+	Content string
+}
+
 // Complete issues the request and parses the structured response.
 func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) (CompletionResult, error) {
-	reqBody := chatRequest{
-		Model: c.model,
-		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
-		},
-		Temperature: defaultTemperature,
-	}
-
-	body, err := json.Marshal(reqBody)
+	messages := buildMessages(systemPrompt, []ChatMessage{{Role: "user", Content: userPrompt}})
+	parsed, rawBody, err := c.send(ctx, messages, defaultTemperature)
 	if err != nil {
-		return CompletionResult{}, fmt.Errorf("encode request: %w", err)
+		return CompletionResult{}, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return CompletionResult{}, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return CompletionResult{}, fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	rawBody, err := ioReadAll(resp.Body)
-	if err != nil {
-		return CompletionResult{}, fmt.Errorf("read response body: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return CompletionResult{}, fmt.Errorf("endpoint returned %s: %s", resp.Status, rawBody)
-	}
-
-	var parsed chatResponse
-	if err := json.Unmarshal(rawBody, &parsed); err != nil {
-		return CompletionResult{}, fmt.Errorf("decode response: %w", err)
-	}
-
-	logRawResponse(rawBody)
 
 	if len(parsed.Choices) == 0 {
 		return CompletionResult{}, fmt.Errorf("response contained no choices")
@@ -124,6 +94,30 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 		RawResponse: string(rawBody),
 		Usage:       parsed.Usage,
 	}, nil
+}
+
+// Chat issues a conversational request and returns the assistant reply text.
+func (c *Client) Chat(ctx context.Context, systemPrompt string, history []ChatMessage) (string, error) {
+	messages := buildMessages(systemPrompt, history)
+	parsed, _, err := c.send(ctx, messages, defaultChatTemperature)
+	if err != nil {
+		return "", err
+	}
+
+	if len(parsed.Choices) == 0 {
+		return "", fmt.Errorf("response contained no choices")
+	}
+
+	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
+}
+
+func buildMessages(systemPrompt string, history []ChatMessage) []chatMessage {
+	messages := make([]chatMessage, 0, len(history)+1)
+	messages = append(messages, chatMessage{Role: "system", Content: systemPrompt})
+	for _, entry := range history {
+		messages = append(messages, chatMessage{Role: entry.Role, Content: entry.Content})
+	}
+	return messages
 }
 
 func parseStructured(content string) (StructuredAnswer, error) {
@@ -178,6 +172,52 @@ type chatMessageResponse struct {
 type structuredPayload struct {
 	Explanation        string `json:"explanation"`
 	RecommendedCommand string `json:"recommended_command"`
+}
+
+func (c *Client) send(ctx context.Context, messages []chatMessage, temperature float32) (chatResponse, []byte, error) {
+	reqBody := chatRequest{
+		Model:       c.model,
+		Messages:    messages,
+		Temperature: temperature,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return chatResponse{}, nil, fmt.Errorf("encode request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return chatResponse{}, nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return chatResponse{}, nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rawBody, err := ioReadAll(resp.Body)
+	if err != nil {
+		return chatResponse{}, nil, fmt.Errorf("read response body: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return chatResponse{}, nil, fmt.Errorf("endpoint returned %s: %s", resp.Status, rawBody)
+	}
+
+	var parsed chatResponse
+	if err := json.Unmarshal(rawBody, &parsed); err != nil {
+		return chatResponse{}, nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	logRawResponse(rawBody)
+
+	return parsed, rawBody, nil
 }
 
 func tryParsePayload(candidate string) (StructuredAnswer, error) {
