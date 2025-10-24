@@ -30,7 +30,7 @@ type Options struct {
 // NewProgram initialises the Bubble Tea program with the requested options.
 func NewProgram(opts Options) *tea.Program {
 	m := newModel(opts)
-	programOpts := []tea.ProgramOption{tea.WithAltScreen()}
+	var programOpts []tea.ProgramOption
 	if opts.Context != nil {
 		programOpts = append(programOpts, tea.WithContext(opts.Context))
 	}
@@ -572,7 +572,7 @@ func (m model) bodyWidth() int {
 
 func (m model) quit() (tea.Model, tea.Cmd) {
 	m.quitting = true
-	return m, tea.Sequence(tea.ExitAltScreen, tea.Quit)
+	return m, tea.Quit
 }
 
 // Supporting types -----------------------------------------------------------

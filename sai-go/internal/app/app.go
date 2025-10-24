@@ -62,6 +62,9 @@ func Run(ctx context.Context, cfg Config) error {
 		return nil
 	}
 
+	enterAltScreen(os.Stdout)
+	defer leaveAltScreen(os.Stdout)
+
 	program := ui.NewProgram(ui.Options{
 		Context:          ctx,
 		Client:           client,
@@ -72,8 +75,6 @@ func Run(ctx context.Context, cfg Config) error {
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("run program: %w", err)
 	}
-	program.ExitAltScreen()
-	_ = program.ReleaseTerminal()
 	clearPromptLine()
 
 	return nil
@@ -274,4 +275,24 @@ func clearPromptLine() {
 	}
 
 	_, _ = fmt.Fprint(os.Stdout, "\r\x1b[2K")
+}
+
+func enterAltScreen(out *os.File) {
+	if out == nil {
+		return
+	}
+	if !isTerminal(out.Fd()) {
+		return
+	}
+	_, _ = fmt.Fprint(out, "\x1b[?1049h")
+}
+
+func leaveAltScreen(out *os.File) {
+	if out == nil {
+		return
+	}
+	if !isTerminal(out.Fd()) {
+		return
+	}
+	_, _ = fmt.Fprint(out, "\x1b[?1049l")
 }
