@@ -53,6 +53,7 @@ type model struct {
 	disableClipboard bool
 
 	pendingPrompt string
+	currentPrompt string
 	phase         phase
 
 	requestStarted time.Time
@@ -108,6 +109,7 @@ func newModel(opts Options) model {
 		systemPrompt:     opts.SystemPrompt,
 		disableClipboard: opts.DisableClipboard,
 		pendingPrompt:    strings.TrimSpace(opts.PendingPrompt),
+		currentPrompt:    strings.TrimSpace(opts.PendingPrompt),
 		phase:            phaseIdle,
 		textInput:        ti,
 		spinner:          newSpinnerModel(),
@@ -233,6 +235,7 @@ func (m model) handleSubmit(input string) (tea.Model, tea.Cmd) {
 	newModel.err = nil
 	newModel.copyFeedback = nil
 	newModel.pendingPrompt = ""
+	newModel.currentPrompt = prompt
 	newModel.textInput.SetValue("")
 	newModel.requestStarted = time.Now()
 	newModel.spinner = newSpinnerModel()
@@ -453,7 +456,7 @@ func (m model) renderHeader() string {
 		color = colorMuted
 	}
 
-	title := styleTitle.Render(" RAI ")
+	title := styleTitle.Render(" SAI ")
 	status := lipgloss.NewStyle().Foreground(color).Render(icon)
 	text := styleHeaderText.Render(message)
 
@@ -467,6 +470,26 @@ func (m model) renderHeader() string {
 	)
 }
 
+func (m model) renderPromptPanel(width int) string {
+	content := strings.TrimSpace(m.currentPrompt)
+	if content == "" {
+		content = "(no prompt submitted)"
+	}
+	body := lipgloss.NewStyle().
+		Foreground(colorText).
+		Width(max(0, width-4)).
+		Render(content)
+
+	title := lipgloss.NewStyle().
+		Foreground(colorAccent).
+		Bold(true).
+		Render("Prompt")
+
+	return stylePanel.Width(width).Render(
+		lipgloss.JoinVertical(lipgloss.Left, title, body),
+	)
+}
+
 func (m model) renderInput() string {
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -477,8 +500,12 @@ func (m model) renderInput() string {
 }
 
 func (m model) renderQuerying() string {
-	spinnerView := lipgloss.NewStyle().Foreground(colorAccent).Render(m.spinner.View() + " Requesting model response…")
-	return stylePanel.Width(m.bodyWidth()).Render(spinnerView)
+	width := m.bodyWidth()
+	prompt := m.renderPromptPanel(width)
+	status := stylePanel.Width(width).Render(
+		lipgloss.NewStyle().Foreground(colorAccent).Render(m.spinner.View() + " Requesting model response…"),
+	)
+	return lipgloss.JoinVertical(lipgloss.Left, prompt, "", status)
 }
 
 func (m model) renderPresenting() string {
@@ -486,13 +513,16 @@ func (m model) renderPresenting() string {
 		return ""
 	}
 
-	explanation := stylePanel.Width(m.bodyWidth()).
-		Render(formatExplanation(m.response.structured.Explanation, m.bodyWidth()-4))
+	width := m.bodyWidth()
+	prompt := m.renderPromptPanel(width)
 
-	menu := stylePanel.Width(m.bodyWidth()).
+	explanation := stylePanel.Width(width).
+		Render(formatExplanation(m.response.structured.Explanation, width-4))
+
+	menu := stylePanel.Width(width).
 		Render(m.renderMenu())
 
-	return lipgloss.JoinVertical(lipgloss.Left, explanation, "", menu)
+	return lipgloss.JoinVertical(lipgloss.Left, prompt, "", explanation, "", menu)
 }
 
 func (m model) renderMenu() string {
@@ -520,14 +550,17 @@ func (m model) renderMenu() string {
 }
 
 func (m model) renderError() string {
+	width := m.bodyWidth()
+	prompt := m.renderPromptPanel(width)
 	var message string
 	if m.err != nil {
 		message = m.err.Error()
 	} else {
 		message = "Unknown error."
 	}
-	return stylePanel.Width(m.bodyWidth()).
+	errorPanel := stylePanel.Width(width).
 		Render(lipgloss.NewStyle().Foreground(colorError).Render(message))
+	return lipgloss.JoinVertical(lipgloss.Left, prompt, "", errorPanel)
 }
 
 func (m model) renderFooter() string {
