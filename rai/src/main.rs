@@ -15,12 +15,21 @@ use crate::cli::CliArgs;
 use crate::context::compose_prompt;
 use crate::lm::LmClient;
 
+const REMOTE_ENDPOINT: &str = "http://192.168.1.90:8080/v1/chat/completions";
+const REMOTE_MODEL: &str = "models/qwen3.gguf";
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let _ = color_eyre::install();
 
-    let args = CliArgs::parse();
+    let mut args = CliArgs::parse();
     init_tracing(&args);
+
+    if args.remote {
+        args.endpoint = REMOTE_ENDPOINT.to_string();
+        args.model = REMOTE_MODEL.to_string();
+        tracing::info!("using remote llama endpoint {}", args.endpoint);
+    }
 
     let client = LmClient::new(
         args.endpoint.clone(),

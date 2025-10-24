@@ -62,6 +62,7 @@ Alongside the Dart CLI, the repository now hosts a Ratatui-based experiment in `
 - Runtime configuration honors the existing `SAI_LM_*` variables plus a few extras (`RAI_SYSTEM_PROMPT`, `RAI_NO_CLIPBOARD`, `RAI_LOG`).
 - Invoke it the same way as `sai`, e.g. `rai "list hidden files"`, and use the highlighted menu to copy either the explanation or the recommended command.
 - Launching `rai` with no arguments drops you into an inline prompt so you can type questions (including `?` or `'`) without wrestling with shell quoting.
+- Pass `-r`/`--remote` to target a local llama server at `http://192.168.1.90:8080/v1/chat/completions` using the model identifier `models/qwen3.gguf`; this overrides the default endpoint/model pair.
 - To avoid shell globbing, source `scripts/rai.zsh` (or create a similar alias in bash) which just runs the compiled binary with `noglob`.
 - Add `--debug-performance` to skip the UI and print a formatted explanation/command directly—ideal for scripts or the new `scripts/rai_demo_requests.sh` smoke test runner.
 - Use `--debug` to dump the full JSON request/response around a single prompt; perfect for inspecting what goes over the wire to LM Studio.

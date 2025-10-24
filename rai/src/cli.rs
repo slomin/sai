@@ -21,6 +21,10 @@ pub struct CliArgs {
     #[arg(long, env = "SAI_LM_API_KEY", value_hint = ValueHint::Other)]
     pub api_key: Option<String>,
 
+    /// Use the remote llama preset (192.168.1.90:8080 with models/qwen3.gguf).
+    #[arg(short = 'r', long)]
+    pub remote: bool,
+
     /// Disable clipboard integration.
     #[arg(long, env = "RAI_NO_CLIPBOARD")]
     pub no_clipboard: bool,
