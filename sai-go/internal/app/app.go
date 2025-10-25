@@ -68,7 +68,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	trimmedPrompt := strings.TrimSpace(pendingPrompt)
 	if launch, ok := selectChatLaunch(cfg, trimmedPrompt); ok {
-		return runChat(ctx, client, launch.SystemPrompt, launch.Title, launch.AutoPrompt)
+		return runChat(ctx, client, launch.SystemPrompt, launch.Title, launch.AutoPrompt, !cfg.DisableStream)
 	}
 
 	enterAltScreen(os.Stdout)
@@ -261,7 +261,7 @@ func runHeadless(ctx context.Context, client *lm.Client, systemPrompt, pendingPr
 	return nil
 }
 
-func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title string, autoPrompt string) error {
+func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title string, autoPrompt string, streamEnabled bool) error {
 	enterAltScreen(os.Stdout)
 	defer leaveAltScreen(os.Stdout)
 
@@ -271,6 +271,7 @@ func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title 
 		SystemPrompt: systemPrompt,
 		Title:        title,
 		AutoPrompt:   autoPrompt,
+		Stream:       streamEnabled,
 	})
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("run chat ui: %w", err)

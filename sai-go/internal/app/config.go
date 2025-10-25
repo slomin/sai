@@ -7,6 +7,7 @@ type Config struct {
 	APIKey           string
 	RemotePreset     bool
 	GuessMode        bool
+	DisableStream    bool
 	DisableClipboard bool
 	SystemPrompt     string
 	LogFilter        string

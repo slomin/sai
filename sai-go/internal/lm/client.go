@@ -1,9 +1,11 @@
 package lm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +18,8 @@ const (
 	defaultTemperature     = 0.2
 	defaultChatTemperature = 0.5
 )
+
+var ErrStreamUnsupported = errors.New("lm streaming unsupported")
 
 // Client performs chat completion requests against the configured endpoint.
 type Client struct {
@@ -70,6 +74,8 @@ type ChatMessage struct {
 	Content string
 }
 
+type StreamHandler func(chunk string) error
+
 // Complete issues the request and parses the structured response.
 func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) (CompletionResult, error) {
 	messages := buildMessages(systemPrompt, []ChatMessage{{Role: "user", Content: userPrompt}})
@@ -109,6 +115,81 @@ func (c *Client) Chat(ctx context.Context, systemPrompt string, history []ChatMe
 	}
 
 	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
+}
+
+func (c *Client) StreamChat(ctx context.Context, systemPrompt string, history []ChatMessage, handler StreamHandler) error {
+	messages := buildMessages(systemPrompt, history)
+	reqBody := chatRequest{
+		Model:       c.model,
+		Messages:    messages,
+		Temperature: defaultChatTemperature,
+		Stream:      true,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("encode request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := ioReadAll(resp.Body)
+		lower := strings.ToLower(string(raw))
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest || strings.Contains(lower, "stream") {
+			return ErrStreamUnsupported
+		}
+		return fmt.Errorf("endpoint returned %s: %s", resp.Status, raw)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "[DONE]" {
+			return nil
+		}
+
+		var chunk streamChunk
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			return fmt.Errorf("decode chunk: %w", err)
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta.Content
+		if strings.TrimSpace(delta) == "" {
+			continue
+		}
+		if err := handler(delta); err != nil {
+			return err
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("stream read: %w", err)
+	}
+
+	return nil
 }
 
 func buildMessages(systemPrompt string, history []ChatMessage) []chatMessage {
@@ -175,6 +256,12 @@ type deltaResponse struct {
 	Content string `json:"content"`
 }
 
+type streamChunk struct {
+	Choices []struct {
+		Delta deltaResponse `json:"delta"`
+	} `json:"choices"`
+}
+
 type structuredPayload struct {
 	Explanation        string `json:"explanation"`
 	RecommendedCommand string `json:"recommended_command"`
@@ -185,7 +272,6 @@ func (c *Client) send(ctx context.Context, messages []chatMessage, temperature f
 		Model:       c.model,
 		Messages:    messages,
 		Temperature: temperature,
-		Stream:      stream,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -207,6 +293,10 @@ func (c *Client) send(ctx context.Context, messages []chatMessage, temperature f
 		return chatResponse{}, nil, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if stream {
+		return chatResponse{}, nil, fmt.Errorf("streaming mode not supported in this path")
+	}
 
 	rawBody, err := ioReadAll(resp.Body)
 	if err != nil {

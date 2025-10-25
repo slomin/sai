@@ -28,6 +28,7 @@ func parseFlags() app.Config {
 	defaultSystemPrompt := os.Getenv("RAI_SYSTEM_PROMPT")
 	defaultLogFilter := envOrDefault("RAI_LOG", "info")
 	defaultNoClipboard := envBool("RAI_NO_CLIPBOARD")
+	defaultNoStream := envBool("SAI_NO_STREAM")
 
 	flag.StringVar(&cfg.Endpoint, "endpoint", defaultEndpoint, "chat completion endpoint URL")
 	flag.StringVar(&cfg.Model, "model", defaultModel, "model identifier to request")
@@ -35,6 +36,7 @@ func parseFlags() app.Config {
 	flag.BoolVar(&cfg.RemotePreset, "remote", false, "use the remote llama preset")
 	flag.BoolVar(&cfg.RemotePreset, "r", false, "use the remote llama preset (alias)")
 	flag.BoolVar(&cfg.DisableClipboard, "no-clipboard", defaultNoClipboard, "disable clipboard integration")
+	flag.BoolVar(&cfg.DisableStream, "no-stream", defaultNoStream, "disable streaming chat output")
 	flag.StringVar(&cfg.SystemPrompt, "system-prompt", defaultSystemPrompt, "custom system prompt (optional)")
 	flag.StringVar(&cfg.LogFilter, "log-filter", defaultLogFilter, "log filter (zap-style)")
 	flag.BoolVar(&cfg.DebugPerformance, "debug-performance", false, "print formatted output and skip interactive UI")

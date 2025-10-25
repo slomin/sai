@@ -1,8 +1,11 @@
 package chat
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/sai-project/sai-go/internal/lm"
 )
 
 func TestHandleAutoStartAppendsPrompt(t *testing.T) {
@@ -60,5 +63,78 @@ func TestInitSchedulesAutoStart(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected autoStartMsg, got %T", msg)
+	}
+}
+
+func TestHandleStreamEventAppendsChunks(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: "hello"})
+	m.streamCh = make(chan streamEvent)
+
+	updated, cmd := m.handleStreamEvent(streamEvent{chunk: "hi"})
+	if cmd == nil {
+		t.Fatalf("expected command to continue listening")
+	}
+
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	if len(typed.history) != 2 {
+		t.Fatalf("expected two history entries, got %d", len(typed.history))
+	}
+	last := typed.history[len(typed.history)-1]
+	if last.Role != "assistant" || last.Content != "hi" {
+		t.Fatalf("unexpected assistant entry: %+v", last)
+	}
+}
+
+func TestHandleStreamEventFallbackDisablesStreaming(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	m.sending = true
+	m.streamEnabled = true
+	m.pendingRequest = []lm.ChatMessage{{Role: "user", Content: "hi"}}
+	m.history = append(m.history, lm.ChatMessage{Role: "assistant", Content: ""})
+	m.streamCh = make(chan streamEvent)
+	m.streamCancel = func() {}
+
+	updated, cmd := m.handleStreamEvent(streamEvent{err: lm.ErrStreamUnsupported})
+	if cmd == nil {
+		t.Fatalf("expected fallback command to be scheduled")
+	}
+
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	if typed.streamEnabled {
+		t.Fatalf("expected streaming to be disabled")
+	}
+	if typed.pendingRequest != nil {
+		t.Fatalf("pending request should be cleared")
+	}
+	if len(typed.history) != 0 {
+		t.Fatalf("assistant placeholder should be dropped, history: %+v", typed.history)
+	}
+	if typed.err != nil {
+		t.Fatalf("expected no error, got %v", typed.err)
+	}
+	if !typed.sending {
+		t.Fatalf("expected sending to remain true for fallback request")
+	}
+}
+
+func TestAddAssistantPlaceholderAppendsNewEntry(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system"})
+	m.history = append(m.history, lm.ChatMessage{Role: "assistant", Content: "old"})
+
+	m.addAssistantPlaceholder()
+
+	if len(m.history) != 2 {
+		t.Fatalf("expected second assistant entry")
+	}
+	last := m.history[len(m.history)-1]
+	if last.Role != "assistant" || last.Content != "" {
+		t.Fatalf("expected blank assistant entry, got %+v", last)
 	}
 }

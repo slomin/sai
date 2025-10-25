@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -21,6 +22,7 @@ type Options struct {
 	SystemPrompt string
 	Title        string
 	AutoPrompt   string
+	Stream       bool
 }
 
 // NewProgram wires the chat model.
@@ -34,18 +36,20 @@ func NewProgram(opts Options) *tea.Program {
 }
 
 type model struct {
-	ctx        context.Context
-	client     *lm.Client
-	system     string
-	title      string
-	autoPrompt string
-	history    []lm.ChatMessage
-
-	viewport viewport.Model
-	input    textinput.Model
-
-	sending bool
-	err     error
+	ctx            context.Context
+	client         *lm.Client
+	system         string
+	title          string
+	autoPrompt     string
+	history        []lm.ChatMessage
+	viewport       viewport.Model
+	input          textinput.Model
+	sending        bool
+	err            error
+	streamEnabled  bool
+	streamCh       chan streamEvent
+	streamCancel   context.CancelFunc
+	pendingRequest []lm.ChatMessage
 }
 
 type autoStartMsg struct{}
@@ -58,6 +62,16 @@ type assistantErrorMsg struct {
 	err error
 }
 
+type streamEvent struct {
+	chunk string
+	err   error
+	done  bool
+}
+
+type streamEventMsg struct {
+	event streamEvent
+}
+
 func newModel(opts Options) model {
 	vp := viewport.New(0, 0)
 	vp.Style = lipgloss.NewStyle().Padding(1, 2)
@@ -68,14 +82,15 @@ func newModel(opts Options) model {
 	input.Focus()
 
 	return model{
-		ctx:        opts.Context,
-		client:     opts.Client,
-		system:     opts.SystemPrompt,
-		title:      defaultTitle(opts.Title),
-		autoPrompt: strings.TrimSpace(opts.AutoPrompt),
-		history:    make([]lm.ChatMessage, 0, 16),
-		viewport:   vp,
-		input:      input,
+		ctx:           opts.Context,
+		client:        opts.Client,
+		system:        opts.SystemPrompt,
+		title:         defaultTitle(opts.Title),
+		autoPrompt:    strings.TrimSpace(opts.AutoPrompt),
+		history:       make([]lm.ChatMessage, 0, 16),
+		viewport:      vp,
+		input:         input,
+		streamEnabled: opts.Stream,
 	}
 }
 
@@ -112,6 +127,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		return m, nil
 
+	case streamEventMsg:
+		return m.handleStreamEvent(msg.event)
+
 	case assistantErrorMsg:
 		m.sending = false
 		m.err = msg.err
@@ -122,6 +140,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
+			m.stopStreaming()
 			return m, tea.Quit
 		case tea.KeyEnter:
 			return m.handleSubmit()
@@ -155,7 +174,11 @@ func (m model) View() string {
 
 func (m model) renderStatus() string {
 	if m.sending {
-		return lipgloss.NewStyle().Foreground(colorAccent).Render("Thinking…")
+		label := "Thinking…"
+		if m.streamEnabled && m.streamCh != nil {
+			label = "Streaming…"
+		}
+		return lipgloss.NewStyle().Foreground(colorAccent).Render(label)
 	}
 	if m.err != nil {
 		return lipgloss.NewStyle().Foreground(colorError).Render(fmt.Sprintf("Error: %v", m.err))
@@ -188,6 +211,10 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	historyCopy[len(historyCopy)-1].Content = composed
+	if m.streamEnabled {
+		cmd := m.startStreaming(historyCopy)
+		return m, cmd
+	}
 	return m, tea.Batch(sendChatCmd(m.ctx, m.client, m.system, historyCopy))
 }
 
@@ -211,7 +238,56 @@ func (m model) handleAutoStart() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	historyCopy[len(historyCopy)-1].Content = composed
+	if m.streamEnabled {
+		cmd := m.startStreaming(historyCopy)
+		return m, cmd
+	}
 	return m, tea.Batch(sendChatCmd(m.ctx, m.client, m.system, historyCopy))
+}
+
+func (m *model) startStreaming(history []lm.ChatMessage) tea.Cmd {
+	m.stopStreaming()
+	m.pendingRequest = append([]lm.ChatMessage(nil), history...)
+	m.addAssistantPlaceholder()
+	m.refreshViewport()
+	ch := make(chan streamEvent, 16)
+	m.streamCh = ch
+	baseCtx := m.ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(baseCtx)
+	m.streamCancel = cancel
+	client := m.client
+	system := m.system
+	historyCopy := append([]lm.ChatMessage(nil), history...)
+
+	go func() {
+		handler := func(chunk string) error {
+			select {
+			case ch <- streamEvent{chunk: chunk}:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		err := client.StreamChat(ctx, system, historyCopy, handler)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			ch <- streamEvent{err: err}
+		}
+		ch <- streamEvent{done: true}
+		close(ch)
+	}()
+
+	return listenStreamCmd(ch)
+}
+
+func (m *model) stopStreaming() {
+	if m.streamCancel != nil {
+		m.streamCancel()
+		m.streamCancel = nil
+	}
+	m.streamCh = nil
 }
 
 func (m *model) refreshViewport() {
@@ -224,7 +300,7 @@ func (m *model) refreshViewport() {
 			fmt.Fprintf(&b, "SAI:\n%s\n\n", strings.TrimSpace(entry.Content))
 		}
 	}
-	if m.sending {
+	if m.sending && (!m.streamEnabled || m.streamCh == nil) {
 		fmt.Fprintf(&b, "SAI:\n%s\n\n", "…")
 	}
 	m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
@@ -242,6 +318,98 @@ func sendChatCmd(ctx context.Context, client *lm.Client, system string, history 
 		}
 		return assistantResponseMsg{content: response}
 	}
+}
+
+func listenStreamCmd(ch <-chan streamEvent) tea.Cmd {
+	return func() tea.Msg {
+		ev, ok := <-ch
+		if !ok {
+			return streamEventMsg{event: streamEvent{done: true}}
+		}
+		return streamEventMsg{event: ev}
+	}
+}
+
+func (m *model) ensureAssistantEntry() {
+	if len(m.history) == 0 || m.history[len(m.history)-1].Role != "assistant" {
+		m.history = append(m.history, lm.ChatMessage{Role: "assistant", Content: ""})
+	}
+}
+
+func (m *model) addAssistantPlaceholder() {
+	if len(m.history) > 0 {
+		last := m.history[len(m.history)-1]
+		if last.Role == "assistant" && strings.TrimSpace(last.Content) == "" {
+			return
+		}
+	}
+	m.history = append(m.history, lm.ChatMessage{Role: "assistant", Content: ""})
+}
+
+func (m *model) appendStreamChunk(chunk string) {
+	if strings.TrimSpace(chunk) == "" {
+		return
+	}
+	m.ensureAssistantEntry()
+	idx := len(m.history) - 1
+	m.history[idx].Content += chunk
+}
+
+func (m *model) dropAssistantPlaceholder() {
+	if len(m.history) == 0 {
+		return
+	}
+	last := m.history[len(m.history)-1]
+	if last.Role == "assistant" && strings.TrimSpace(last.Content) == "" {
+		m.history = m.history[:len(m.history)-1]
+	}
+}
+
+func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
+	if ev.err != nil {
+		streamErr := ev.err
+		m.stopStreaming()
+		m.sending = false
+		if errors.Is(streamErr, context.Canceled) {
+			return m, nil
+		}
+		if errors.Is(streamErr, lm.ErrStreamUnsupported) && len(m.pendingRequest) > 0 {
+			history := append([]lm.ChatMessage(nil), m.pendingRequest...)
+			m.pendingRequest = nil
+			m.streamEnabled = false
+			m.dropAssistantPlaceholder()
+			m.refreshViewport()
+			m.err = nil
+			m.sending = true
+			return m, tea.Batch(sendChatCmd(m.ctx, m.client, m.system, history))
+		}
+		m.err = streamErr
+		m.pendingRequest = nil
+		m.refreshViewport()
+		return m, nil
+	}
+
+	if ev.chunk != "" {
+		m.appendStreamChunk(ev.chunk)
+		m.refreshViewport()
+		if m.streamCh != nil {
+			return m, listenStreamCmd(m.streamCh)
+		}
+		return m, nil
+	}
+
+	if ev.done {
+		m.stopStreaming()
+		m.sending = false
+		m.pendingRequest = nil
+		m.refreshViewport()
+		return m, nil
+	}
+
+	if m.streamCh != nil {
+		return m, listenStreamCmd(m.streamCh)
+	}
+	return m, nil
 }
 
 var (
