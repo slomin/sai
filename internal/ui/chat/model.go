@@ -64,6 +64,7 @@ type model struct {
 
 type snippetSelection struct {
 	MessageIndex int
+	BlockIndex   int
 	Language     string
 	Code         string
 	Fenced       string
@@ -92,6 +93,10 @@ type streamEventMsg struct {
 type copySuccessMsg struct{}
 
 type statusClearMsg struct{}
+
+type snippetCopiedMsg struct {
+	err error
+}
 
 type streamLauncher func(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) (chan streamEvent, context.CancelFunc)
 
@@ -178,23 +183,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.statusMessage = "Copied last response"
 		return m, tea.Tick(statusMessageTTL, func(time.Time) tea.Msg { return statusClearMsg{} })
+	case snippetCopiedMsg:
+		if msg.err != nil {
+			m.err = fmt.Errorf("copy snippet: %w", msg.err)
+			m.statusMessage = "Copy failed – snippet remains selected"
+			return m, nil
+		}
+		m.err = nil
+		m.statusMessage = "Snippet copied to clipboard"
+		return m, tea.Quit
 	case statusClearMsg:
 		m.statusMessage = ""
 		return m, nil
 	case tea.KeyMsg:
+		if msg.String() == "tab" {
+			hadSnippet := m.snippet != nil
+			if m.selectLatestSnippet() {
+				m.refreshViewport()
+			} else {
+				if hadSnippet {
+					m.statusMessage = "No more snippets"
+				} else {
+					m.statusMessage = "No code block to select yet"
+				}
+			}
+			return m, nil
+		}
 		if m.snippet != nil {
 			switch msg.Type {
 			case tea.KeyEnter:
-				cmd := copyToClipboardCmd(m.snippet.Code)
-				return m, tea.Batch(cmd, tea.Quit)
+				return m, copySnippetCmd(m.snippet.Code)
 			case tea.KeyEsc:
 				m.stopStreaming()
 				return m, tea.Quit
-			}
-			if msg.String() == "tab" {
-				m.clearSnippet()
-				m.refreshViewport()
-				return m, nil
 			}
 		}
 		switch msg.Type {
@@ -483,6 +504,15 @@ func copyToClipboardCmd(content string) tea.Cmd {
 	}
 }
 
+func copySnippetCmd(content string) tea.Cmd {
+	return func() tea.Msg {
+		if err := clipboard.WriteAll(content); err != nil {
+			return snippetCopiedMsg{err: err}
+		}
+		return snippetCopiedMsg{}
+	}
+}
+
 func listenStreamCmd(ch <-chan streamEvent) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-ch
@@ -592,24 +622,43 @@ func (m *model) clearSnippet() {
 }
 
 func (m *model) selectLatestSnippet() bool {
-	for i := len(m.history) - 1; i >= 0; i-- {
+	startIndex := len(m.history) - 1
+	if m.snippet != nil {
+		startIndex = m.snippet.MessageIndex
+	}
+
+	for i := startIndex; i >= 0; i-- {
 		entry := m.history[i]
 		if entry.Role != "assistant" {
 			continue
 		}
-		if lang, code, ok := findLastCodeBlock(entry.Content); ok {
+
+		before := -1
+		if m.snippet != nil && i == m.snippet.MessageIndex {
+			before = m.snippet.BlockIndex
+		}
+
+		if lang, code, blockIdx, ok := findPrevCodeBlock(entry.Content, before); ok {
 			m.snippet = &snippetSelection{
 				MessageIndex: i,
+				BlockIndex:   blockIdx,
 				Language:     lang,
 				Code:         code,
 				Fenced:       buildFencedBlock(lang, code),
 			}
-			m.statusMessage = "Snippet selected · Enter to copy & exit, Tab to cancel"
+			m.statusMessage = "Snippet selected · Enter to copy & exit, Tab to cycle, Esc cancel"
 			m.tail = true
 			m.viewport.GotoBottom()
 			return true
 		}
+
+		if m.snippet != nil && i == m.snippet.MessageIndex {
+			// reset snippet to allow scanning earlier messages
+			m.snippet = nil
+		}
 	}
+
+	m.snippet = nil
 	return false
 }
 
@@ -681,30 +730,61 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func findLastCodeBlock(content string) (string, string, bool) {
-	end := strings.LastIndex(content, "```")
-	if end == -1 {
-		return "", "", false
+func findPrevCodeBlock(content string, beforeIndex int) (string, string, int, bool) {
+	type block struct {
+		lang string
+		body string
+		idx  int
 	}
-	start := strings.LastIndex(content[:end], "```")
-	if start == -1 {
-		return "", "", false
+
+	var blocks []block
+	offset := 0
+	for {
+		start := strings.Index(content[offset:], "```")
+		if start == -1 {
+			break
+		}
+		start += offset
+		end := strings.Index(content[start+3:], "```")
+		if end == -1 {
+			break
+		}
+		end += start + 3
+
+		raw := strings.ReplaceAll(content[start+3:end], "\r\n", "\n")
+		var lang, body string
+		if ln := strings.Index(raw, "\n"); ln >= 0 {
+			lang = strings.TrimSpace(raw[:ln])
+			body = raw[ln+1:]
+		} else {
+			lang = strings.TrimSpace(raw)
+			body = ""
+		}
+		body = strings.TrimRight(body, "\n")
+		if strings.TrimSpace(body) != "" {
+			blocks = append(blocks, block{
+				lang: lang,
+				body: body,
+				idx:  len(blocks),
+			})
+		}
+
+		offset = end + 3
 	}
-	block := content[start+3 : end]
-	block = strings.ReplaceAll(block, "\r\n", "\n")
-	var lang, body string
-	if idx := strings.Index(block, "\n"); idx >= 0 {
-		lang = strings.TrimSpace(block[:idx])
-		body = block[idx+1:]
-	} else {
-		lang = strings.TrimSpace(block)
-		body = ""
+
+	limit := len(blocks)
+	if beforeIndex >= 0 && beforeIndex < len(blocks) {
+		limit = beforeIndex
 	}
-	body = strings.TrimRight(body, "\n")
-	if strings.TrimSpace(body) == "" {
-		return "", "", false
+
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if i < limit {
+			selected := blocks[i]
+			return selected.lang, selected.body, selected.idx, true
+		}
 	}
-	return lang, body, true
+
+	return "", "", 0, false
 }
 
 func buildFencedBlock(lang, code string) string {

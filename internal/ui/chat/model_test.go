@@ -331,31 +331,71 @@ func TestTabSelectsSnippet(t *testing.T) {
 	if typed.snippet.Code != "echo hi" {
 		t.Fatalf("unexpected snippet code: %q", typed.snippet.Code)
 	}
+	if typed.snippet.BlockIndex != 0 {
+		t.Fatalf("expected block index 0, got %d", typed.snippet.BlockIndex)
+	}
 	if raw, ok := SelectedSnippet(typed); !ok || raw != "echo hi" {
 		t.Fatalf("selected snippet mismatch: %q ok=%v", raw, ok)
 	}
 }
 
-func TestTabTogglesSnippetOff(t *testing.T) {
+func TestTabCyclesThroughSnippets(t *testing.T) {
 	m := newModel(Options{SystemPrompt: "system"})
 	m.history = append(m.history,
-		lm.ChatMessage{Role: "assistant", Content: "```python\nprint('hi')\n```"},
+		lm.ChatMessage{Role: "assistant", Content: "```python\nprint('first')\n```\n```sh\necho second\n```"},
+		lm.ChatMessage{Role: "assistant", Content: "```bash\nls -la\n```"},
 	)
+
+	// First tab selects latest message's block
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	typed, ok := updated.(model)
+	first, ok := updated.(model)
+	if !ok || first.snippet == nil {
+		t.Fatalf("expected first snippet selection")
+	}
+	if first.snippet.Code != "ls -la" {
+		t.Fatalf("expected newest snippet, got %q", first.snippet.Code)
+	}
+	if first.snippet.BlockIndex != 0 || first.snippet.MessageIndex != 1 {
+		t.Fatalf("unexpected indices: msg %d block %d", first.snippet.MessageIndex, first.snippet.BlockIndex)
+	}
+
+	// Second tab moves to previous block (same message earlier block)
+	secondModel, _ := first.Update(tea.KeyMsg{Type: tea.KeyTab})
+	second, ok := secondModel.(model)
+	if !ok || second.snippet == nil {
+		t.Fatalf("expected second snippet selection")
+	}
+	if second.snippet.Code != "echo second" {
+		t.Fatalf("expected second snippet, got %q", second.snippet.Code)
+	}
+	if second.snippet.BlockIndex != 1 || second.snippet.MessageIndex != 0 {
+		t.Fatalf("unexpected indices for second snippet: msg %d block %d", second.snippet.MessageIndex, second.snippet.BlockIndex)
+	}
+
+	// Third tab moves to earliest block
+	thirdModel, _ := second.Update(tea.KeyMsg{Type: tea.KeyTab})
+	third, ok := thirdModel.(model)
+	if !ok || third.snippet == nil {
+		t.Fatalf("expected third snippet selection")
+	}
+	if third.snippet.Code != "print('first')" {
+		t.Fatalf("expected first snippet, got %q", third.snippet.Code)
+	}
+	if third.snippet.BlockIndex != 0 || third.snippet.MessageIndex != 0 {
+		t.Fatalf("unexpected indices for third snippet: msg %d block %d", third.snippet.MessageIndex, third.snippet.BlockIndex)
+	}
+
+	// Fourth tab should report no more snippets
+	fourthModel, _ := third.Update(tea.KeyMsg{Type: tea.KeyTab})
+	fourth, ok := fourthModel.(model)
 	if !ok {
-		t.Fatalf("expected model type, got %T", updated)
+		t.Fatalf("expected model type after fourth tab")
 	}
-	if typed.snippet == nil {
-		t.Fatalf("snippet should be active after first tab")
+	if fourth.snippet != nil {
+		t.Fatalf("expected snippet to be nil after cycling all")
 	}
-	updated2, _ := typed.Update(tea.KeyMsg{Type: tea.KeyTab})
-	typed2, ok := updated2.(model)
-	if !ok {
-		t.Fatalf("expected model type after second tab, got %T", updated2)
-	}
-	if typed2.snippet != nil {
-		t.Fatalf("expected snippet to be cleared after second tab")
+	if fourth.statusMessage != "No more snippets" {
+		t.Fatalf("expected status message about completion, got %q", fourth.statusMessage)
 	}
 }
 
