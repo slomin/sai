@@ -185,7 +185,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.snippet != nil {
 			switch msg.Type {
 			case tea.KeyEnter:
-				cmd := copyToClipboardCmd(m.snippet.Fenced)
+				cmd := copyToClipboardCmd(m.snippet.Code)
 				return m, tea.Batch(cmd, tea.Quit)
 			case tea.KeyEsc:
 				m.stopStreaming()
@@ -746,11 +746,11 @@ func SelectedSnippet(m tea.Model) (string, bool) {
 	switch v := m.(type) {
 	case model:
 		if v.snippet != nil {
-			return v.snippet.Fenced, true
+			return v.snippet.Code, true
 		}
 	case *model:
 		if v != nil && v.snippet != nil {
-			return v.snippet.Fenced, true
+			return v.snippet.Code, true
 		}
 	}
 	return "", false

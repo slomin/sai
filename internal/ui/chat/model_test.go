@@ -331,8 +331,8 @@ func TestTabSelectsSnippet(t *testing.T) {
 	if typed.snippet.Code != "echo hi" {
 		t.Fatalf("unexpected snippet code: %q", typed.snippet.Code)
 	}
-	if fenced, ok := SelectedSnippet(typed); !ok || fenced != "```sh\necho hi\n```" {
-		t.Fatalf("selected snippet mismatch: %q ok=%v", fenced, ok)
+	if raw, ok := SelectedSnippet(typed); !ok || raw != "echo hi" {
+		t.Fatalf("selected snippet mismatch: %q ok=%v", raw, ok)
 	}
 }
 

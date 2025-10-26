@@ -286,7 +286,10 @@ func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title 
 	}
 	if snippet, ok := chatu.SelectedSnippet(finalModel); ok {
 		fmt.Println()
-		fmt.Println(snippet)
+		fmt.Print(snippet)
+		if !strings.HasSuffix(snippet, "\n") {
+			fmt.Println()
+		}
 	}
 	return nil
 }
