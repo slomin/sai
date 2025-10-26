@@ -67,7 +67,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	trimmedPrompt := strings.TrimSpace(pendingPrompt)
 	if launch, ok := selectChatLaunch(cfg, trimmedPrompt); ok {
-		return runChat(ctx, client, launch.SystemPrompt, launch.Title, launch.AutoPrompt, !cfg.DisableStream, launch.IncludeContext)
+		return runChat(ctx, client, launch, !cfg.DisableStream)
 	}
 
 	enterAltScreen(os.Stdout)
@@ -104,6 +104,13 @@ func resolveLongChatPrompt(custom string) string {
 		return custom
 	}
 	return prompts.LongChatPrompt
+}
+
+func resolveInteractiveHelpPrompt(custom string) string {
+	if strings.TrimSpace(custom) != "" {
+		return custom
+	}
+	return prompts.InteractiveHelpPrompt
 }
 
 func resolveEndpointAndModel(cfg Config) Config {
@@ -301,18 +308,35 @@ func runHeadless(ctx context.Context, client *lm.Client, systemPrompt, pendingPr
 	return nil
 }
 
-func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title string, autoPrompt string, streamEnabled bool, includeContext bool) error {
+func runChat(ctx context.Context, client *lm.Client, launch chatLaunch, streamEnabled bool) error {
 	enterAltScreen(os.Stdout)
 
-	includeCtx := includeContext
+	includeCtx := launch.IncludeContext
+	var contextWindow *int
+	if launch.ShowContext {
+		lookupCtx := ctx
+		if lookupCtx == nil {
+			lookupCtx = context.Background()
+		}
+		lookupCtx, cancel := context.WithTimeout(lookupCtx, 2*time.Second)
+		defer cancel()
+		if limit, err := client.ContextWindow(lookupCtx); err == nil && limit > 0 {
+			contextWindow = &limit
+		} else if err != nil {
+			slog.Debug("chat: context window lookup failed", "err", err)
+		}
+	}
+
 	program := chatu.NewProgram(chatu.Options{
 		Context:        ctx,
 		Client:         client,
-		SystemPrompt:   systemPrompt,
-		Title:          title,
-		AutoPrompt:     autoPrompt,
+		SystemPrompt:   launch.SystemPrompt,
+		Title:          launch.Title,
+		AutoPrompt:     launch.AutoPrompt,
 		Stream:         streamEnabled,
 		IncludeContext: &includeCtx,
+		DisplayContext: launch.ShowContext,
+		ContextWindow:  contextWindow,
 	})
 	finalModel, err := program.Run()
 	leaveAltScreen(os.Stdout)
@@ -394,6 +418,7 @@ type chatLaunch struct {
 	Title          string
 	AutoPrompt     string
 	IncludeContext bool
+	ShowContext    bool
 }
 
 func selectChatLaunch(cfg Config, trimmedPrompt string) (chatLaunch, bool) {
@@ -403,6 +428,16 @@ func selectChatLaunch(cfg Config, trimmedPrompt string) (chatLaunch, bool) {
 			Title:          "SAI Intent Chat",
 			AutoPrompt:     defaultIntentPrompt,
 			IncludeContext: true,
+			ShowContext:    false,
+		}, true
+	}
+	if cfg.InteractiveHelp {
+		return chatLaunch{
+			SystemPrompt:   resolveInteractiveHelpPrompt(cfg.SystemPrompt),
+			Title:          "SAI Help Desk",
+			AutoPrompt:     "",
+			IncludeContext: false,
+			ShowContext:    false,
 		}, true
 	}
 	if cfg.LongChat {
@@ -411,6 +446,7 @@ func selectChatLaunch(cfg Config, trimmedPrompt string) (chatLaunch, bool) {
 			Title:          "SAI Long Chat",
 			AutoPrompt:     "",
 			IncludeContext: false,
+			ShowContext:    true,
 		}, true
 	}
 	if trimmedPrompt == "" {
@@ -419,6 +455,7 @@ func selectChatLaunch(cfg Config, trimmedPrompt string) (chatLaunch, bool) {
 			Title:          "SAI Chat",
 			AutoPrompt:     "",
 			IncludeContext: true,
+			ShowContext:    false,
 		}, true
 	}
 	return chatLaunch{}, false

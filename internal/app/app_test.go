@@ -20,6 +20,9 @@ func TestSelectChatLaunchGuessMode(t *testing.T) {
 	if !launch.IncludeContext {
 		t.Fatalf("intent chat should include context")
 	}
+	if launch.ShowContext {
+		t.Fatalf("intent chat should not show context meter")
+	}
 }
 
 func TestSelectChatLaunchEmptyPrompt(t *testing.T) {
@@ -39,6 +42,9 @@ func TestSelectChatLaunchEmptyPrompt(t *testing.T) {
 	}
 	if !launch.IncludeContext {
 		t.Fatalf("default chat should include context")
+	}
+	if launch.ShowContext {
+		t.Fatalf("default chat should not show context meter")
 	}
 }
 
@@ -66,6 +72,29 @@ func TestSelectChatLaunchLongChat(t *testing.T) {
 	}
 	if launch.IncludeContext {
 		t.Fatalf("long chat should disable context")
+	}
+	if !launch.ShowContext {
+		t.Fatalf("long chat should surface context meter")
+	}
+}
+
+func TestSelectChatLaunchInteractiveHelp(t *testing.T) {
+	cfg := Config{InteractiveHelp: true}
+	launch, ok := selectChatLaunch(cfg, "")
+	if !ok {
+		t.Fatalf("expected launch for interactive help")
+	}
+	if launch.SystemPrompt != resolveInteractiveHelpPrompt(cfg.SystemPrompt) {
+		t.Fatalf("interactive help prompt mismatch")
+	}
+	if launch.Title != "SAI Help Desk" {
+		t.Fatalf("interactive help title mismatch: %s", launch.Title)
+	}
+	if launch.IncludeContext {
+		t.Fatalf("interactive help should ignore workspace context")
+	}
+	if launch.ShowContext {
+		t.Fatalf("interactive help should not show context meter")
 	}
 }
 

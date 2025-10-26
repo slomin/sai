@@ -10,7 +10,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,6 +29,11 @@ type Client struct {
 	endpoint   string
 	model      string
 	apiKey     string
+	propsURL   *url.URL
+
+	contextMu      sync.Mutex
+	contextWindow  int
+	contextFetched bool
 }
 
 // NewClient constructs an HTTP client with sensible defaults.
@@ -39,11 +46,17 @@ func NewClient(endpoint, model, apiKey string) (*Client, error) {
 		Transport: transport,
 	}
 
+	var propsURL *url.URL
+	if parsed, err := url.Parse(endpoint); err == nil {
+		propsURL = parsed.ResolveReference(&url.URL{Path: "/props"})
+	}
+
 	return &Client{
 		httpClient: client,
 		endpoint:   endpoint,
 		model:      model,
 		apiKey:     apiKey,
+		propsURL:   propsURL,
 	}, nil
 }
 
@@ -58,6 +71,12 @@ type Usage struct {
 	PromptTokens     *int `json:"prompt_tokens,omitempty"`
 	CompletionTokens *int `json:"completion_tokens,omitempty"`
 	TotalTokens      *int `json:"total_tokens,omitempty"`
+}
+
+// ChatResult wraps a plain assistant reply with optional usage metadata.
+type ChatResult struct {
+	Content string
+	Usage   *Usage
 }
 
 // CompletionResult contains the structured answer and raw payload.
@@ -81,6 +100,7 @@ type StreamTimings struct {
 type StreamUpdate struct {
 	Content string
 	Timings *StreamTimings
+	Usage   *Usage
 }
 
 type StreamHandler func(StreamUpdate) error
@@ -112,18 +132,21 @@ func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) 
 }
 
 // Chat issues a conversational request and returns the assistant reply text.
-func (c *Client) Chat(ctx context.Context, systemPrompt string, history []ChatMessage) (string, error) {
+func (c *Client) Chat(ctx context.Context, systemPrompt string, history []ChatMessage) (ChatResult, error) {
 	messages := buildMessages(systemPrompt, history)
 	parsed, _, err := c.send(ctx, messages, defaultChatTemperature, false)
 	if err != nil {
-		return "", err
+		return ChatResult{}, err
 	}
 
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("response contained no choices")
+		return ChatResult{}, fmt.Errorf("response contained no choices")
 	}
 
-	return strings.TrimSpace(parsed.Choices[0].Message.Content), nil
+	return ChatResult{
+		Content: strings.TrimSpace(parsed.Choices[0].Message.Content),
+		Usage:   parsed.Usage,
+	}, nil
 }
 
 func (c *Client) StreamChat(ctx context.Context, systemPrompt string, history []ChatMessage, handler StreamHandler) error {
@@ -133,6 +156,10 @@ func (c *Client) StreamChat(ctx context.Context, systemPrompt string, history []
 		Messages:    messages,
 		Temperature: defaultChatTemperature,
 		Stream:      true,
+		StreamOptions: &streamOptions{
+			IncludeUsage: true,
+		},
+		ReturnProgress: true,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -196,7 +223,10 @@ func (c *Client) StreamChat(ctx context.Context, systemPrompt string, history []
 				PredictedPerSecond: chunk.Timings.PredictedPerSecond,
 			}
 		}
-		if update.Content == "" && update.Timings == nil {
+		if chunk.Usage != nil {
+			update.Usage = chunk.Usage
+		}
+		if update.Content == "" && update.Timings == nil && update.Usage == nil {
 			continue
 		}
 		if err := handler(update); err != nil {
@@ -209,6 +239,81 @@ func (c *Client) StreamChat(ctx context.Context, systemPrompt string, history []
 	}
 
 	return nil
+}
+
+// ContextWindow queries the backing server for its configured context window size.
+func (c *Client) ContextWindow(ctx context.Context) (int, error) {
+	c.contextMu.Lock()
+	defer c.contextMu.Unlock()
+
+	if c.contextFetched && c.contextWindow > 0 {
+		return c.contextWindow, nil
+	}
+
+	window, err := c.fetchContextWindow(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if window > 0 {
+		c.contextWindow = window
+		c.contextFetched = true
+	}
+	return window, nil
+}
+
+func (c *Client) fetchContextWindow(ctx context.Context) (int, error) {
+	if c.propsURL == nil {
+		return 0, fmt.Errorf("context metadata unavailable")
+	}
+
+	callCtx := ctx
+	if callCtx == nil {
+		callCtx = context.Background()
+	}
+
+	req, err := http.NewRequestWithContext(callCtx, http.MethodGet, c.propsURL.String(), nil)
+	if err != nil {
+		return 0, fmt.Errorf("create props request: %w", err)
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("fetch props: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ioReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("read props response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("props request returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var payload struct {
+		DefaultGenerationSettings struct {
+			NCtx   int `json:"n_ctx"`
+			Params struct {
+				NCtx *int `json:"n_ctx,omitempty"`
+			} `json:"params"`
+		} `json:"default_generation_settings"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return 0, fmt.Errorf("decode props payload: %w", err)
+	}
+
+	nCtx := payload.DefaultGenerationSettings.NCtx
+	if nCtx <= 0 && payload.DefaultGenerationSettings.Params.NCtx != nil {
+		nCtx = *payload.DefaultGenerationSettings.Params.NCtx
+	}
+	if nCtx <= 0 {
+		return 0, fmt.Errorf("context window not reported")
+	}
+	return nCtx, nil
 }
 
 func buildMessages(systemPrompt string, history []ChatMessage) []chatMessage {
@@ -246,10 +351,12 @@ func logRawResponse(body []byte) {
 }
 
 type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []chatMessage `json:"messages"`
-	Temperature float32       `json:"temperature,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
+	Model          string         `json:"model"`
+	Messages       []chatMessage  `json:"messages"`
+	Temperature    float32        `json:"temperature,omitempty"`
+	Stream         bool           `json:"stream,omitempty"`
+	StreamOptions  *streamOptions `json:"stream_options,omitempty"`
+	ReturnProgress bool           `json:"return_progress,omitempty"`
 }
 
 type chatMessage struct {
@@ -282,6 +389,7 @@ type streamChunk struct {
 	Timings *struct {
 		PredictedPerSecond *float64 `json:"predicted_per_second,omitempty"`
 	} `json:"timings,omitempty"`
+	Usage *Usage `json:"usage,omitempty"`
 }
 
 type structuredPayload struct {
@@ -363,4 +471,8 @@ func extractJSONBlock(text string) string {
 // helpers elsewhere.
 var ioReadAll = func(r io.Reader) ([]byte, error) {
 	return io.ReadAll(r)
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }

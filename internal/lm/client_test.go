@@ -46,7 +46,11 @@ func TestParseStructuredError(t *testing.T) {
 
 func TestStreamChatDeliversChunks(t *testing.T) {
 	type payload struct {
-		Stream bool `json:"stream"`
+		Stream         bool `json:"stream"`
+		ReturnProgress bool `json:"return_progress"`
+		StreamOptions  struct {
+			IncludeUsage bool `json:"include_usage"`
+		} `json:"stream_options"`
 	}
 
 	var request payload
@@ -93,6 +97,12 @@ func TestStreamChatDeliversChunks(t *testing.T) {
 
 	if !request.Stream {
 		t.Fatalf("expected stream flag to be true in request payload")
+	}
+	if !request.StreamOptions.IncludeUsage {
+		t.Fatalf("expected include_usage to be true in stream options")
+	}
+	if !request.ReturnProgress {
+		t.Fatalf("expected return_progress to be true in request payload")
 	}
 
 	want := []string{"hello", " world"}
@@ -195,5 +205,73 @@ func TestStreamChatEmitsTimings(t *testing.T) {
 	}
 	if gotTimings[0].PredictedPerSecond == nil || *gotTimings[0].PredictedPerSecond != 12.5 {
 		t.Fatalf("unexpected predicted rate: %+v", gotTimings[0])
+	}
+}
+
+func TestStreamChatReportsUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3,\"total_tokens\":15}}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "model", "")
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var usages []*Usage
+	err = client.StreamChat(context.Background(), "system", nil, func(update StreamUpdate) error {
+		if update.Usage != nil {
+			usages = append(usages, update.Usage)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamChat returned error: %v", err)
+	}
+	if len(usages) != 1 {
+		t.Fatalf("expected usage metadata, got %d entries", len(usages))
+	}
+	if usages[0].TotalTokens == nil || *usages[0].TotalTokens != 15 {
+		t.Fatalf("unexpected total tokens: %+v", usages[0])
+	}
+}
+
+func TestContextWindowFetch(t *testing.T) {
+	propsBody := `{
+		"default_generation_settings": {
+			"id": 0,
+			"n_ctx": 4096,
+			"params": {
+				"n_ctx": 4096
+			}
+		}
+	}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/props"):
+			io.WriteString(w, propsBody)
+		default:
+			w.WriteHeader(http.StatusOK)
+			io.WriteString(w, "{}")
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL+"/v1/chat/completions", "model", "")
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	got, err := client.ContextWindow(context.Background())
+	if err != nil {
+		t.Fatalf("ContextWindow returned error: %v", err)
+	}
+	if got != 4096 {
+		t.Fatalf("expected context window 4096, got %d", got)
 	}
 }

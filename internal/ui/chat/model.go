@@ -29,6 +29,8 @@ type Options struct {
 	AutoPrompt     string
 	Stream         bool
 	IncludeContext *bool
+	DisplayContext bool
+	ContextWindow  *int
 }
 
 // NewProgram wires the chat model.
@@ -58,6 +60,9 @@ type model struct {
 	pendingRequest  []lm.ChatMessage
 	streamLauncher  streamLauncher
 	snapshotCfg     *appctx.SnapshotConfig
+	displayContext  bool
+	contextLimit    int
+	contextUsed     int
 	tail            bool
 	statusMessage   string
 	mdRenderer      *glamour.TermRenderer
@@ -81,6 +86,7 @@ type autoStartMsg struct{}
 
 type assistantResponseMsg struct {
 	content string
+	usage   *lm.Usage
 }
 
 type assistantErrorMsg struct {
@@ -92,6 +98,7 @@ type streamEvent struct {
 	err           error
 	done          bool
 	predictedRate *float64
+	usage         *lm.Usage
 }
 
 type streamEventMsg struct {
@@ -127,6 +134,11 @@ func newModel(opts Options) model {
 		snapshotCfg = &cfg
 	}
 
+	var contextLimit int
+	if opts.ContextWindow != nil && *opts.ContextWindow > 0 {
+		contextLimit = *opts.ContextWindow
+	}
+
 	return model{
 		ctx:            opts.Context,
 		client:         opts.Client,
@@ -139,6 +151,8 @@ func newModel(opts Options) model {
 		streamEnabled:  opts.Stream,
 		streamLauncher: defaultStreamLauncher,
 		snapshotCfg:    snapshotCfg,
+		displayContext: opts.DisplayContext,
+		contextLimit:   contextLimit,
 		tail:           true,
 		mdWidth:        0,
 	}
@@ -181,6 +195,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sending = false
 		m.err = nil
 		m.statusMessage = ""
+		m.applyUsage(msg.usage)
 		m.tail = true
 		m.history = append(m.history, lm.ChatMessage{Role: "assistant", Content: msg.content})
 		m.refreshViewport()
@@ -306,10 +321,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	headerText := m.title
+	if m.displayContext {
+		if summary := m.contextSummary(); summary != "" {
+			headerText = fmt.Sprintf("%s  ·  %s", headerText, summary)
+		}
+	}
 	header := lipgloss.NewStyle().
 		Foreground(colorAccent).
 		Bold(true).
-		Render(m.title)
+		Render(headerText)
 
 	status := m.renderStatus()
 	snippet := ""
@@ -362,6 +383,24 @@ func (m model) renderFooterHints() string {
 		hints = append(hints, "Tab select snippet")
 	}
 	return lipgloss.NewStyle().Foreground(colorMuted).Render(strings.Join(hints, " • "))
+}
+
+func (m model) contextSummary() string {
+	if !m.displayContext {
+		return ""
+	}
+	if m.contextLimit <= 0 {
+		return "Ctx: unknown"
+	}
+	used := m.contextUsed
+	if used < 0 {
+		used = 0
+	}
+	if used > m.contextLimit {
+		used = m.contextLimit
+	}
+	left := m.contextLimit - used
+	return fmt.Sprintf("Ctx %d/%d (%d left)", used, m.contextLimit, left)
 }
 
 func (m model) hasSnippetAvailable() bool {
@@ -450,6 +489,27 @@ func (m model) composePrompt(input string) (string, error) {
 	return appctx.ComposePromptWithConfig(input, *m.snapshotCfg)
 }
 
+func (m *model) applyUsage(usage *lm.Usage) {
+	if usage == nil {
+		return
+	}
+	total := 0
+	if usage.TotalTokens != nil {
+		total = *usage.TotalTokens
+	} else {
+		if usage.PromptTokens != nil {
+			total += *usage.PromptTokens
+		}
+		if usage.CompletionTokens != nil {
+			total += *usage.CompletionTokens
+		}
+	}
+	if total < 0 {
+		total = 0
+	}
+	m.contextUsed = total
+}
+
 func (m *model) startStreaming(history []lm.ChatMessage) tea.Cmd {
 	m.stopStreaming()
 	m.resetStreamStats()
@@ -496,7 +556,10 @@ func defaultStreamLauncher(ctx context.Context, client *lm.Client, system string
 				rate := *update.Timings.PredictedPerSecond
 				evt.predictedRate = &rate
 			}
-			if evt.chunk == "" && evt.predictedRate == nil {
+			if update.Usage != nil {
+				evt.usage = update.Usage
+			}
+			if evt.chunk == "" && evt.predictedRate == nil && evt.usage == nil {
 				return nil
 			}
 			select {
@@ -578,11 +641,11 @@ func sendChatCmd(ctx context.Context, client *lm.Client, system string, history 
 		if callCtx == nil {
 			callCtx = context.Background()
 		}
-		response, err := client.Chat(callCtx, system, history)
+		result, err := client.Chat(callCtx, system, history)
 		if err != nil {
 			return assistantErrorMsg{err: err}
 		}
-		return assistantResponseMsg{content: response}
+		return assistantResponseMsg{content: result.Content, usage: result.Usage}
 	}
 }
 
@@ -856,6 +919,10 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 		m.pendingRequest = nil
 		m.refreshViewport()
 		return m, nil
+	}
+
+	if ev.usage != nil {
+		m.applyUsage(ev.usage)
 	}
 
 	if ev.predictedRate != nil {

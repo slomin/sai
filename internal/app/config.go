@@ -8,6 +8,7 @@ type Config struct {
 	LocalPreset      bool
 	GuessMode        bool
 	LongChat         bool
+	InteractiveHelp  bool
 	EndpointProvided bool
 	ModelProvided    bool
 	DisableStream    bool

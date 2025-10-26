@@ -177,7 +177,41 @@ func TestHandleAutoStartWithoutContext(t *testing.T) {
 	}
 }
 
+func TestContextSummaryTracksUsage(t *testing.T) {
+	limit := 4096
+	m := newModel(Options{SystemPrompt: "system", DisplayContext: true, ContextWindow: &limit})
+
+	initial := m.contextSummary()
+	if !strings.Contains(initial, "0/4096") {
+		t.Fatalf("expected initial context summary to mention 0/4096, got %q", initial)
+	}
+
+	m.applyUsage(&lm.Usage{TotalTokens: intPtr(1024)})
+	updated := m.contextSummary()
+	if !strings.Contains(updated, "1024/4096") {
+		t.Fatalf("expected updated summary to mention 1024/4096, got %q", updated)
+	}
+}
+
+func TestHandleStreamEventUsageUpdatesContext(t *testing.T) {
+	limit := 2048
+	m := newModel(Options{SystemPrompt: "system", Stream: true, DisplayContext: true, ContextWindow: &limit})
+
+	updated, _ := m.handleStreamEvent(streamEvent{usage: &lm.Usage{TotalTokens: intPtr(512)}})
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	if typed.contextUsed != 512 {
+		t.Fatalf("expected contextUsed to be 512, got %d", typed.contextUsed)
+	}
+}
+
 func boolPtr(v bool) *bool {
+	return &v
+}
+
+func intPtr(v int) *int {
 	return &v
 }
 

@@ -53,6 +53,8 @@ func parseFlags() app.Config {
 	flag.BoolVar(&cfg.GuessMode, "g", false, "start intent-prediction chat mode (alias)")
 	flag.BoolVar(&cfg.LongChat, "long-chat", false, "start a long-form chat with a minimal system prompt")
 	flag.BoolVar(&cfg.LongChat, "lc", false, "start a long-form chat with a minimal system prompt (alias)")
+	flag.BoolVar(&cfg.InteractiveHelp, "interactive-help", false, "open the interactive SAI help desk")
+	flag.BoolVar(&cfg.InteractiveHelp, "ih", false, "open the interactive SAI help desk (alias)")
 
 	flag.Parse()
 	cfg.Args = flag.Args()
