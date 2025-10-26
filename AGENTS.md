@@ -11,7 +11,7 @@
 - `./sai_deploy.sh` – produces `build/sai` and installs it to `/usr/local/bin/sai`; the script escalates via `sudo` automatically.
 
 ## Project Structure & Module Organization
-- `go.mod` at the repository root declares the `github.com/sai-project/sai-go` module.
+- `go.mod` at the repository root declares the `github.com/slomin/sai-go` module.
 - `cmd/sai`: CLI entrypoint and flag parsing.
 - `internal/app`, `context`, `lm`, `ui`, `ui/chat`, `prompts`: state orchestration, context capture, LM client, Bubble Tea models, and system prompt text respectively.
 - Tests live alongside implementations (`internal/*_test.go`). `build/` holds compiled binaries when `sai_deploy.sh` runs.

@@ -156,16 +156,21 @@ func (c *Client) StreamChat(ctx context.Context, systemPrompt string, history []
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		line := scanner.Text()
+		line = strings.TrimSuffix(line, "\r")
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue
 		}
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "[DONE]" {
+		payload := strings.TrimPrefix(line, "data:")
+		if len(payload) > 0 && payload[0] == ' ' {
+			payload = payload[1:]
+		}
+		if strings.TrimSpace(payload) == "[DONE]" {
 			return nil
 		}
 
@@ -177,7 +182,7 @@ func (c *Client) StreamChat(ctx context.Context, systemPrompt string, history []
 			continue
 		}
 		delta := chunk.Choices[0].Delta.Content
-		if strings.TrimSpace(delta) == "" {
+		if delta == "" {
 			continue
 		}
 		if err := handler(delta); err != nil {

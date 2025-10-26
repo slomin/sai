@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sai-project/sai-go/internal/app"
+	"github.com/slomin/sai/internal/app"
 )
 
 func main() {

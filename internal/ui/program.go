@@ -14,8 +14,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	appctx "github.com/sai-project/sai-go/internal/context"
-	"github.com/sai-project/sai-go/internal/lm"
+	appctx "github.com/slomin/sai/internal/context"
+	"github.com/slomin/sai/internal/lm"
 )
 
 // Options configure the Bubble Tea program.

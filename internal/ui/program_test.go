@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	"github.com/sai-project/sai-go/internal/lm"
+	"github.com/slomin/sai/internal/lm"
 )
 
 func TestPreviewText(t *testing.T) {

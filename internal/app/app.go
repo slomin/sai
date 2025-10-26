@@ -13,11 +13,11 @@ import (
 
 	"golang.org/x/term"
 
-	appctx "github.com/sai-project/sai-go/internal/context"
-	"github.com/sai-project/sai-go/internal/lm"
-	"github.com/sai-project/sai-go/internal/prompts"
-	"github.com/sai-project/sai-go/internal/ui"
-	chatu "github.com/sai-project/sai-go/internal/ui/chat"
+	appctx "github.com/slomin/sai/internal/context"
+	"github.com/slomin/sai/internal/lm"
+	"github.com/slomin/sai/internal/prompts"
+	"github.com/slomin/sai/internal/ui"
+	chatu "github.com/slomin/sai/internal/ui/chat"
 )
 
 const (

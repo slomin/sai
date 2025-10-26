@@ -2,11 +2,12 @@ package chat
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/sai-project/sai-go/internal/lm"
+	"github.com/slomin/sai/internal/lm"
 )
 
 func TestHandleAutoStartAppendsPrompt(t *testing.T) {
@@ -242,17 +243,17 @@ func TestAppendStreamChunkPreservesNewlines(t *testing.T) {
 	}
 }
 
-func TestAppendStreamChunkCoalescesOverlappingContent(t *testing.T) {
+func TestAppendStreamChunkAppendsVerbatim(t *testing.T) {
 	m := newModel(Options{SystemPrompt: "system", Stream: true})
 	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: "hello"})
 	m.addAssistantPlaceholder()
 
-	m.appendStreamChunk("Partial answer")
-	m.appendStreamChunk("Partial answer continued")
+	m.appendStreamChunk("print('hi')\n")
+	m.appendStreamChunk("    return 42\n")
 
 	last := m.history[len(m.history)-1]
-	if last.Content != "Partial answer continued" {
-		t.Fatalf("expected overlapping chunk to replace content, got %q", last.Content)
+	if last.Content != "print('hi')\n    return 42\n" {
+		t.Fatalf("expected chunk content to be appended verbatim, got %q", last.Content)
 	}
 }
 
@@ -282,6 +283,28 @@ func TestHandleStreamEventDoesNotForceScrollWhenNotAtBottom(t *testing.T) {
 	}
 	if typed.viewport.YOffset != 0 {
 		t.Fatalf("expected viewport Y offset to remain 0, got %d", typed.viewport.YOffset)
+	}
+}
+
+func TestHandleStreamEventAutoClosesFence(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: "hello"})
+	m.streamCh = make(chan streamEvent)
+	m.streamCancel = func() {}
+	m.sending = true
+
+	m.appendStreamChunk("```sh\nls\n")
+	updated, _ := m.handleStreamEvent(streamEvent{done: true})
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	last := typed.history[len(typed.history)-1].Content
+	if strings.Count(last, "```")%2 != 0 {
+		t.Fatalf("expected code fence to be closed, got %q", last)
+	}
+	if !strings.HasSuffix(last, "```") {
+		t.Fatalf("expected closing fence at end, got %q", last)
 	}
 }
 
@@ -316,7 +339,6 @@ func TestQuitMsgStopsStreaming(t *testing.T) {
 	m.streamCancel = func() {
 		cancelled = true
 	}
-	m.streamBuffer = "partial"
 
 	updated, _ := m.Update(tea.QuitMsg{})
 	typed, ok := updated.(model)
@@ -328,8 +350,5 @@ func TestQuitMsgStopsStreaming(t *testing.T) {
 	}
 	if typed.streamCh != nil {
 		t.Fatalf("expected stream channel to be cleared")
-	}
-	if typed.streamBuffer != "" {
-		t.Fatalf("expected stream buffer to be cleared")
 	}
 }

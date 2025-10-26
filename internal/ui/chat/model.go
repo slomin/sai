@@ -11,10 +11,11 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
-	appctx "github.com/sai-project/sai-go/internal/context"
-	"github.com/sai-project/sai-go/internal/lm"
+	appctx "github.com/slomin/sai/internal/context"
+	"github.com/slomin/sai/internal/lm"
 )
 
 // Options configure the chat Bubble Tea program.
@@ -53,9 +54,9 @@ type model struct {
 	streamCancel   context.CancelFunc
 	pendingRequest []lm.ChatMessage
 	streamLauncher streamLauncher
-	streamBuffer   string
 	tail           bool
 	statusMessage  string
+	mdRenderer     *glamour.TermRenderer
 }
 
 type autoStartMsg struct{}
@@ -93,6 +94,15 @@ func newModel(opts Options) model {
 	input.Prompt = "› "
 	input.Focus()
 
+	var renderer *glamour.TermRenderer
+	if r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithEmoji(),
+		glamour.WithWordWrap(0),
+	); err == nil {
+		renderer = r
+	}
+
 	return model{
 		ctx:            opts.Context,
 		client:         opts.Client,
@@ -105,6 +115,7 @@ func newModel(opts Options) model {
 		streamEnabled:  opts.Stream,
 		streamLauncher: defaultStreamLauncher,
 		tail:           true,
+		mdRenderer:     renderer,
 	}
 }
 
@@ -133,6 +144,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Width = msg.Width
 		m.viewport.Height = max(6, msg.Height-6)
 		m.input.Width = max(10, msg.Width-4)
+		if r, err := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithEmoji(),
+			glamour.WithWordWrap(max(0, msg.Width-6)),
+		); err == nil {
+			m.mdRenderer = r
+		}
 		m.refreshViewport()
 		return m, nil
 	case tea.QuitMsg:
@@ -328,7 +346,6 @@ func (m *model) startStreaming(history []lm.ChatMessage) tea.Cmd {
 	m.stopStreaming()
 	m.pendingRequest = append([]lm.ChatMessage(nil), history...)
 	m.addAssistantPlaceholder()
-	m.streamBuffer = ""
 	m.tail = true
 	m.refreshViewport()
 	baseCtx := m.ctx
@@ -350,7 +367,6 @@ func (m *model) stopStreaming() {
 		m.streamCancel()
 		m.streamCancel = nil
 	}
-	m.streamBuffer = ""
 	m.streamCh = nil
 }
 
@@ -387,9 +403,9 @@ func (m *model) refreshViewport() {
 	for _, entry := range m.history {
 		switch entry.Role {
 		case "user":
-			fmt.Fprintf(&b, "You:\n%s\n\n", trimTrailingNewlines(entry.Content))
+			fmt.Fprintf(&b, "You:\n%s\n\n", entry.Content)
 		case "assistant":
-			fmt.Fprintf(&b, "SAI:\n%s\n\n", trimTrailingNewlines(entry.Content))
+			fmt.Fprintf(&b, "SAI:\n%s\n\n", m.renderAssistant(entry.Content))
 		}
 	}
 	if m.sending && (!m.streamEnabled || m.streamCh == nil) {
@@ -399,6 +415,15 @@ func (m *model) refreshViewport() {
 	if m.tail {
 		m.viewport.GotoBottom()
 	}
+}
+
+func (m *model) renderAssistant(content string) string {
+	if m.mdRenderer != nil {
+		if rendered, err := m.mdRenderer.Render(content); err == nil {
+			return strings.TrimRight(rendered, "\n")
+		}
+	}
+	return content
 }
 
 func sendChatCmd(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) tea.Cmd {
@@ -456,16 +481,7 @@ func (m *model) appendStreamChunk(chunk string) {
 	}
 	m.ensureAssistantEntry()
 	idx := len(m.history) - 1
-	current := m.streamBuffer
-	if current == "" {
-		current = m.history[idx].Content
-	}
-	merged := mergeStreamContent(current, chunk)
-	if merged == current {
-		return
-	}
-	m.streamBuffer = merged
-	m.history[idx].Content = merged
+	m.history[idx].Content += chunk
 }
 
 func (m *model) triggerCopyLastAssistant() tea.Cmd {
@@ -494,56 +510,20 @@ func (m *model) dropAssistantPlaceholder() {
 	}
 }
 
-func mergeStreamContent(current, chunk string) string {
-	if chunk == "" {
-		return current
+func (m *model) closeOpenFence() {
+	if len(m.history) == 0 {
+		return
 	}
-	normalized := strings.ReplaceAll(chunk, "\r\n", "\n")
-	if strings.Contains(normalized, "\r") {
-		parts := strings.Split(normalized, "\r")
-		base := current
-		for i, part := range parts {
-			if part == "" {
-				continue
-			}
-			if i == 0 {
-				base = mergeStreamContent(base, part)
-				continue
-			}
-			base = replaceLastLine(base, part)
+	idx := len(m.history) - 1
+	if m.history[idx].Role != "assistant" {
+		return
+	}
+	if strings.Count(m.history[idx].Content, "```")%2 != 0 {
+		if !strings.HasSuffix(m.history[idx].Content, "\n") {
+			m.history[idx].Content += "\n"
 		}
-		return base
+		m.history[idx].Content += "```"
 	}
-	return mergeStreamContentNoCarriage(current, normalized)
-}
-
-func mergeStreamContentNoCarriage(current, chunk string) string {
-	if chunk == "" {
-		return current
-	}
-	if strings.HasPrefix(current, chunk) {
-		return current
-	}
-	overlap := longestOverlapSuffix(current, chunk)
-	return current + chunk[overlap:]
-}
-
-func replaceLastLine(current, replacement string) string {
-	prefix := ""
-	if idx := strings.LastIndex(current, "\n"); idx >= 0 {
-		prefix = current[:idx+1]
-	}
-	return mergeStreamContentNoCarriage(prefix, replacement)
-}
-
-func longestOverlapSuffix(current, chunk string) int {
-	maxLen := min(len(current), len(chunk))
-	for i := maxLen; i > 0; i-- {
-		if strings.HasSuffix(current, chunk[:i]) {
-			return i
-		}
-	}
-	return 0
 }
 
 func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
@@ -583,6 +563,7 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 
 	if ev.done {
 		m.stopStreaming()
+		m.closeOpenFence()
 		m.sending = false
 		m.pendingRequest = nil
 		m.refreshViewport()
@@ -613,19 +594,4 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func trimTrailingNewlines(in string) string {
-	if in == "" {
-		return in
-	}
-	normalized := strings.ReplaceAll(in, "\r\n", "\n")
-	return strings.TrimRight(normalized, "\n")
 }
