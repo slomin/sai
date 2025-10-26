@@ -308,3 +308,28 @@ func TestTriggerCopyLastAssistantSkipsEmptyReplies(t *testing.T) {
 		t.Fatalf("expected copy command when assistant reply present")
 	}
 }
+
+func TestQuitMsgStopsStreaming(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	cancelled := false
+	m.streamCh = make(chan streamEvent)
+	m.streamCancel = func() {
+		cancelled = true
+	}
+	m.streamBuffer = "partial"
+
+	updated, _ := m.Update(tea.QuitMsg{})
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	if !cancelled {
+		t.Fatalf("expected cancel function to run")
+	}
+	if typed.streamCh != nil {
+		t.Fatalf("expected stream channel to be cleared")
+	}
+	if typed.streamBuffer != "" {
+		t.Fatalf("expected stream buffer to be cleared")
+	}
+}

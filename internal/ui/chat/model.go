@@ -135,6 +135,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Width = max(10, msg.Width-4)
 		m.refreshViewport()
 		return m, nil
+	case tea.QuitMsg:
+		m.stopStreaming()
+		return m, nil
 
 	case assistantResponseMsg:
 		m.sending = false
