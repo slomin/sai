@@ -269,7 +269,6 @@ func runHeadless(ctx context.Context, client *lm.Client, systemPrompt, pendingPr
 
 func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title string, autoPrompt string, streamEnabled bool) error {
 	enterAltScreen(os.Stdout)
-	defer leaveAltScreen(os.Stdout)
 
 	program := chatu.NewProgram(chatu.Options{
 		Context:      ctx,
@@ -279,10 +278,16 @@ func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title 
 		AutoPrompt:   autoPrompt,
 		Stream:       streamEnabled,
 	})
-	if _, err := program.Run(); err != nil {
+	finalModel, err := program.Run()
+	leaveAltScreen(os.Stdout)
+	clearPromptLine()
+	if err != nil {
 		return fmt.Errorf("run chat ui: %w", err)
 	}
-	clearPromptLine()
+	if snippet, ok := chatu.SelectedSnippet(finalModel); ok {
+		fmt.Println()
+		fmt.Println(snippet)
+	}
 	return nil
 }
 

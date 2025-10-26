@@ -59,6 +59,14 @@ type model struct {
 	statusMessage  string
 	mdRenderer     *glamour.TermRenderer
 	mdWidth        int
+	snippet        *snippetSelection
+}
+
+type snippetSelection struct {
+	MessageIndex int
+	Language     string
+	Code         string
+	Fenced       string
 }
 
 type autoStartMsg struct{}
@@ -145,6 +153,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case assistantResponseMsg:
+		m.clearSnippet()
 		m.sending = false
 		m.err = nil
 		m.statusMessage = ""
@@ -157,6 +166,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleStreamEvent(msg.event)
 
 	case assistantErrorMsg:
+		m.clearSnippet()
 		m.sending = false
 		m.err = msg.err
 		m.statusMessage = ""
@@ -172,6 +182,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMessage = ""
 		return m, nil
 	case tea.KeyMsg:
+		if m.snippet != nil {
+			switch msg.Type {
+			case tea.KeyEnter:
+				cmd := copyToClipboardCmd(m.snippet.Fenced)
+				return m, tea.Batch(cmd, tea.Quit)
+			case tea.KeyEsc:
+				m.stopStreaming()
+				return m, tea.Quit
+			}
+			if msg.String() == "tab" {
+				m.clearSnippet()
+				m.refreshViewport()
+				return m, nil
+			}
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.stopStreaming()
@@ -186,6 +211,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			return m, nil
+		case "tab":
+			if m.selectLatestSnippet() {
+				m.refreshViewport()
+				return m, nil
+			}
+			m.statusMessage = "No code block to select yet"
+			return m, tea.Tick(statusMessageTTL, func(time.Time) tea.Msg { return statusClearMsg{} })
 		case "alt+up":
 			m.viewport.LineUp(1)
 			m.tail = m.viewport.AtBottom()
@@ -238,17 +270,27 @@ func (m model) View() string {
 		Render(m.title)
 
 	status := m.renderStatus()
+	snippet := ""
+	if m.snippet != nil {
+		snippet = m.renderSnippetDrawer()
+	}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
+	segments := []string{
 		header,
 		"",
 		m.viewport.View(),
+	}
+	if snippet != "" {
+		segments = append(segments, "", snippet)
+	}
+	segments = append(segments,
 		"",
 		status,
 		m.input.View(),
-		lipgloss.NewStyle().Foreground(colorMuted).Render("Esc quit • Enter send • PgUp/PgDn scroll • Alt+C copy last reply"),
+		lipgloss.NewStyle().Foreground(colorMuted).Render("Esc quit • Enter send • PgUp/PgDn scroll • Alt+C copy last reply • Tab select snippet"),
 	)
+
+	return lipgloss.JoinVertical(lipgloss.Left, segments...)
 }
 
 func (m model) renderStatus() string {
@@ -278,6 +320,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	m.clearSnippet()
 	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: trimmed})
 	m.input.SetValue("")
 	m.sending = true
@@ -307,6 +350,7 @@ func (m model) handleAutoStart() (tea.Model, tea.Cmd) {
 	}
 	prompt := m.autoPrompt
 	m.autoPrompt = ""
+	m.clearSnippet()
 	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: prompt})
 	m.sending = true
 	m.err = nil
@@ -475,6 +519,7 @@ func (m *model) appendStreamChunk(chunk string) {
 }
 
 func (m *model) triggerCopyLastAssistant() tea.Cmd {
+	m.clearSnippet()
 	for i := len(m.history) - 1; i >= 0; i-- {
 		entry := m.history[i]
 		if entry.Role != "assistant" {
@@ -519,6 +564,55 @@ func (m *model) ensureRenderer(width int) {
 	}
 }
 
+func (m *model) renderSnippetDrawer() string {
+	if m.snippet == nil {
+		return ""
+	}
+	header := lipgloss.NewStyle().
+		Foreground(colorAccent).
+		Bold(true).
+		Render("Snippet ready · Enter to copy & exit")
+
+	codeStyle := lipgloss.NewStyle().
+		MarginTop(1).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorAccent)
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		header,
+		codeStyle.Render(m.snippet.Fenced),
+	)
+}
+
+func (m *model) clearSnippet() {
+	m.snippet = nil
+	m.statusMessage = ""
+}
+
+func (m *model) selectLatestSnippet() bool {
+	for i := len(m.history) - 1; i >= 0; i-- {
+		entry := m.history[i]
+		if entry.Role != "assistant" {
+			continue
+		}
+		if lang, code, ok := findLastCodeBlock(entry.Content); ok {
+			m.snippet = &snippetSelection{
+				MessageIndex: i,
+				Language:     lang,
+				Code:         code,
+				Fenced:       buildFencedBlock(lang, code),
+			}
+			m.statusMessage = "Snippet selected · Enter to copy & exit, Tab to cancel"
+			m.tail = true
+			m.viewport.GotoBottom()
+			return true
+		}
+	}
+	return false
+}
+
 func (m *model) closeOpenFence() {
 	if len(m.history) == 0 {
 		return
@@ -539,6 +633,7 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 	if ev.err != nil {
 		streamErr := ev.err
 		m.stopStreaming()
+		m.clearSnippet()
 		m.sending = false
 		if errors.Is(streamErr, context.Canceled) {
 			return m, nil
@@ -562,6 +657,7 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 	}
 
 	if ev.chunk != "" {
+		m.clearSnippet()
 		m.appendStreamChunk(ev.chunk)
 		m.refreshViewport()
 		if m.streamCh != nil {
@@ -585,6 +681,47 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func findLastCodeBlock(content string) (string, string, bool) {
+	end := strings.LastIndex(content, "```")
+	if end == -1 {
+		return "", "", false
+	}
+	start := strings.LastIndex(content[:end], "```")
+	if start == -1 {
+		return "", "", false
+	}
+	block := content[start+3 : end]
+	block = strings.ReplaceAll(block, "\r\n", "\n")
+	var lang, body string
+	if idx := strings.Index(block, "\n"); idx >= 0 {
+		lang = strings.TrimSpace(block[:idx])
+		body = block[idx+1:]
+	} else {
+		lang = strings.TrimSpace(block)
+		body = ""
+	}
+	body = strings.TrimRight(body, "\n")
+	if strings.TrimSpace(body) == "" {
+		return "", "", false
+	}
+	return lang, body, true
+}
+
+func buildFencedBlock(lang, code string) string {
+	var b strings.Builder
+	if lang != "" {
+		fmt.Fprintf(&b, "```%s\n", lang)
+	} else {
+		b.WriteString("```\n")
+	}
+	b.WriteString(code)
+	if !strings.HasSuffix(code, "\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteString("```")
+	return b.String()
+}
+
 var (
 	colorAccent = lipgloss.Color("#6CAAFF")
 	colorError  = lipgloss.Color("#FF7878")
@@ -603,4 +740,18 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func SelectedSnippet(m tea.Model) (string, bool) {
+	switch v := m.(type) {
+	case model:
+		if v.snippet != nil {
+			return v.snippet.Fenced, true
+		}
+	case *model:
+		if v != nil && v.snippet != nil {
+			return v.snippet.Fenced, true
+		}
+	}
+	return "", false
 }

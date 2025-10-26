@@ -308,6 +308,57 @@ func TestHandleStreamEventAutoClosesFence(t *testing.T) {
 	}
 }
 
+func TestTabSelectsSnippet(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system"})
+	m.history = append(m.history,
+		lm.ChatMessage{Role: "assistant", Content: "Here's code:\n```sh\necho hi\n```\n"},
+	)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("expected no command on tab, got %#v", cmd)
+	}
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	if typed.snippet == nil {
+		t.Fatalf("expected snippet selection to be active")
+	}
+	if typed.snippet.Language != "sh" {
+		t.Fatalf("expected language sh, got %q", typed.snippet.Language)
+	}
+	if typed.snippet.Code != "echo hi" {
+		t.Fatalf("unexpected snippet code: %q", typed.snippet.Code)
+	}
+	if fenced, ok := SelectedSnippet(typed); !ok || fenced != "```sh\necho hi\n```" {
+		t.Fatalf("selected snippet mismatch: %q ok=%v", fenced, ok)
+	}
+}
+
+func TestTabTogglesSnippetOff(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system"})
+	m.history = append(m.history,
+		lm.ChatMessage{Role: "assistant", Content: "```python\nprint('hi')\n```"},
+	)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	if typed.snippet == nil {
+		t.Fatalf("snippet should be active after first tab")
+	}
+	updated2, _ := typed.Update(tea.KeyMsg{Type: tea.KeyTab})
+	typed2, ok := updated2.(model)
+	if !ok {
+		t.Fatalf("expected model type after second tab, got %T", updated2)
+	}
+	if typed2.snippet != nil {
+		t.Fatalf("expected snippet to be cleared after second tab")
+	}
+}
+
 func TestTriggerCopyLastAssistantWithoutReplySetsStatus(t *testing.T) {
 	m := newModel(Options{SystemPrompt: "system", Stream: true})
 	cmd := m.triggerCopyLastAssistant()
