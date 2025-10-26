@@ -226,3 +226,85 @@ func TestAddAssistantPlaceholderAppendsNewEntry(t *testing.T) {
 		t.Fatalf("expected blank assistant entry, got %+v", last)
 	}
 }
+
+func TestAppendStreamChunkPreservesNewlines(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: "hello"})
+	m.addAssistantPlaceholder()
+
+	m.appendStreamChunk("First line")
+	m.appendStreamChunk("\n")
+	m.appendStreamChunk("Second line")
+
+	last := m.history[len(m.history)-1]
+	if last.Content != "First line\nSecond line" {
+		t.Fatalf("expected newline between lines, got %q", last.Content)
+	}
+}
+
+func TestAppendStreamChunkCoalescesOverlappingContent(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: "hello"})
+	m.addAssistantPlaceholder()
+
+	m.appendStreamChunk("Partial answer")
+	m.appendStreamChunk("Partial answer continued")
+
+	last := m.history[len(m.history)-1]
+	if last.Content != "Partial answer continued" {
+		t.Fatalf("expected overlapping chunk to replace content, got %q", last.Content)
+	}
+}
+
+func TestHandleStreamEventDoesNotForceScrollWhenNotAtBottom(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	m.history = append(m.history,
+		lm.ChatMessage{Role: "user", Content: "hello"},
+		lm.ChatMessage{Role: "assistant", Content: "Line 1\nLine 2\nLine 3"},
+	)
+	m.viewport.Width = 20
+	m.viewport.Height = 1
+	m.refreshViewport()
+	m.viewport.SetYOffset(0)
+	m.tail = false
+	if m.viewport.AtBottom() {
+		t.Fatalf("expected viewport to not be at bottom")
+	}
+
+	m.streamCh = make(chan streamEvent)
+	updated, cmd := m.handleStreamEvent(streamEvent{chunk: " more"})
+	if cmd == nil {
+		t.Fatalf("expected command to continue listening")
+	}
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	if typed.viewport.YOffset != 0 {
+		t.Fatalf("expected viewport Y offset to remain 0, got %d", typed.viewport.YOffset)
+	}
+}
+
+func TestTriggerCopyLastAssistantWithoutReplySetsStatus(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	cmd := m.triggerCopyLastAssistant()
+	if cmd == nil {
+		t.Fatalf("expected command when no assistant reply available")
+	}
+	if got := m.statusMessage; got == "" {
+		t.Fatalf("expected status message to explain copy failure")
+	}
+}
+
+func TestTriggerCopyLastAssistantSkipsEmptyReplies(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system"})
+	m.history = append(m.history,
+		lm.ChatMessage{Role: "assistant", Content: "   "},
+		lm.ChatMessage{Role: "assistant", Content: "full message"},
+	)
+
+	cmd := m.triggerCopyLastAssistant()
+	if cmd == nil {
+		t.Fatalf("expected copy command when assistant reply present")
+	}
+}
