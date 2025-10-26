@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	glamourStyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 
 	appctx "github.com/slomin/sai/internal/context"
@@ -57,6 +58,7 @@ type model struct {
 	tail           bool
 	statusMessage  string
 	mdRenderer     *glamour.TermRenderer
+	mdWidth        int
 }
 
 type autoStartMsg struct{}
@@ -94,15 +96,6 @@ func newModel(opts Options) model {
 	input.Prompt = "› "
 	input.Focus()
 
-	var renderer *glamour.TermRenderer
-	if r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithEmoji(),
-		glamour.WithWordWrap(0),
-	); err == nil {
-		renderer = r
-	}
-
 	return model{
 		ctx:            opts.Context,
 		client:         opts.Client,
@@ -115,7 +108,7 @@ func newModel(opts Options) model {
 		streamEnabled:  opts.Stream,
 		streamLauncher: defaultStreamLauncher,
 		tail:           true,
-		mdRenderer:     renderer,
+		mdWidth:        0,
 	}
 }
 
@@ -144,13 +137,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Width = msg.Width
 		m.viewport.Height = max(6, msg.Height-6)
 		m.input.Width = max(10, msg.Width-4)
-		if r, err := glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
-			glamour.WithEmoji(),
-			glamour.WithWordWrap(max(0, msg.Width-6)),
-		); err == nil {
-			m.mdRenderer = r
-		}
+		m.ensureRenderer(max(0, msg.Width-6))
 		m.refreshViewport()
 		return m, nil
 	case tea.QuitMsg:
@@ -418,6 +405,9 @@ func (m *model) refreshViewport() {
 }
 
 func (m *model) renderAssistant(content string) string {
+	if m.mdRenderer == nil {
+		m.ensureRenderer(max(0, m.viewport.Width-6))
+	}
 	if m.mdRenderer != nil {
 		if rendered, err := m.mdRenderer.Render(content); err == nil {
 			return strings.TrimRight(rendered, "\n")
@@ -507,6 +497,25 @@ func (m *model) dropAssistantPlaceholder() {
 	last := m.history[len(m.history)-1]
 	if last.Role == "assistant" && strings.TrimSpace(last.Content) == "" {
 		m.history = m.history[:len(m.history)-1]
+	}
+}
+
+func (m *model) ensureRenderer(width int) {
+	if width < 0 {
+		width = 0
+	}
+	if m.mdRenderer != nil && m.mdWidth == width {
+		return
+	}
+	opts := []glamour.TermRendererOption{
+		glamour.WithStandardStyle(glamourStyles.DarkStyle),
+	}
+	if width > 0 {
+		opts = append(opts, glamour.WithWordWrap(width))
+	}
+	if renderer, err := glamour.NewTermRenderer(opts...); err == nil {
+		m.mdRenderer = renderer
+		m.mdWidth = width
 	}
 }
 
