@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -40,26 +41,30 @@ func NewProgram(opts Options) *tea.Program {
 }
 
 type model struct {
-	ctx            context.Context
-	client         *lm.Client
-	system         string
-	title          string
-	autoPrompt     string
-	history        []lm.ChatMessage
-	viewport       viewport.Model
-	input          textinput.Model
-	sending        bool
-	err            error
-	streamEnabled  bool
-	streamCh       chan streamEvent
-	streamCancel   context.CancelFunc
-	pendingRequest []lm.ChatMessage
-	streamLauncher streamLauncher
-	tail           bool
-	statusMessage  string
-	mdRenderer     *glamour.TermRenderer
-	mdWidth        int
-	snippet        *snippetSelection
+	ctx             context.Context
+	client          *lm.Client
+	system          string
+	title           string
+	autoPrompt      string
+	history         []lm.ChatMessage
+	viewport        viewport.Model
+	input           textinput.Model
+	sending         bool
+	err             error
+	streamEnabled   bool
+	streamCh        chan streamEvent
+	streamCancel    context.CancelFunc
+	pendingRequest  []lm.ChatMessage
+	streamLauncher  streamLauncher
+	tail            bool
+	statusMessage   string
+	mdRenderer      *glamour.TermRenderer
+	mdWidth         int
+	snippet         *snippetSelection
+	streamStarted   time.Time
+	streamTokens    int
+	streamRate      float64
+	fallbackSnippet *snippetSelection
 }
 
 type snippetSelection struct {
@@ -81,9 +86,10 @@ type assistantErrorMsg struct {
 }
 
 type streamEvent struct {
-	chunk string
-	err   error
-	done  bool
+	chunk         string
+	err           error
+	done          bool
+	predictedRate *float64
 }
 
 type streamEventMsg struct {
@@ -186,7 +192,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snippetCopiedMsg:
 		if msg.err != nil {
 			m.err = fmt.Errorf("copy snippet: %w", msg.err)
-			m.statusMessage = "Copy failed – snippet remains selected"
+			m.statusMessage = "Clipboard unavailable – snippet shown below"
+			m.activateSnippetFallback()
+			m.refreshViewport()
 			return m, nil
 		}
 		m.err = nil
@@ -308,7 +316,7 @@ func (m model) View() string {
 		"",
 		status,
 		m.input.View(),
-		lipgloss.NewStyle().Foreground(colorMuted).Render("Esc quit • Enter send • PgUp/PgDn scroll • Alt+C copy last reply • Tab select snippet"),
+		m.renderFooterHints(),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, segments...)
@@ -318,7 +326,11 @@ func (m model) renderStatus() string {
 	if m.sending {
 		label := "Thinking…"
 		if m.streamEnabled && m.streamCh != nil {
-			label = "Streaming…"
+			if m.streamRate > 0 {
+				label = fmt.Sprintf("Streaming… (%.1f tok/s)", m.streamRate)
+			} else {
+				label = "Streaming…"
+			}
 		}
 		return lipgloss.NewStyle().Foreground(colorAccent).Render(label)
 	}
@@ -329,6 +341,29 @@ func (m model) renderStatus() string {
 		return lipgloss.NewStyle().Foreground(colorAccent).Render(m.statusMessage)
 	}
 	return ""
+}
+
+func (m model) renderFooterHints() string {
+	hints := []string{"Esc quit", "Enter send", "PgUp/PgDn scroll", "Alt+C copy last reply"}
+	if m.hasSnippetAvailable() {
+		hints = append(hints, "Tab select snippet")
+	}
+	return lipgloss.NewStyle().Foreground(colorMuted).Render(strings.Join(hints, " • "))
+}
+
+func (m model) hasSnippetAvailable() bool {
+	if m.snippet != nil {
+		return true
+	}
+	for _, entry := range m.history {
+		if entry.Role != "assistant" {
+			continue
+		}
+		if len(extractCodeBlocks(entry.Content)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (m model) handleSubmit() (tea.Model, tea.Cmd) {
@@ -342,6 +377,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	}
 
 	m.clearSnippet()
+	m.resetStreamStats()
 	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: trimmed})
 	m.input.SetValue("")
 	m.sending = true
@@ -396,6 +432,7 @@ func (m model) handleAutoStart() (tea.Model, tea.Cmd) {
 
 func (m *model) startStreaming(history []lm.ChatMessage) tea.Cmd {
 	m.stopStreaming()
+	m.resetStreamStats()
 	m.pendingRequest = append([]lm.ChatMessage(nil), history...)
 	m.addAssistantPlaceholder()
 	m.tail = true
@@ -420,6 +457,7 @@ func (m *model) stopStreaming() {
 		m.streamCancel = nil
 	}
 	m.streamCh = nil
+	m.resetStreamStats()
 }
 
 func defaultStreamLauncher(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) (chan streamEvent, context.CancelFunc) {
@@ -431,9 +469,18 @@ func defaultStreamLauncher(ctx context.Context, client *lm.Client, system string
 	streamCtx, cancel := context.WithCancel(baseCtx)
 	go func() {
 		defer close(ch)
-		handler := func(chunk string) error {
+		handler := func(update lm.StreamUpdate) error {
+			var evt streamEvent
+			evt.chunk = update.Content
+			if update.Timings != nil && update.Timings.PredictedPerSecond != nil {
+				rate := *update.Timings.PredictedPerSecond
+				evt.predictedRate = &rate
+			}
+			if evt.chunk == "" && evt.predictedRate == nil {
+				return nil
+			}
 			select {
-			case ch <- streamEvent{chunk: chunk}:
+			case ch <- evt:
 				return nil
 			case <-streamCtx.Done():
 				return streamCtx.Err()
@@ -452,16 +499,19 @@ func defaultStreamLauncher(ctx context.Context, client *lm.Client, system string
 
 func (m *model) refreshViewport() {
 	var b strings.Builder
-	for _, entry := range m.history {
+	for idx, entry := range m.history {
 		switch entry.Role {
 		case "user":
 			fmt.Fprintf(&b, "You:\n%s\n\n", entry.Content)
 		case "assistant":
-			fmt.Fprintf(&b, "SAI:\n%s\n\n", m.renderAssistant(entry.Content))
+			fmt.Fprintf(&b, "SAI:\n%s\n\n", m.renderAssistant(idx, entry.Content))
 		}
 	}
 	if m.sending && (!m.streamEnabled || m.streamCh == nil) {
 		fmt.Fprintf(&b, "SAI:\n%s\n\n", "…")
+	}
+	if m.fallbackSnippet != nil {
+		fmt.Fprintf(&b, "%s\n\n", m.renderFallbackSnippet())
 	}
 	m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
 	if m.tail {
@@ -469,16 +519,37 @@ func (m *model) refreshViewport() {
 	}
 }
 
-func (m *model) renderAssistant(content string) string {
+func (m *model) renderAssistant(index int, content string) string {
 	if m.mdRenderer == nil {
 		m.ensureRenderer(max(0, m.viewport.Width-6))
 	}
-	if m.mdRenderer != nil {
-		if rendered, err := m.mdRenderer.Render(content); err == nil {
-			return strings.TrimRight(rendered, "\n")
+	if m.mdRenderer == nil {
+		return content
+	}
+
+	rendered, err := m.mdRenderer.Render(content)
+	if err != nil {
+		return content
+	}
+
+	if m.snippet != nil && m.snippet.MessageIndex == index {
+		if blocks := extractCodeBlocks(content); len(blocks) > 0 {
+			target := m.snippet.BlockIndex
+			if target >= 0 && target < len(blocks) {
+				if start, end, blockRendered, ok := locateRenderedBlock(rendered, blocks, target, m.mdRenderer); ok {
+					highlight := renderStyledBlock(
+						snippetHighlightLabel,
+						snippetHighlightHeaderStyle,
+						snippetHighlightBodyStyle,
+						blockRendered,
+					) + trailingNewlines(blockRendered)
+					rendered = rendered[:start] + highlight + rendered[end:]
+				}
+			}
 		}
 	}
-	return content
+
+	return strings.TrimRight(rendered, "\n")
 }
 
 func sendChatCmd(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) tea.Cmd {
@@ -582,16 +653,31 @@ func (m *model) ensureRenderer(width int) {
 	if m.mdRenderer != nil && m.mdWidth == width {
 		return
 	}
-	opts := []glamour.TermRendererOption{
-		glamour.WithStandardStyle(glamourStyles.DarkStyle),
-	}
+	opts := []glamour.TermRendererOption{glamourStyleOption()}
 	if width > 0 {
 		opts = append(opts, glamour.WithWordWrap(width))
 	}
-	if renderer, err := glamour.NewTermRenderer(opts...); err == nil {
-		m.mdRenderer = renderer
-		m.mdWidth = width
+	renderer, err := glamour.NewTermRenderer(opts...)
+	if err != nil {
+		fallback := []glamour.TermRendererOption{glamour.WithStandardStyle(glamourStyles.DarkStyle)}
+		if width > 0 {
+			fallback = append(fallback, glamour.WithWordWrap(width))
+		}
+		renderer, err = glamour.NewTermRenderer(fallback...)
+		if err != nil {
+			return
+		}
 	}
+	m.mdRenderer = renderer
+	m.mdWidth = width
+}
+
+func glamourStyleOption() glamour.TermRendererOption {
+	style := strings.TrimSpace(os.Getenv("GLAMOUR_STYLE"))
+	if style == "" || strings.EqualFold(style, "auto") {
+		return glamour.WithStandardStyle(glamourStyles.DarkStyle)
+	}
+	return glamour.WithStylePath(style)
 }
 
 func (m *model) renderSnippetDrawer() string {
@@ -616,9 +702,55 @@ func (m *model) renderSnippetDrawer() string {
 	)
 }
 
+func (m *model) activateSnippetFallback() {
+	if m.snippet == nil {
+		m.fallbackSnippet = nil
+		return
+	}
+	copy := *m.snippet
+	m.fallbackSnippet = &copy
+}
+
+func (m *model) renderFallbackSnippet() string {
+	if m.fallbackSnippet == nil {
+		return ""
+	}
+	if m.mdRenderer == nil {
+		m.ensureRenderer(max(0, m.viewport.Width-6))
+	}
+	if m.mdRenderer == nil {
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			snippetFallbackHeaderStyle.Render(snippetFallbackLabel),
+			fallbackBodyStyle.Render(strings.TrimRight(m.fallbackSnippet.Fenced, "\n")),
+		)
+	}
+	rendered, err := m.mdRenderer.Render(m.fallbackSnippet.Fenced)
+	if err != nil {
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			snippetFallbackHeaderStyle.Render(snippetFallbackLabel),
+			fallbackBodyStyle.Render(strings.TrimRight(m.fallbackSnippet.Fenced, "\n")),
+		)
+	}
+	return renderStyledBlock(
+		snippetFallbackLabel,
+		snippetFallbackHeaderStyle,
+		fallbackBodyStyle,
+		rendered,
+	)
+}
+
 func (m *model) clearSnippet() {
 	m.snippet = nil
 	m.statusMessage = ""
+	m.fallbackSnippet = nil
+}
+
+func (m *model) resetStreamStats() {
+	m.streamStarted = time.Time{}
+	m.streamTokens = 0
+	m.streamRate = 0
 }
 
 func (m *model) selectLatestSnippet() bool {
@@ -626,6 +758,7 @@ func (m *model) selectLatestSnippet() bool {
 	if m.snippet != nil {
 		startIndex = m.snippet.MessageIndex
 	}
+	m.fallbackSnippet = nil
 
 	for i := startIndex; i >= 0; i-- {
 		entry := m.history[i]
@@ -705,7 +838,21 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if ev.predictedRate != nil {
+		m.streamRate = *ev.predictedRate
+	}
+
 	if ev.chunk != "" {
+		if m.streamTokens == 0 {
+			m.streamStarted = time.Now()
+		}
+		m.streamTokens++
+		if ev.predictedRate == nil && !m.streamStarted.IsZero() {
+			elapsed := time.Since(m.streamStarted).Seconds()
+			if elapsed > 0 {
+				m.streamRate = float64(m.streamTokens) / elapsed
+			}
+		}
 		m.clearSnippet()
 		m.appendStreamChunk(ev.chunk)
 		m.refreshViewport()
@@ -730,14 +877,14 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func findPrevCodeBlock(content string, beforeIndex int) (string, string, int, bool) {
-	type block struct {
-		lang string
-		body string
-		idx  int
-	}
+type codeBlock struct {
+	Lang     string
+	Body     string
+	Markdown string
+}
 
-	var blocks []block
+func extractCodeBlocks(content string) []codeBlock {
+	var blocks []codeBlock
 	offset := 0
 	for {
 		start := strings.Index(content[offset:], "```")
@@ -760,18 +907,22 @@ func findPrevCodeBlock(content string, beforeIndex int) (string, string, int, bo
 			lang = strings.TrimSpace(raw)
 			body = ""
 		}
-		body = strings.TrimRight(body, "\n")
+		body = strings.TrimRight(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
 		if strings.TrimSpace(body) != "" {
-			blocks = append(blocks, block{
-				lang: lang,
-				body: body,
-				idx:  len(blocks),
+			blocks = append(blocks, codeBlock{
+				Lang:     lang,
+				Body:     body,
+				Markdown: content[start : end+3],
 			})
 		}
 
 		offset = end + 3
 	}
+	return blocks
+}
 
+func findPrevCodeBlock(content string, beforeIndex int) (string, string, int, bool) {
+	blocks := extractCodeBlocks(content)
 	limit := len(blocks)
 	if beforeIndex >= 0 && beforeIndex < len(blocks) {
 		limit = beforeIndex
@@ -780,11 +931,55 @@ func findPrevCodeBlock(content string, beforeIndex int) (string, string, int, bo
 	for i := len(blocks) - 1; i >= 0; i-- {
 		if i < limit {
 			selected := blocks[i]
-			return selected.lang, selected.body, selected.idx, true
+			return selected.Lang, selected.Body, i, true
 		}
 	}
 
 	return "", "", 0, false
+}
+
+func locateRenderedBlock(rendered string, blocks []codeBlock, target int, renderer *glamour.TermRenderer) (int, int, string, bool) {
+	searchStart := 0
+	for idx, block := range blocks {
+		renderedBlock, err := renderer.Render(block.Markdown)
+		if err != nil {
+			return -1, -1, "", false
+		}
+		pos := strings.Index(rendered[searchStart:], renderedBlock)
+		if pos == -1 {
+			return -1, -1, "", false
+		}
+		pos += searchStart
+		if idx == target {
+			return pos, pos + len(renderedBlock), renderedBlock, true
+		}
+		searchStart = pos + len(renderedBlock)
+	}
+	return -1, -1, "", false
+}
+
+func renderStyledBlock(header string, headerStyle, bodyStyle lipgloss.Style, renderedBlock string) string {
+	trimmed := strings.TrimRight(renderedBlock, "\n")
+	if trimmed == "" {
+		trimmed = renderedBlock
+	}
+	body := bodyStyle.Render(trimmed)
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		headerStyle.Render(header),
+		body,
+	)
+}
+
+func trailingNewlines(s string) string {
+	count := 0
+	for i := len(s) - 1; i >= 0 && s[i] == '\n'; i-- {
+		count++
+	}
+	if count == 0 {
+		return ""
+	}
+	return strings.Repeat("\n", count)
 }
 
 func buildFencedBlock(lang, code string) string {
@@ -806,6 +1001,18 @@ var (
 	colorAccent = lipgloss.Color("#6CAAFF")
 	colorError  = lipgloss.Color("#FF7878")
 	colorMuted  = lipgloss.Color("#969BA5")
+)
+
+const (
+	snippetHighlightLabel = "▶ Snippet selected"
+	snippetFallbackLabel  = "Clipboard unavailable – snippet shown below"
+)
+
+var (
+	snippetHighlightHeaderStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	snippetFallbackHeaderStyle  = lipgloss.NewStyle().Foreground(colorError).Bold(true)
+	snippetHighlightBodyStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorAccent).Padding(0, 1)
+	fallbackBodyStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorError).Padding(0, 1)
 )
 
 func defaultTitle(in string) string {

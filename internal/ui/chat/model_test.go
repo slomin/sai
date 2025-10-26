@@ -2,8 +2,11 @@ package chat
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -399,6 +402,55 @@ func TestTabCyclesThroughSnippets(t *testing.T) {
 	}
 }
 
+func TestHandleStreamEventComputesStreamRate(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	m.streamCh = make(chan streamEvent)
+
+	updated, _ := m.handleStreamEvent(streamEvent{chunk: "Hello"})
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model, got %T", updated)
+	}
+	if typed.streamTokens != 1 {
+		t.Fatalf("expected 1 token, got %d", typed.streamTokens)
+	}
+	if typed.streamStarted.IsZero() {
+		t.Fatalf("expected stream start to be recorded")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	updated, _ = typed.handleStreamEvent(streamEvent{chunk: " world"})
+	typed, ok = updated.(model)
+	if !ok {
+		t.Fatalf("expected model, got %T", updated)
+	}
+	if typed.streamTokens != 2 {
+		t.Fatalf("expected 2 tokens, got %d", typed.streamTokens)
+	}
+	if typed.streamRate <= 0 {
+		t.Fatalf("expected positive stream rate, got %f", typed.streamRate)
+	}
+}
+
+func TestHandleStreamEventPrefersPredictedRate(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	m.streamCh = make(chan streamEvent)
+
+	rate := 37.5
+	updated, _ := m.handleStreamEvent(streamEvent{
+		chunk:         "Hello",
+		predictedRate: &rate,
+	})
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model, got %T", updated)
+	}
+	if typed.streamRate != rate {
+		t.Fatalf("expected stream rate %f, got %f", rate, typed.streamRate)
+	}
+}
+
 func TestTriggerCopyLastAssistantWithoutReplySetsStatus(t *testing.T) {
 	m := newModel(Options{SystemPrompt: "system", Stream: true})
 	cmd := m.triggerCopyLastAssistant()
@@ -441,5 +493,94 @@ func TestQuitMsgStopsStreaming(t *testing.T) {
 	}
 	if typed.streamCh != nil {
 		t.Fatalf("expected stream channel to be cleared")
+	}
+}
+
+func TestClipboardFallbackDisplaysSnippetInline(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system"})
+	m.history = append(m.history,
+		lm.ChatMessage{Role: "assistant", Content: "```sh\necho hi\n```"},
+	)
+	m.viewport.Width = 80
+	m.viewport.Height = 20
+	if !m.selectLatestSnippet() {
+		t.Fatalf("expected snippet selection to succeed")
+	}
+
+	updated, cmd := m.Update(snippetCopiedMsg{err: errors.New("clipboard unavailable")})
+	if cmd != nil {
+		t.Fatalf("expected no command on clipboard failure, got %#v", cmd)
+	}
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model, got %T", updated)
+	}
+	if typed.fallbackSnippet == nil {
+		t.Fatalf("expected fallback snippet to be set")
+	}
+	view := typed.View()
+	if !strings.Contains(view, "Clipboard unavailable – snippet shown below") {
+		t.Fatalf("expected fallback notice in view, got %q", view)
+	}
+}
+
+func TestFooterHintsToggleTabShortcut(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system"})
+	view := m.View()
+	if strings.Contains(view, "Tab select snippet") {
+		t.Fatalf("tab shortcut should be hidden when no snippets exist: %q", view)
+	}
+
+	m.history = append(m.history,
+		lm.ChatMessage{Role: "assistant", Content: "```python\nprint('hi')\n```"},
+	)
+	m.refreshViewport()
+	view = m.View()
+	if !strings.Contains(view, "Tab select snippet") {
+		t.Fatalf("tab shortcut should appear when snippets exist: %q", view)
+	}
+}
+
+func TestEnsureRendererRespectsEnvironmentStyle(t *testing.T) {
+	original := os.Getenv("GLAMOUR_STYLE")
+	defer os.Setenv("GLAMOUR_STYLE", original)
+
+	os.Setenv("GLAMOUR_STYLE", "dark")
+	darkModel := newModel(Options{SystemPrompt: "system"})
+	darkModel.viewport.Width = 80
+	darkRender := darkModel.renderAssistant(0, "```go\nfmt.Println(\"hi\")\n```")
+
+	os.Setenv("GLAMOUR_STYLE", "light")
+	lightModel := newModel(Options{SystemPrompt: "system"})
+	lightModel.viewport.Width = 80
+	lightRender := lightModel.renderAssistant(0, "```go\nfmt.Println(\"hi\")\n```")
+
+	if darkRender == lightRender {
+		t.Fatalf("expected different render output for dark vs light styles")
+	}
+}
+
+func TestSnippetSelectionHighlightsInView(t *testing.T) {
+	const highlightToken = "▶ Snippet selected"
+
+	m := newModel(Options{SystemPrompt: "system"})
+	m.history = append(m.history,
+		lm.ChatMessage{Role: "assistant", Content: "Here:\n```go\nfmt.Println(\"hi\")\n```"},
+	)
+	m.viewport.Width = 80
+	m.viewport.Height = 20
+	m.refreshViewport()
+	baseView := m.View()
+	if strings.Count(baseView, "Snippet selected") != 0 {
+		t.Fatalf("highlight text should not appear before snippet selection")
+	}
+
+	if !m.selectLatestSnippet() {
+		t.Fatalf("expected snippet selection")
+	}
+	m.refreshViewport()
+	view := m.View()
+	if strings.Count(view, "Snippet selected") < 2 {
+		t.Fatalf("expected highlighted snippet text to appear twice in view, got %q", view)
 	}
 }

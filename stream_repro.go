@@ -23,8 +23,10 @@ func main() {
 	}
 	history := []lm.ChatMessage{{Role: "user", Content: prompt1}}
 	fmt.Println("--- First stream ---")
-	err = client.StreamChat(ctx, "You are a helpful assistant.", history, func(chunk string) error {
-		fmt.Print(chunk)
+	err = client.StreamChat(ctx, "You are a helpful assistant.", history, func(update lm.StreamUpdate) error {
+		if update.Content != "" {
+			fmt.Print(update.Content)
+		}
 		return nil
 	})
 	fmt.Println()
@@ -39,8 +41,10 @@ func main() {
 		log.Fatalf("compose prompt 2: %v", err)
 	}
 	history = append(history, lm.ChatMessage{Role: "user", Content: prompt2})
-	err = client.StreamChat(ctx, "You are a helpful assistant.", history, func(chunk string) error {
-		fmt.Print(chunk)
+	err = client.StreamChat(ctx, "You are a helpful assistant.", history, func(update lm.StreamUpdate) error {
+		if update.Content != "" {
+			fmt.Print(update.Content)
+		}
 		return nil
 	})
 	fmt.Println()

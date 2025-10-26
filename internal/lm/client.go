@@ -74,7 +74,16 @@ type ChatMessage struct {
 	Content string
 }
 
-type StreamHandler func(chunk string) error
+type StreamTimings struct {
+	PredictedPerSecond *float64
+}
+
+type StreamUpdate struct {
+	Content string
+	Timings *StreamTimings
+}
+
+type StreamHandler func(StreamUpdate) error
 
 // Complete issues the request and parses the structured response.
 func (c *Client) Complete(ctx context.Context, systemPrompt, userPrompt string) (CompletionResult, error) {
@@ -178,14 +187,19 @@ func (c *Client) StreamChat(ctx context.Context, systemPrompt string, history []
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 			return fmt.Errorf("decode chunk: %w", err)
 		}
-		if len(chunk.Choices) == 0 {
+		var update StreamUpdate
+		if len(chunk.Choices) > 0 {
+			update.Content = chunk.Choices[0].Delta.Content
+		}
+		if chunk.Timings != nil {
+			update.Timings = &StreamTimings{
+				PredictedPerSecond: chunk.Timings.PredictedPerSecond,
+			}
+		}
+		if update.Content == "" && update.Timings == nil {
 			continue
 		}
-		delta := chunk.Choices[0].Delta.Content
-		if delta == "" {
-			continue
-		}
-		if err := handler(delta); err != nil {
+		if err := handler(update); err != nil {
 			return err
 		}
 	}
@@ -265,6 +279,9 @@ type streamChunk struct {
 	Choices []struct {
 		Delta deltaResponse `json:"delta"`
 	} `json:"choices"`
+	Timings *struct {
+		PredictedPerSecond *float64 `json:"predicted_per_second,omitempty"`
+	} `json:"timings,omitempty"`
 }
 
 type structuredPayload struct {

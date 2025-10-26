@@ -33,6 +33,7 @@
 ## Architecture Notes
 - Streaming logic surfaces via `internal/lm.Client.StreamChat` (tested against the remote default endpoint) and UI handlers; keep cross-cutting helpers in `internal/util` when introduced.
 - The CLI now targets the remote llama.cpp server by default; pass `-l`/`--local` for LM Studio. Update docs/tests accordingly when changing endpoints.
+- Glamour markdown rendering no longer auto-detects terminal backgrounds; set `GLAMOUR_STYLE` (`dark`, `light`, etc.) explicitly if your workflow depends on a non-default theme.
 - See `opencode_reference_arch.md` for structural inspiration and planned refactors (themes, componentization, command registry).
 
 ## Documentation & Research Workflow

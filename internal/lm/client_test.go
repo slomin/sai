@@ -79,8 +79,8 @@ func TestStreamChatDeliversChunks(t *testing.T) {
 	}
 
 	var chunks []string
-	handler := func(chunk string) error {
-		chunks = append(chunks, chunk)
+	handler := func(update StreamUpdate) error {
+		chunks = append(chunks, update.Content)
 		return nil
 	}
 
@@ -133,7 +133,7 @@ func TestStreamChatUnsupported(t *testing.T) {
 				t.Fatalf("NewClient returned error: %v", err)
 			}
 
-			err = client.StreamChat(context.Background(), "system", nil, func(string) error { return nil })
+			err = client.StreamChat(context.Background(), "system", nil, func(StreamUpdate) error { return nil })
 			if !errors.Is(err, ErrStreamUnsupported) {
 				t.Fatalf("expected ErrStreamUnsupported, got %v", err)
 			}
@@ -155,13 +155,45 @@ func TestStreamChatPropagatesHandlerError(t *testing.T) {
 		t.Fatalf("NewClient returned error: %v", err)
 	}
 
-	err = client.StreamChat(context.Background(), "system", nil, func(chunk string) error {
-		if strings.TrimSpace(chunk) != "" {
+	err = client.StreamChat(context.Background(), "system", nil, func(update StreamUpdate) error {
+		if strings.TrimSpace(update.Content) != "" {
 			return stop
 		}
 		return nil
 	})
 	if !errors.Is(err, stop) {
 		t.Fatalf("expected handler error to propagate, got %v", err)
+	}
+}
+
+func TestStreamChatEmitsTimings(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"timings\":{\"predicted_per_second\":12.5}}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "model", "")
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	var gotTimings []*StreamTimings
+	err = client.StreamChat(context.Background(), "system", nil, func(update StreamUpdate) error {
+		if update.Timings != nil {
+			gotTimings = append(gotTimings, update.Timings)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamChat returned error: %v", err)
+	}
+	if len(gotTimings) != 1 {
+		t.Fatalf("expected 1 timing entry, got %d", len(gotTimings))
+	}
+	if gotTimings[0].PredictedPerSecond == nil || *gotTimings[0].PredictedPerSecond != 12.5 {
+		t.Fatalf("unexpected predicted rate: %+v", gotTimings[0])
 	}
 }
