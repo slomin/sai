@@ -22,8 +22,8 @@ func main() {
 func parseFlags() app.Config {
 	var cfg app.Config
 
-	defaultEndpoint := envOrDefault("SAI_LM_ENDPOINT", "http://localhost:1234/v1/chat/completions")
-	defaultModel := envOrDefault("SAI_LM_MODEL", "qwen3-vl-4b-instruct-mlx")
+	defaultEndpoint := envOrDefault("SAI_LM_ENDPOINT", "http://192.168.1.90:8080/v1/chat/completions")
+	defaultModel := envOrDefault("SAI_LM_MODEL", "models/qwen3.gguf")
 	defaultAPIKey := os.Getenv("SAI_LM_API_KEY")
 	defaultSystemPrompt := os.Getenv("RAI_SYSTEM_PROMPT")
 	defaultLogFilter := envOrDefault("RAI_LOG", "info")
@@ -33,8 +33,8 @@ func parseFlags() app.Config {
 	flag.StringVar(&cfg.Endpoint, "endpoint", defaultEndpoint, "chat completion endpoint URL")
 	flag.StringVar(&cfg.Model, "model", defaultModel, "model identifier to request")
 	flag.StringVar(&cfg.APIKey, "api-key", defaultAPIKey, "optional API key or bearer token")
-	flag.BoolVar(&cfg.RemotePreset, "remote", false, "use the remote llama preset")
-	flag.BoolVar(&cfg.RemotePreset, "r", false, "use the remote llama preset (alias)")
+	flag.BoolVar(&cfg.LocalPreset, "local", false, "use the local LM Studio preset")
+	flag.BoolVar(&cfg.LocalPreset, "l", false, "use the local LM Studio preset (alias)")
 	flag.BoolVar(&cfg.DisableClipboard, "no-clipboard", defaultNoClipboard, "disable clipboard integration")
 	flag.BoolVar(&cfg.DisableStream, "no-stream", defaultNoStream, "disable streaming chat output")
 	flag.StringVar(&cfg.SystemPrompt, "system-prompt", defaultSystemPrompt, "custom system prompt (optional)")

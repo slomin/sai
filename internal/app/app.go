@@ -25,13 +25,19 @@ const (
 
 	remoteEndpoint = "http://192.168.1.90:8080/v1/chat/completions"
 	remoteModel    = "models/qwen3.gguf"
+	localEndpoint  = "http://localhost:1234/v1/chat/completions"
+	localModel     = "qwen3-vl-4b-instruct-mlx"
 
 	defaultIntentPrompt = "Please review the entire context snapshot and infer my most likely intent, highlighting relevant commands or next steps."
 )
 
 // Run orchestrates debug modes or the interactive Bubble Tea program.
 func Run(ctx context.Context, cfg Config) error {
-	if cfg.RemotePreset {
+	if cfg.LocalPreset {
+		cfg.Endpoint = localEndpoint
+		cfg.Model = localModel
+		fmt.Fprintf(os.Stderr, "using local LM Studio endpoint %s\n", cfg.Endpoint)
+	} else {
 		cfg.Endpoint = remoteEndpoint
 		cfg.Model = remoteModel
 		fmt.Fprintf(os.Stderr, "using remote llama endpoint %s\n", cfg.Endpoint)

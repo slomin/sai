@@ -1,0 +1,35 @@
+using remote llama endpoint http://192.168.1.90:8080/v1/chat/completions
+[?1049h[?25l[?2004h                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+› [7mT[0m[38;5;240mype a message and press Enter[0m[38;5;240m                                               [0m 
+[38;5;103mEsc to quit • Enter to send[0m                                                     [80Dhello there
+tell me a joke
+[2K[A[2K[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[80D[2K                                                                                
+[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B› hello there[7m [0m                                                                  
+[38;5;103mEsc to quit • Enter to send[0m                                                     [80D[2K[A[2K[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[80D[2K                                                                                
+[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B› hello there                                                                   
+[38;5;103mEsc to quit • Enter to send[0m                                                     [80D[2K[A[2K[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[80D[2K                                                                                
+[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B› hello there[7m [0m                                                                  
+[38;5;103mEsc to quit • Enter to send[0m                                                     [80D[2K[A[2K[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[80D[2K                                                                                
+[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B› hello theretell me a joke[7m [0m                                                    
+[38;5;103mEsc to quit • Enter to send[0m                                                     [80D[2K[?2004l[?25h[?1002l[?1003l[?1006l[2K[?1049l

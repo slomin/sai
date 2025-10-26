@@ -50,6 +50,7 @@ type model struct {
 	streamCh       chan streamEvent
 	streamCancel   context.CancelFunc
 	pendingRequest []lm.ChatMessage
+	streamLauncher streamLauncher
 }
 
 type autoStartMsg struct{}
@@ -72,6 +73,8 @@ type streamEventMsg struct {
 	event streamEvent
 }
 
+type streamLauncher func(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) (chan streamEvent, context.CancelFunc)
+
 func newModel(opts Options) model {
 	vp := viewport.New(0, 0)
 	vp.Style = lipgloss.NewStyle().Padding(1, 2)
@@ -82,15 +85,16 @@ func newModel(opts Options) model {
 	input.Focus()
 
 	return model{
-		ctx:           opts.Context,
-		client:        opts.Client,
-		system:        opts.SystemPrompt,
-		title:         defaultTitle(opts.Title),
-		autoPrompt:    strings.TrimSpace(opts.AutoPrompt),
-		history:       make([]lm.ChatMessage, 0, 16),
-		viewport:      vp,
-		input:         input,
-		streamEnabled: opts.Stream,
+		ctx:            opts.Context,
+		client:         opts.Client,
+		system:         opts.SystemPrompt,
+		title:          defaultTitle(opts.Title),
+		autoPrompt:     strings.TrimSpace(opts.AutoPrompt),
+		history:        make([]lm.ChatMessage, 0, 16),
+		viewport:       vp,
+		input:          input,
+		streamEnabled:  opts.Stream,
+		streamLauncher: defaultStreamLauncher,
 	}
 }
 
@@ -250,36 +254,18 @@ func (m *model) startStreaming(history []lm.ChatMessage) tea.Cmd {
 	m.pendingRequest = append([]lm.ChatMessage(nil), history...)
 	m.addAssistantPlaceholder()
 	m.refreshViewport()
-	ch := make(chan streamEvent, 16)
-	m.streamCh = ch
 	baseCtx := m.ctx
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
-	ctx, cancel := context.WithCancel(baseCtx)
+	launcher := m.streamLauncher
+	if launcher == nil {
+		launcher = defaultStreamLauncher
+	}
+	streamCh, cancel := launcher(baseCtx, m.client, m.system, append([]lm.ChatMessage(nil), history...))
+	m.streamCh = streamCh
 	m.streamCancel = cancel
-	client := m.client
-	system := m.system
-	historyCopy := append([]lm.ChatMessage(nil), history...)
-
-	go func() {
-		handler := func(chunk string) error {
-			select {
-			case ch <- streamEvent{chunk: chunk}:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		err := client.StreamChat(ctx, system, historyCopy, handler)
-		if err != nil && !errors.Is(err, context.Canceled) {
-			ch <- streamEvent{err: err}
-		}
-		ch <- streamEvent{done: true}
-		close(ch)
-	}()
-
-	return listenStreamCmd(ch)
+	return listenStreamCmd(streamCh)
 }
 
 func (m *model) stopStreaming() {
@@ -288,6 +274,34 @@ func (m *model) stopStreaming() {
 		m.streamCancel = nil
 	}
 	m.streamCh = nil
+}
+
+func defaultStreamLauncher(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) (chan streamEvent, context.CancelFunc) {
+	ch := make(chan streamEvent, 16)
+	baseCtx := ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	streamCtx, cancel := context.WithCancel(baseCtx)
+	go func() {
+		defer close(ch)
+		handler := func(chunk string) error {
+			select {
+			case ch <- streamEvent{chunk: chunk}:
+				return nil
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			}
+		}
+		err := client.StreamChat(streamCtx, system, history, handler)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			ch <- streamEvent{err: err}
+		}
+		ch <- streamEvent{done: true}
+	}()
+	return ch, func() {
+		cancel()
+	}
 }
 
 func (m *model) refreshViewport() {
@@ -392,6 +406,7 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 	if ev.chunk != "" {
 		m.appendStreamChunk(ev.chunk)
 		m.refreshViewport()
+		m.viewport.GotoBottom()
 		if m.streamCh != nil {
 			return m, listenStreamCmd(m.streamCh)
 		}
@@ -403,6 +418,7 @@ func (m model) handleStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 		m.sending = false
 		m.pendingRequest = nil
 		m.refreshViewport()
+		m.viewport.GotoBottom()
 		return m, nil
 	}
 

@@ -6,7 +6,7 @@
 - **Context7 MCP required**: consult `/charmbracelet/bubbletea` and `/ggml-org/llama.cpp` before altering UI or streaming logic; summarize insights in PRs.
 
 ## Build, Test, and Development Commands
-- `go test ./...` – runs the Go unit suite (Go 1.25.3+). Provide elevated permissions (`sudo` or CLI escalation) so caches can be created.
+- `go test ./...` – runs the Go unit suite against the remote default endpoint; grant elevated permissions (`sudo` or CLI escalation) so caches can be created.
 - `go build ./cmd/sai` – compiles the CLI into the repository root; reuse elevated privileges if the build cache complains.
 - `./sai_deploy.sh` – produces `build/sai` and installs it to `/usr/local/bin/sai`; the script escalates via `sudo` automatically.
 
@@ -31,7 +31,8 @@
 - Pull requests should summarize behavior changes, call out impacted commands/environments, and list verification steps (`go test ./...`). Include screenshots or clips when modifying terminal UI output.
 
 ## Architecture Notes
-- Streaming logic surfaces via `internal/lm.Client.StreamChat` and UI handlers; keep cross-cutting helpers in `internal/util` when introduced.
+- Streaming logic surfaces via `internal/lm.Client.StreamChat` (tested against the remote default endpoint) and UI handlers; keep cross-cutting helpers in `internal/util` when introduced.
+- The CLI now targets the remote llama.cpp server by default; pass `-l`/`--local` for LM Studio. Update docs/tests accordingly when changing endpoints.
 - See `opencode_reference_arch.md` for structural inspiration and planned refactors (themes, componentization, command registry).
 
 ## Documentation & Research Workflow

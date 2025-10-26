@@ -5,7 +5,7 @@ type Config struct {
 	Endpoint         string
 	Model            string
 	APIKey           string
-	RemotePreset     bool
+	LocalPreset      bool
 	GuessMode        bool
 	DisableStream    bool
 	DisableClipboard bool

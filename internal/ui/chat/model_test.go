@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -122,6 +123,93 @@ func TestHandleStreamEventFallbackDisablesStreaming(t *testing.T) {
 	if !typed.sending {
 		t.Fatalf("expected sending to remain true for fallback request")
 	}
+}
+
+func TestStreamingLifecycleAllowsMultipleMessages(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true})
+	count := 0
+	m.streamLauncher = func(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) (chan streamEvent, context.CancelFunc) {
+		ch := make(chan streamEvent, 4)
+		streamCtx, cancel := context.WithCancel(context.Background())
+		turn := count
+		go func() {
+			defer close(ch)
+			defer cancel()
+			var chunk string
+			if turn == 0 {
+				chunk = "first"
+			} else {
+				chunk = "second"
+			}
+			select {
+			case <-streamCtx.Done():
+				return
+			case ch <- streamEvent{chunk: chunk}:
+			}
+			select {
+			case <-streamCtx.Done():
+			case ch <- streamEvent{done: true}:
+			}
+		}()
+		count++
+		return ch, cancel
+	}
+
+	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: "hello"})
+	m.sending = true
+	cmd := m.startStreaming(append([]lm.ChatMessage(nil), m.history...))
+	m = drainCommands(t, m, cmd)
+
+	if m.sending {
+		t.Fatalf("expected sending to be false after stream completion")
+	}
+	if m.streamCh != nil {
+		t.Fatalf("stream channel should be nil after stream completion")
+	}
+	if got := m.history[len(m.history)-1].Content; got != "first" {
+		t.Fatalf("expected first assistant reply, got %q", got)
+	}
+
+	m.input.SetValue("second message")
+	updated, cmd := m.handleSubmit()
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	m = typed
+	if !m.sending {
+		t.Fatalf("expected sending to be true while streaming second message")
+	}
+	if cmd == nil {
+		t.Fatalf("expected command for second stream")
+	}
+
+	m = drainCommands(t, m, cmd)
+	if m.sending {
+		t.Fatalf("expected sending to be false after second stream")
+	}
+	if got := m.history[len(m.history)-1].Content; got != "second" {
+		t.Fatalf("expected second assistant reply, got %q", got)
+	}
+}
+
+func drainCommands(t *testing.T, m model, cmd tea.Cmd) model {
+	t.Helper()
+	current := m
+	for cmd != nil {
+		msg := cmd()
+		if msg == nil {
+			break
+		}
+		updated, next := current.Update(msg)
+		typed, ok := updated.(model)
+		if !ok {
+			t.Fatalf("expected model type, got %T", updated)
+		}
+		current = typed
+		cmd = next
+	}
+	return current
 }
 
 func TestAddAssistantPlaceholderAppendsNewEntry(t *testing.T) {
