@@ -22,12 +22,13 @@ import (
 
 // Options configure the chat Bubble Tea program.
 type Options struct {
-	Context      context.Context
-	Client       *lm.Client
-	SystemPrompt string
-	Title        string
-	AutoPrompt   string
-	Stream       bool
+	Context        context.Context
+	Client         *lm.Client
+	SystemPrompt   string
+	Title          string
+	AutoPrompt     string
+	Stream         bool
+	IncludeContext *bool
 }
 
 // NewProgram wires the chat model.
@@ -56,6 +57,7 @@ type model struct {
 	streamCancel    context.CancelFunc
 	pendingRequest  []lm.ChatMessage
 	streamLauncher  streamLauncher
+	snapshotCfg     *appctx.SnapshotConfig
 	tail            bool
 	statusMessage   string
 	mdRenderer      *glamour.TermRenderer
@@ -115,6 +117,16 @@ func newModel(opts Options) model {
 	input.Prompt = "› "
 	input.Focus()
 
+	includeContext := true
+	if opts.IncludeContext != nil {
+		includeContext = *opts.IncludeContext
+	}
+	var snapshotCfg *appctx.SnapshotConfig
+	if includeContext {
+		cfg := defaultChatSnapshotConfig
+		snapshotCfg = &cfg
+	}
+
 	return model{
 		ctx:            opts.Context,
 		client:         opts.Client,
@@ -126,12 +138,13 @@ func newModel(opts Options) model {
 		input:          input,
 		streamEnabled:  opts.Stream,
 		streamLauncher: defaultStreamLauncher,
+		snapshotCfg:    snapshotCfg,
 		tail:           true,
 		mdWidth:        0,
 	}
 }
 
-var chatSnapshotConfig = appctx.SnapshotConfig{
+var defaultChatSnapshotConfig = appctx.SnapshotConfig{
 	DirectoryLimit: 50,
 	HistoryLimit:   25,
 	IncludeGit:     true,
@@ -387,7 +400,7 @@ func (m model) handleSubmit() (tea.Model, tea.Cmd) {
 	m.refreshViewport()
 
 	historyCopy := append([]lm.ChatMessage(nil), m.history...)
-	composed, err := appctx.ComposePromptWithConfig(trimmed, chatSnapshotConfig)
+	composed, err := m.composePrompt(trimmed)
 	if err != nil {
 		m.sending = false
 		m.err = err
@@ -416,7 +429,7 @@ func (m model) handleAutoStart() (tea.Model, tea.Cmd) {
 	m.refreshViewport()
 
 	historyCopy := append([]lm.ChatMessage(nil), m.history...)
-	composed, err := appctx.ComposePromptWithConfig(prompt, chatSnapshotConfig)
+	composed, err := m.composePrompt(prompt)
 	if err != nil {
 		m.sending = false
 		m.err = err
@@ -428,6 +441,13 @@ func (m model) handleAutoStart() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, tea.Batch(sendChatCmd(m.ctx, m.client, m.system, historyCopy))
+}
+
+func (m model) composePrompt(input string) (string, error) {
+	if m.snapshotCfg == nil {
+		return strings.TrimSpace(input), nil
+	}
+	return appctx.ComposePromptWithConfig(input, *m.snapshotCfg)
 }
 
 func (m *model) startStreaming(history []lm.ChatMessage) tea.Cmd {

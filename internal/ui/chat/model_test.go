@@ -129,6 +129,58 @@ func TestHandleStreamEventFallbackDisablesStreaming(t *testing.T) {
 	}
 }
 
+func TestHandleSubmitWithoutContext(t *testing.T) {
+	m := newModel(Options{SystemPrompt: "system", Stream: true, IncludeContext: boolPtr(false)})
+	m.streamLauncher = func(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) (chan streamEvent, context.CancelFunc) {
+		if len(history) != 1 {
+			t.Fatalf("expected single message, got %d", len(history))
+		}
+		if strings.Contains(history[0].Content, "Context:") {
+			t.Fatalf("expected prompt without context, got %q", history[0].Content)
+		}
+		if history[0].Content != "hello there" {
+			t.Fatalf("expected raw prompt, got %q", history[0].Content)
+		}
+		ch := make(chan streamEvent)
+		return ch, func() {}
+	}
+
+	m.input.SetValue("hello there")
+	if _, cmd := m.handleSubmit(); cmd == nil {
+		t.Fatalf("expected streaming command")
+	}
+}
+
+func TestHandleAutoStartWithoutContext(t *testing.T) {
+	m := newModel(Options{
+		SystemPrompt:   "system",
+		Stream:         true,
+		AutoPrompt:     "status report",
+		IncludeContext: boolPtr(false),
+	})
+	m.streamLauncher = func(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) (chan streamEvent, context.CancelFunc) {
+		if len(history) != 1 {
+			t.Fatalf("expected single message, got %d", len(history))
+		}
+		if strings.Contains(history[0].Content, "Context:") {
+			t.Fatalf("expected prompt without context, got %q", history[0].Content)
+		}
+		if history[0].Content != "status report" {
+			t.Fatalf("expected raw auto prompt, got %q", history[0].Content)
+		}
+		ch := make(chan streamEvent)
+		return ch, func() {}
+	}
+
+	if _, cmd := m.handleAutoStart(); cmd == nil {
+		t.Fatalf("expected streaming command")
+	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
 func TestStreamingLifecycleAllowsMultipleMessages(t *testing.T) {
 	m := newModel(Options{SystemPrompt: "system", Stream: true})
 	count := 0

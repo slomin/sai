@@ -7,6 +7,9 @@ type Config struct {
 	APIKey           string
 	LocalPreset      bool
 	GuessMode        bool
+	LongChat         bool
+	EndpointProvided bool
+	ModelProvided    bool
 	DisableStream    bool
 	DisableClipboard bool
 	SystemPrompt     string

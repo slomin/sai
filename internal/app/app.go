@@ -33,15 +33,8 @@ const (
 
 // Run orchestrates debug modes or the interactive Bubble Tea program.
 func Run(ctx context.Context, cfg Config) error {
-	if cfg.LocalPreset {
-		cfg.Endpoint = localEndpoint
-		cfg.Model = localModel
-		fmt.Fprintf(os.Stderr, "using local LM Studio endpoint %s\n", cfg.Endpoint)
-	} else {
-		cfg.Endpoint = remoteEndpoint
-		cfg.Model = remoteModel
-		fmt.Fprintf(os.Stderr, "using remote llama endpoint %s\n", cfg.Endpoint)
-	}
+	cfg = resolveEndpointAndModel(cfg)
+	announceEndpointSelection(cfg)
 
 	initLogging(cfg.LogFilter)
 
@@ -74,7 +67,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	trimmedPrompt := strings.TrimSpace(pendingPrompt)
 	if launch, ok := selectChatLaunch(cfg, trimmedPrompt); ok {
-		return runChat(ctx, client, launch.SystemPrompt, launch.Title, launch.AutoPrompt, !cfg.DisableStream)
+		return runChat(ctx, client, launch.SystemPrompt, launch.Title, launch.AutoPrompt, !cfg.DisableStream, launch.IncludeContext)
 	}
 
 	enterAltScreen(os.Stdout)
@@ -104,6 +97,47 @@ func resolveSystemPrompt(custom string) string {
 		return custom
 	}
 	return defaultSystemPrompt
+}
+
+func resolveLongChatPrompt(custom string) string {
+	if strings.TrimSpace(custom) != "" {
+		return custom
+	}
+	return prompts.LongChatPrompt
+}
+
+func resolveEndpointAndModel(cfg Config) Config {
+	endpointBlank := strings.TrimSpace(cfg.Endpoint) == ""
+	modelBlank := strings.TrimSpace(cfg.Model) == ""
+
+	if cfg.LocalPreset {
+		if !cfg.EndpointProvided || endpointBlank {
+			cfg.Endpoint = localEndpoint
+		}
+		if !cfg.ModelProvided || modelBlank {
+			cfg.Model = localModel
+		}
+		return cfg
+	}
+
+	if endpointBlank {
+		cfg.Endpoint = remoteEndpoint
+	}
+	if modelBlank {
+		cfg.Model = remoteModel
+	}
+	return cfg
+}
+
+func announceEndpointSelection(cfg Config) {
+	switch {
+	case cfg.LocalPreset && cfg.Endpoint == localEndpoint:
+		fmt.Fprintf(os.Stderr, "using local LM Studio endpoint %s\n", cfg.Endpoint)
+	case !cfg.LocalPreset && cfg.Endpoint == remoteEndpoint:
+		fmt.Fprintf(os.Stderr, "using remote llama endpoint %s\n", cfg.Endpoint)
+	default:
+		fmt.Fprintf(os.Stderr, "using configured endpoint %s\n", cfg.Endpoint)
+	}
 }
 
 func runDebug(ctx context.Context, cfg Config, client *lm.Client, systemPrompt string, dumpDebug bool) error {
@@ -267,16 +301,18 @@ func runHeadless(ctx context.Context, client *lm.Client, systemPrompt, pendingPr
 	return nil
 }
 
-func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title string, autoPrompt string, streamEnabled bool) error {
+func runChat(ctx context.Context, client *lm.Client, systemPrompt string, title string, autoPrompt string, streamEnabled bool, includeContext bool) error {
 	enterAltScreen(os.Stdout)
 
+	includeCtx := includeContext
 	program := chatu.NewProgram(chatu.Options{
-		Context:      ctx,
-		Client:       client,
-		SystemPrompt: systemPrompt,
-		Title:        title,
-		AutoPrompt:   autoPrompt,
-		Stream:       streamEnabled,
+		Context:        ctx,
+		Client:         client,
+		SystemPrompt:   systemPrompt,
+		Title:          title,
+		AutoPrompt:     autoPrompt,
+		Stream:         streamEnabled,
+		IncludeContext: &includeCtx,
 	})
 	finalModel, err := program.Run()
 	leaveAltScreen(os.Stdout)
@@ -354,24 +390,35 @@ func leaveAltScreen(out *os.File) {
 }
 
 type chatLaunch struct {
-	SystemPrompt string
-	Title        string
-	AutoPrompt   string
+	SystemPrompt   string
+	Title          string
+	AutoPrompt     string
+	IncludeContext bool
 }
 
 func selectChatLaunch(cfg Config, trimmedPrompt string) (chatLaunch, bool) {
 	if cfg.GuessMode {
 		return chatLaunch{
-			SystemPrompt: resolveIntentPrompt(cfg.SystemPrompt),
-			Title:        "SAI Intent Chat",
-			AutoPrompt:   defaultIntentPrompt,
+			SystemPrompt:   resolveIntentPrompt(cfg.SystemPrompt),
+			Title:          "SAI Intent Chat",
+			AutoPrompt:     defaultIntentPrompt,
+			IncludeContext: true,
+		}, true
+	}
+	if cfg.LongChat {
+		return chatLaunch{
+			SystemPrompt:   resolveLongChatPrompt(cfg.SystemPrompt),
+			Title:          "SAI Long Chat",
+			AutoPrompt:     "",
+			IncludeContext: false,
 		}, true
 	}
 	if trimmedPrompt == "" {
 		return chatLaunch{
-			SystemPrompt: resolveChatPrompt(cfg.SystemPrompt),
-			Title:        "SAI Chat",
-			AutoPrompt:   "",
+			SystemPrompt:   resolveChatPrompt(cfg.SystemPrompt),
+			Title:          "SAI Chat",
+			AutoPrompt:     "",
+			IncludeContext: true,
 		}, true
 	}
 	return chatLaunch{}, false

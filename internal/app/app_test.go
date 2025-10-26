@@ -17,6 +17,9 @@ func TestSelectChatLaunchGuessMode(t *testing.T) {
 	if launch.Title != "SAI Intent Chat" {
 		t.Fatalf("title mismatch: %s", launch.Title)
 	}
+	if !launch.IncludeContext {
+		t.Fatalf("intent chat should include context")
+	}
 }
 
 func TestSelectChatLaunchEmptyPrompt(t *testing.T) {
@@ -34,11 +37,93 @@ func TestSelectChatLaunchEmptyPrompt(t *testing.T) {
 	if launch.Title != "SAI Chat" {
 		t.Fatalf("title mismatch: %s", launch.Title)
 	}
+	if !launch.IncludeContext {
+		t.Fatalf("default chat should include context")
+	}
 }
 
 func TestSelectChatLaunchStructured(t *testing.T) {
 	cfg := Config{}
 	if _, ok := selectChatLaunch(cfg, "ls -la"); ok {
 		t.Fatalf("unexpected launch for non-empty prompt")
+	}
+}
+
+func TestSelectChatLaunchLongChat(t *testing.T) {
+	cfg := Config{LongChat: true}
+	launch, ok := selectChatLaunch(cfg, "")
+	if !ok {
+		t.Fatalf("expected launch for long chat")
+	}
+	if launch.SystemPrompt != resolveLongChatPrompt(cfg.SystemPrompt) {
+		t.Fatalf("long chat prompt mismatch")
+	}
+	if launch.AutoPrompt != "" {
+		t.Fatalf("auto prompt should be empty for long chat")
+	}
+	if launch.Title != "SAI Long Chat" {
+		t.Fatalf("title mismatch: %s", launch.Title)
+	}
+	if launch.IncludeContext {
+		t.Fatalf("long chat should disable context")
+	}
+}
+
+func TestResolveEndpointAndModelDefaultsRemote(t *testing.T) {
+	cfg := Config{}
+	updated := resolveEndpointAndModel(cfg)
+	if updated.Endpoint != remoteEndpoint {
+		t.Fatalf("expected remote endpoint default, got %s", updated.Endpoint)
+	}
+	if updated.Model != remoteModel {
+		t.Fatalf("expected remote model default, got %s", updated.Model)
+	}
+}
+
+func TestResolveEndpointAndModelPreserveRemoteOverrides(t *testing.T) {
+	cfg := Config{
+		Endpoint:         "https://api.example.com/v1/chat/completions",
+		Model:            "models/custom",
+		EndpointProvided: true,
+		ModelProvided:    true,
+	}
+	updated := resolveEndpointAndModel(cfg)
+	if updated.Endpoint != cfg.Endpoint {
+		t.Fatalf("expected endpoint override to be preserved")
+	}
+	if updated.Model != cfg.Model {
+		t.Fatalf("expected model override to be preserved")
+	}
+}
+
+func TestResolveEndpointAndModelDefaultsLocal(t *testing.T) {
+	cfg := Config{
+		LocalPreset: true,
+		Endpoint:    remoteEndpoint,
+		Model:       remoteModel,
+	}
+	updated := resolveEndpointAndModel(cfg)
+	if updated.Endpoint != localEndpoint {
+		t.Fatalf("expected local endpoint default, got %s", updated.Endpoint)
+	}
+	if updated.Model != localModel {
+		t.Fatalf("expected local model default, got %s", updated.Model)
+	}
+}
+
+func TestResolveEndpointAndModelPreserveLocalOverrides(t *testing.T) {
+	cfg := Config{
+		LocalPreset:      true,
+		Endpoint:         "http://localhost:8080/v1/chat/completions",
+		Model:            "models/another-local",
+		EndpointProvided: true,
+		ModelProvided:    true,
+	}
+	updated := resolveEndpointAndModel(cfg)
+	if updated.Endpoint != cfg.Endpoint {
+		t.Fatalf("expected endpoint override to be preserved")
+	}
+	if updated.Model != cfg.Model {
+		t.Fatalf("expected model override to be preserved")
 	}
 }
