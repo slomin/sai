@@ -35,6 +35,14 @@ go build ./cmd/sai          # build the CLI
 export GLAMOUR_STYLE=light  # choose a Glamour preset
 ```
 
+### Installation shortcut
+
+`./sai_deploy.sh` compiles the binary to `build/sai`, installs it to
+`/usr/local/bin/sai`, and then ad-hoc signs the executable while clearing
+macOS Gatekeeper quarantine/provenance attributes. This avoids the
+`zsh: killed sai` failure on systems where Developer Mode is disabled. If you
+install manually, mirror those `codesign`/`xattr` steps.
+
 ### Keyboard Shortcuts
 
 | Key            | Action                                  |
@@ -62,4 +70,3 @@ export GLAMOUR_STYLE=light  # choose a Glamour preset
 
 For deeper architectural guidance, refer to `AGENTS.md` and
 `opencode_reference_arch.md`.
-

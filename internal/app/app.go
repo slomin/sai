@@ -18,6 +18,7 @@ import (
 	"github.com/slomin/sai/internal/prompts"
 	"github.com/slomin/sai/internal/ui"
 	chatu "github.com/slomin/sai/internal/ui/chat"
+	settingsui "github.com/slomin/sai/internal/ui/settings"
 )
 
 const (
@@ -34,6 +35,10 @@ const (
 
 // Run orchestrates debug modes or the interactive Bubble Tea program.
 func Run(ctx context.Context, cfg Config) error {
+	if cfg.SettingsMode {
+		return runSettings(ctx, cfg)
+	}
+
 	cfg = resolveEndpointAndModel(cfg)
 	announceEndpointSelection(cfg)
 
@@ -115,6 +120,8 @@ func resolveInteractiveHelpPrompt(custom string) string {
 }
 
 func resolveEndpointAndModel(cfg Config) Config {
+	cfg = applyPersistedSettings(cfg)
+
 	endpointBlank := strings.TrimSpace(cfg.Endpoint) == ""
 	modelBlank := strings.TrimSpace(cfg.Model) == ""
 
@@ -146,6 +153,41 @@ func announceEndpointSelection(cfg Config) {
 	default:
 		fmt.Fprintf(os.Stderr, "using configured endpoint %s\n", cfg.Endpoint)
 	}
+}
+
+func runSettings(ctx context.Context, cfg Config) error {
+	return runSettingsWithRunner(ctx, cfg, settingsui.Run)
+}
+
+func runSettingsWithRunner(ctx context.Context, cfg Config, runner func(settingsui.Options) (settingsui.Result, error)) error {
+	if cfg.SettingsStore == nil {
+		return errors.New("settings store not configured")
+	}
+
+	opts := settingsui.Options{
+		Context:        ctx,
+		Current:        cfg.Persisted,
+		RemoteEndpoint: remoteEndpoint,
+		RemoteModel:    remoteModel,
+		LocalEndpoint:  localEndpoint,
+		LocalModel:     localModel,
+	}
+
+	result, err := runner(opts)
+	if err != nil {
+		return fmt.Errorf("settings ui: %w", err)
+	}
+	if !result.Saved {
+		fmt.Fprintln(os.Stderr, "settings unchanged")
+		return nil
+	}
+	if err := cfg.SettingsStore.Save(result.Config); err != nil {
+		return fmt.Errorf("save settings: %w", err)
+	}
+	if result.Config != cfg.Persisted {
+		fmt.Fprintf(os.Stderr, "settings saved to %s\n", cfg.SettingsStore.Path())
+	}
+	return nil
 }
 
 func runDebug(ctx context.Context, cfg Config, client *lm.Client, systemPrompt string, dumpDebug bool) error {

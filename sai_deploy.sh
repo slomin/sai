@@ -21,6 +21,17 @@ echo "Copying binary to $INSTALL_PATH (requires sudo)..."
 sudo cp "$OUTPUT_BIN" "$INSTALL_PATH"
 sudo chmod 755 "$INSTALL_PATH"
 
+if command -v codesign >/dev/null 2>&1; then
+  echo "Ad-hoc signing $INSTALL_PATH..."
+  sudo codesign --force --sign - "$INSTALL_PATH"
+fi
+
+if command -v xattr >/dev/null 2>&1; then
+  echo "Clearing macOS quarantine flags..."
+  sudo xattr -r -d com.apple.quarantine "$INSTALL_PATH" 2>/dev/null || true
+  sudo xattr -r -d com.apple.provenance "$INSTALL_PATH" 2>/dev/null || true
+fi
+
 echo "✅ Installed sai to $INSTALL_PATH"
 if [ -f "$HOME/.zshrc" ]; then
   echo "Reloading ~/.zshrc..."
