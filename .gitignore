@@ -1,0 +1,5 @@
+.DS_Store
+
+# Go build outputs
+build/
+.venv
