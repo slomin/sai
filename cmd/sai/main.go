@@ -35,7 +35,7 @@ func parseFlags() app.Config {
 	defaultAPIKey := os.Getenv("SAI_LM_API_KEY")
 	defaultSystemPrompt, systemPromptFromEnv := envString("RAI_SYSTEM_PROMPT")
 	defaultLogFilter := envOrDefault("RAI_LOG", "info")
-	defaultNoClipboard := envBool("RAI_NO_CLIPBOARD")
+	defaultNoClipboard := false
 	defaultNoStream := envBool("SAI_NO_STREAM")
 
 	flag.StringVar(&cfg.Endpoint, "endpoint", endpointDefault, "chat completion endpoint URL")

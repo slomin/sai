@@ -28,7 +28,8 @@ const (
 	localEndpoint  = "http://localhost:1234/v1/chat/completions"
 	localModel     = "qwen3-vl-4b-instruct-mlx"
 
-	defaultIntentPrompt = "Please review the entire context snapshot and infer my most likely intent, highlighting relevant commands or next steps."
+	defaultIntentPrompt           = "Please review the entire context snapshot and infer my most likely intent, highlighting relevant commands or next steps."
+	defaultInteractiveHelpKickoff = "Introduce the SAI CLI, greet the user warmly, and list the key features and flags."
 )
 
 // Run orchestrates debug modes or the interactive Bubble Tea program.
@@ -328,15 +329,16 @@ func runChat(ctx context.Context, client *lm.Client, launch chatLaunch, streamEn
 	}
 
 	program := chatu.NewProgram(chatu.Options{
-		Context:        ctx,
-		Client:         client,
-		SystemPrompt:   launch.SystemPrompt,
-		Title:          launch.Title,
-		AutoPrompt:     launch.AutoPrompt,
-		Stream:         streamEnabled,
-		IncludeContext: &includeCtx,
-		DisplayContext: launch.ShowContext,
-		ContextWindow:  contextWindow,
+		Context:            ctx,
+		Client:             client,
+		SystemPrompt:       launch.SystemPrompt,
+		Title:              launch.Title,
+		AutoPrompt:         launch.AutoPrompt,
+		Stream:             streamEnabled,
+		IncludeContext:     &includeCtx,
+		DisplayContext:     launch.ShowContext,
+		ContextWindow:      contextWindow,
+		AutoPromptInternal: launch.AutoPromptInternal,
 	})
 	finalModel, err := program.Run()
 	leaveAltScreen(os.Stdout)
@@ -414,48 +416,53 @@ func leaveAltScreen(out *os.File) {
 }
 
 type chatLaunch struct {
-	SystemPrompt   string
-	Title          string
-	AutoPrompt     string
-	IncludeContext bool
-	ShowContext    bool
+	SystemPrompt       string
+	Title              string
+	AutoPrompt         string
+	IncludeContext     bool
+	ShowContext        bool
+	AutoPromptInternal bool
 }
 
 func selectChatLaunch(cfg Config, trimmedPrompt string) (chatLaunch, bool) {
 	if cfg.GuessMode {
 		return chatLaunch{
-			SystemPrompt:   resolveIntentPrompt(cfg.SystemPrompt),
-			Title:          "SAI Intent Chat",
-			AutoPrompt:     defaultIntentPrompt,
-			IncludeContext: true,
-			ShowContext:    false,
+			SystemPrompt:       resolveIntentPrompt(cfg.SystemPrompt),
+			Title:              "SAI Intent Chat",
+			AutoPrompt:         defaultIntentPrompt,
+			IncludeContext:     true,
+			ShowContext:        false,
+			AutoPromptInternal: false,
 		}, true
 	}
 	if cfg.InteractiveHelp {
 		return chatLaunch{
-			SystemPrompt:   resolveInteractiveHelpPrompt(cfg.SystemPrompt),
-			Title:          "SAI Help Desk",
-			AutoPrompt:     "",
-			IncludeContext: false,
-			ShowContext:    false,
+			SystemPrompt:       resolveInteractiveHelpPrompt(cfg.SystemPrompt),
+			Title:              "SAI Help Desk",
+			AutoPrompt:         defaultInteractiveHelpKickoff,
+			IncludeContext:     false,
+			ShowContext:        false,
+			AutoPromptInternal: true,
 		}, true
 	}
 	if cfg.LongChat {
 		return chatLaunch{
-			SystemPrompt:   resolveLongChatPrompt(cfg.SystemPrompt),
-			Title:          "SAI Long Chat",
-			AutoPrompt:     "",
-			IncludeContext: false,
-			ShowContext:    true,
+			SystemPrompt:       resolveLongChatPrompt(cfg.SystemPrompt),
+			Title:              "SAI Long Chat",
+			AutoPrompt:         "",
+			IncludeContext:     false,
+			ShowContext:        true,
+			AutoPromptInternal: false,
 		}, true
 	}
 	if trimmedPrompt == "" {
 		return chatLaunch{
-			SystemPrompt:   resolveChatPrompt(cfg.SystemPrompt),
-			Title:          "SAI Chat",
-			AutoPrompt:     "",
-			IncludeContext: true,
-			ShowContext:    false,
+			SystemPrompt:       resolveChatPrompt(cfg.SystemPrompt),
+			Title:              "SAI Chat",
+			AutoPrompt:         "",
+			IncludeContext:     true,
+			ShowContext:        false,
+			AutoPromptInternal: false,
 		}, true
 	}
 	return chatLaunch{}, false

@@ -22,15 +22,16 @@ import (
 
 // Options configure the chat Bubble Tea program.
 type Options struct {
-	Context        context.Context
-	Client         *lm.Client
-	SystemPrompt   string
-	Title          string
-	AutoPrompt     string
-	Stream         bool
-	IncludeContext *bool
-	DisplayContext bool
-	ContextWindow  *int
+	Context            context.Context
+	Client             *lm.Client
+	SystemPrompt       string
+	Title              string
+	AutoPrompt         string
+	Stream             bool
+	IncludeContext     *bool
+	DisplayContext     bool
+	ContextWindow      *int
+	AutoPromptInternal bool
 }
 
 // NewProgram wires the chat model.
@@ -44,34 +45,35 @@ func NewProgram(opts Options) *tea.Program {
 }
 
 type model struct {
-	ctx             context.Context
-	client          *lm.Client
-	system          string
-	title           string
-	autoPrompt      string
-	history         []lm.ChatMessage
-	viewport        viewport.Model
-	input           textinput.Model
-	sending         bool
-	err             error
-	streamEnabled   bool
-	streamCh        chan streamEvent
-	streamCancel    context.CancelFunc
-	pendingRequest  []lm.ChatMessage
-	streamLauncher  streamLauncher
-	snapshotCfg     *appctx.SnapshotConfig
-	displayContext  bool
-	contextLimit    int
-	contextUsed     int
-	tail            bool
-	statusMessage   string
-	mdRenderer      *glamour.TermRenderer
-	mdWidth         int
-	snippet         *snippetSelection
-	streamStarted   time.Time
-	streamTokens    int
-	streamRate      float64
-	fallbackSnippet *snippetSelection
+	ctx                context.Context
+	client             *lm.Client
+	system             string
+	title              string
+	autoPrompt         string
+	autoPromptInternal bool
+	history            []lm.ChatMessage
+	viewport           viewport.Model
+	input              textinput.Model
+	sending            bool
+	err                error
+	streamEnabled      bool
+	streamCh           chan streamEvent
+	streamCancel       context.CancelFunc
+	pendingRequest     []lm.ChatMessage
+	streamLauncher     streamLauncher
+	snapshotCfg        *appctx.SnapshotConfig
+	displayContext     bool
+	contextLimit       int
+	contextUsed        int
+	tail               bool
+	statusMessage      string
+	mdRenderer         *glamour.TermRenderer
+	mdWidth            int
+	snippet            *snippetSelection
+	streamStarted      time.Time
+	streamTokens       int
+	streamRate         float64
+	fallbackSnippet    *snippetSelection
 }
 
 type snippetSelection struct {
@@ -140,21 +142,22 @@ func newModel(opts Options) model {
 	}
 
 	return model{
-		ctx:            opts.Context,
-		client:         opts.Client,
-		system:         opts.SystemPrompt,
-		title:          defaultTitle(opts.Title),
-		autoPrompt:     strings.TrimSpace(opts.AutoPrompt),
-		history:        make([]lm.ChatMessage, 0, 16),
-		viewport:       vp,
-		input:          input,
-		streamEnabled:  opts.Stream,
-		streamLauncher: defaultStreamLauncher,
-		snapshotCfg:    snapshotCfg,
-		displayContext: opts.DisplayContext,
-		contextLimit:   contextLimit,
-		tail:           true,
-		mdWidth:        0,
+		ctx:                opts.Context,
+		client:             opts.Client,
+		system:             opts.SystemPrompt,
+		title:              defaultTitle(opts.Title),
+		autoPrompt:         strings.TrimSpace(opts.AutoPrompt),
+		autoPromptInternal: opts.AutoPromptInternal,
+		history:            make([]lm.ChatMessage, 0, 16),
+		viewport:           vp,
+		input:              input,
+		streamEnabled:      opts.Stream,
+		streamLauncher:     defaultStreamLauncher,
+		snapshotCfg:        snapshotCfg,
+		displayContext:     opts.DisplayContext,
+		contextLimit:       contextLimit,
+		tail:               true,
+		mdWidth:            0,
 	}
 }
 
@@ -458,14 +461,18 @@ func (m model) handleAutoStart() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	prompt := m.autoPrompt
+	internal := m.autoPromptInternal
 	m.autoPrompt = ""
+	m.autoPromptInternal = false
 	m.clearSnippet()
-	m.history = append(m.history, lm.ChatMessage{Role: "user", Content: prompt})
 	m.sending = true
 	m.err = nil
 	m.statusMessage = ""
 	m.tail = true
-	m.refreshViewport()
+	if !internal {
+		m.history = append(m.history, lm.ChatMessage{Role: "user", Content: prompt})
+		m.refreshViewport()
+	}
 
 	historyCopy := append([]lm.ChatMessage(nil), m.history...)
 	composed, err := m.composePrompt(prompt)
@@ -474,7 +481,12 @@ func (m model) handleAutoStart() (tea.Model, tea.Cmd) {
 		m.err = err
 		return m, nil
 	}
-	historyCopy[len(historyCopy)-1].Content = composed
+	if internal {
+		historyCopy = append(historyCopy, lm.ChatMessage{Role: "user", Content: composed})
+		m.refreshViewport()
+	} else {
+		historyCopy[len(historyCopy)-1].Content = composed
+	}
 	if m.streamEnabled {
 		cmd := m.startStreaming(historyCopy)
 		return m, cmd

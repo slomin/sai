@@ -177,6 +177,43 @@ func TestHandleAutoStartWithoutContext(t *testing.T) {
 	}
 }
 
+func TestHandleAutoStartInternalDoesNotShowUserMessage(t *testing.T) {
+	m := newModel(Options{
+		SystemPrompt:       "system",
+		Stream:             true,
+		AutoPrompt:         "give me an intro",
+		AutoPromptInternal: true,
+	})
+
+	var sentHistory []lm.ChatMessage
+	m.streamLauncher = func(ctx context.Context, client *lm.Client, system string, history []lm.ChatMessage) (chan streamEvent, context.CancelFunc) {
+		sentHistory = append([]lm.ChatMessage(nil), history...)
+		ch := make(chan streamEvent)
+		return ch, func() {}
+	}
+
+	updated, cmd := m.handleAutoStart()
+	typed, ok := updated.(model)
+	if !ok {
+		t.Fatalf("expected model type, got %T", updated)
+	}
+	if cmd == nil {
+		t.Fatalf("expected streaming command")
+	}
+	for _, entry := range typed.history {
+		if entry.Role == "user" {
+			t.Fatalf("internal auto prompt should not append user message, history: %+v", typed.history)
+		}
+	}
+	if len(sentHistory) == 0 {
+		t.Fatalf("expected synthesized user message in sent history")
+	}
+	last := sentHistory[len(sentHistory)-1]
+	if last.Role != "user" || strings.TrimSpace(last.Content) == "" {
+		t.Fatalf("unexpected sent history entry: %+v", last)
+	}
+}
+
 func TestContextSummaryTracksUsage(t *testing.T) {
 	limit := 4096
 	m := newModel(Options{SystemPrompt: "system", DisplayContext: true, ContextWindow: &limit})

@@ -87,6 +87,9 @@ func TestSelectChatLaunchInteractiveHelp(t *testing.T) {
 	if launch.SystemPrompt != resolveInteractiveHelpPrompt(cfg.SystemPrompt) {
 		t.Fatalf("interactive help prompt mismatch")
 	}
+	if launch.AutoPrompt != defaultInteractiveHelpKickoff {
+		t.Fatalf("interactive help auto prompt mismatch: %s", launch.AutoPrompt)
+	}
 	if launch.Title != "SAI Help Desk" {
 		t.Fatalf("interactive help title mismatch: %s", launch.Title)
 	}
@@ -95,6 +98,9 @@ func TestSelectChatLaunchInteractiveHelp(t *testing.T) {
 	}
 	if launch.ShowContext {
 		t.Fatalf("interactive help should not show context meter")
+	}
+	if !launch.AutoPromptInternal {
+		t.Fatalf("interactive help auto prompt should be internal")
 	}
 }
 
