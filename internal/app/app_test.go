@@ -1,6 +1,12 @@
 package app
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/slomin/sai/internal/settings"
+	settingsui "github.com/slomin/sai/internal/ui/settings"
+)
 
 func TestSelectChatLaunchGuessMode(t *testing.T) {
 	cfg := Config{GuessMode: true, SystemPrompt: "custom"}
@@ -161,4 +167,61 @@ func TestResolveEndpointAndModelPreserveLocalOverrides(t *testing.T) {
 	if updated.Model != cfg.Model {
 		t.Fatalf("expected model override to be preserved")
 	}
+}
+
+func TestResolveEndpointAndModelHonoursPersistedCustomDefaults(t *testing.T) {
+	cfg := Config{
+		Persisted: settings.Config{
+			Mode:     settings.ModeCustom,
+			Endpoint: "http://persisted",
+			Model:    "persisted-model",
+		},
+	}
+	updated := resolveEndpointAndModel(cfg)
+	if updated.Endpoint != "http://persisted" {
+		t.Fatalf("expected persisted endpoint, got %s", updated.Endpoint)
+	}
+	if updated.Model != "persisted-model" {
+		t.Fatalf("expected persisted model, got %s", updated.Model)
+	}
+}
+
+func TestRunSettingsSavesConfig(t *testing.T) {
+	store := &fakeSettingsStore{path: "/tmp/settings.json"}
+	cfg := Config{SettingsStore: store, Persisted: settings.Config{}}
+	if err := runSettingsWithRunner(context.Background(), cfg, func(settingsui.Options) (settingsui.Result, error) {
+		return settingsui.Result{Saved: true, Config: settings.Config{Mode: settings.ModeLocal}}, nil
+	}); err != nil {
+		t.Fatalf("run settings: %v", err)
+	}
+	if store.saved.Mode != settings.ModeLocal {
+		t.Fatalf("expected saved config, got %+v", store.saved)
+	}
+}
+
+func TestRunSettingsRequiresStore(t *testing.T) {
+	cfg := Config{}
+	if err := runSettingsWithRunner(context.Background(), cfg, func(settingsui.Options) (settingsui.Result, error) {
+		return settingsui.Result{}, nil
+	}); err == nil {
+		t.Fatalf("expected error when store missing")
+	}
+}
+
+type fakeSettingsStore struct {
+	saved   settings.Config
+	path    string
+	saveErr error
+}
+
+func (f *fakeSettingsStore) Save(cfg settings.Config) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.saved = cfg
+	return nil
+}
+
+func (f *fakeSettingsStore) Path() string {
+	return f.path
 }
