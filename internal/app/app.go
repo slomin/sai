@@ -27,7 +27,7 @@ const (
 	remoteEndpoint = "http://192.168.1.90:8080/v1/chat/completions"
 	remoteModel    = "models/qwen3.gguf"
 	localEndpoint  = "http://localhost:1234/v1/chat/completions"
-	localModel     = "qwen3-vl-4b-instruct-mlx"
+	localModel     = "qwen/qwen3-vl-4b"
 
 	defaultIntentPrompt           = "Please review the entire context snapshot and infer my most likely intent, highlighting relevant commands or next steps."
 	defaultInteractiveHelpKickoff = "Introduce the SAI CLI, greet the user warmly, and list the key features and flags."
@@ -122,33 +122,21 @@ func resolveInteractiveHelpPrompt(custom string) string {
 func resolveEndpointAndModel(cfg Config) Config {
 	cfg = applyPersistedSettings(cfg)
 
-	endpointBlank := strings.TrimSpace(cfg.Endpoint) == ""
-	modelBlank := strings.TrimSpace(cfg.Model) == ""
-
-	if cfg.LocalPreset {
-		if !cfg.EndpointProvided || endpointBlank {
-			cfg.Endpoint = localEndpoint
-		}
-		if !cfg.ModelProvided || modelBlank {
-			cfg.Model = localModel
-		}
-		return cfg
-	}
-
-	if endpointBlank {
+	// Fall back to remote defaults if not set by persisted settings
+	if strings.TrimSpace(cfg.Endpoint) == "" {
 		cfg.Endpoint = remoteEndpoint
 	}
-	if modelBlank {
+	if strings.TrimSpace(cfg.Model) == "" {
 		cfg.Model = remoteModel
 	}
 	return cfg
 }
 
 func announceEndpointSelection(cfg Config) {
-	switch {
-	case cfg.LocalPreset && cfg.Endpoint == localEndpoint:
+	switch cfg.Endpoint {
+	case localEndpoint:
 		fmt.Fprintf(os.Stderr, "using local LM Studio endpoint %s\n", cfg.Endpoint)
-	case !cfg.LocalPreset && cfg.Endpoint == remoteEndpoint:
+	case remoteEndpoint:
 		fmt.Fprintf(os.Stderr, "using remote llama endpoint %s\n", cfg.Endpoint)
 	default:
 		fmt.Fprintf(os.Stderr, "using configured endpoint %s\n", cfg.Endpoint)

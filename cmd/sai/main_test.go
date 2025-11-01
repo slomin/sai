@@ -15,30 +15,25 @@ func TestParseFlagsSettingsMode(t *testing.T) {
 	}
 }
 
-func TestParseFlagsTracksLocalPresetFlag(t *testing.T) {
+func TestParseFlagsDoesNotSetEndpointFromFlags(t *testing.T) {
 	t.Cleanup(func() {
 		resetEnv(t)
 	})
-	cfg := parseFlags([]string{"--local"})
-	if !cfg.LocalPreset {
-		t.Fatalf("local preset should be true")
-	}
-	if !cfg.LocalPresetSet {
-		t.Fatalf("local preset flag should be marked as set")
+	cfg := parseFlags([]string{})
+	// Endpoint should be empty when not provided by persisted settings
+	if cfg.Endpoint != "" {
+		t.Fatalf("endpoint should not be set from flags, got %s", cfg.Endpoint)
 	}
 }
 
-func TestParseFlagsMarksAPIKeyFromEnv(t *testing.T) {
+func TestParseFlagsDoesNotSetModelFromFlags(t *testing.T) {
 	t.Cleanup(func() {
 		resetEnv(t)
 	})
-	t.Setenv("SAI_LM_API_KEY", "env-key")
-	cfg := parseFlags(nil)
-	if cfg.APIKey != "env-key" {
-		t.Fatalf("expected api key from env, got %s", cfg.APIKey)
-	}
-	if !cfg.APIKeyProvided {
-		t.Fatalf("api key should be marked as provided via env")
+	cfg := parseFlags([]string{})
+	// Model should be empty when not provided by persisted settings
+	if cfg.Model != "" {
+		t.Fatalf("model should not be set from flags, got %s", cfg.Model)
 	}
 }
 

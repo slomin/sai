@@ -121,51 +121,37 @@ func TestResolveEndpointAndModelDefaultsRemote(t *testing.T) {
 	}
 }
 
-func TestResolveEndpointAndModelPreserveRemoteOverrides(t *testing.T) {
+func TestResolveEndpointAndModelUsesPersistedLocal(t *testing.T) {
 	cfg := Config{
-		Endpoint:         "https://api.example.com/v1/chat/completions",
-		Model:            "models/custom",
-		EndpointProvided: true,
-		ModelProvided:    true,
+		Persisted: settings.Config{
+			Mode:     settings.ModeLocal,
+			Endpoint: "http://localhost:1234/v1/chat/completions",
+			Model:    "qwen/qwen3-vl-4b",
+		},
 	}
 	updated := resolveEndpointAndModel(cfg)
-	if updated.Endpoint != cfg.Endpoint {
-		t.Fatalf("expected endpoint override to be preserved")
+	if updated.Endpoint != "http://localhost:1234/v1/chat/completions" {
+		t.Fatalf("expected persisted local endpoint, got %s", updated.Endpoint)
 	}
-	if updated.Model != cfg.Model {
-		t.Fatalf("expected model override to be preserved")
+	if updated.Model != "qwen/qwen3-vl-4b" {
+		t.Fatalf("expected persisted local model, got %s", updated.Model)
 	}
 }
 
-func TestResolveEndpointAndModelDefaultsLocal(t *testing.T) {
+func TestResolveEndpointAndModelUsesPersistedRemote(t *testing.T) {
 	cfg := Config{
-		LocalPreset: true,
-		Endpoint:    remoteEndpoint,
-		Model:       remoteModel,
+		Persisted: settings.Config{
+			Mode:     settings.ModeRemote,
+			Endpoint: "http://192.168.1.90:8080/v1/chat/completions",
+			Model:    "models/qwen3.gguf",
+		},
 	}
 	updated := resolveEndpointAndModel(cfg)
-	if updated.Endpoint != localEndpoint {
-		t.Fatalf("expected local endpoint default, got %s", updated.Endpoint)
+	if updated.Endpoint != "http://192.168.1.90:8080/v1/chat/completions" {
+		t.Fatalf("expected persisted remote endpoint, got %s", updated.Endpoint)
 	}
-	if updated.Model != localModel {
-		t.Fatalf("expected local model default, got %s", updated.Model)
-	}
-}
-
-func TestResolveEndpointAndModelPreserveLocalOverrides(t *testing.T) {
-	cfg := Config{
-		LocalPreset:      true,
-		Endpoint:         "http://localhost:8080/v1/chat/completions",
-		Model:            "models/another-local",
-		EndpointProvided: true,
-		ModelProvided:    true,
-	}
-	updated := resolveEndpointAndModel(cfg)
-	if updated.Endpoint != cfg.Endpoint {
-		t.Fatalf("expected endpoint override to be preserved")
-	}
-	if updated.Model != cfg.Model {
-		t.Fatalf("expected model override to be preserved")
+	if updated.Model != "models/qwen3.gguf" {
+		t.Fatalf("expected persisted remote model, got %s", updated.Model)
 	}
 }
 

@@ -11,14 +11,9 @@ type Config struct {
 	Endpoint         string
 	Model            string
 	APIKey           string
-	LocalPreset      bool
-	LocalPresetSet   bool
 	GuessMode        bool
 	LongChat         bool
 	InteractiveHelp  bool
-	EndpointProvided bool
-	ModelProvided    bool
-	APIKeyProvided   bool
 	DisableStream    bool
 	DisableClipboard bool
 	SystemPrompt     string
@@ -42,45 +37,17 @@ func applyPersistedSettings(cfg Config) Config {
 
 	trim := func(in string) string { return strings.TrimSpace(in) }
 
-	if !cfg.APIKeyProvided {
-		if key := trim(persisted.APIKey); key != "" {
-			cfg.APIKey = key
-		}
+	// Always use persisted API key if available
+	if key := trim(persisted.APIKey); key != "" {
+		cfg.APIKey = key
 	}
 
-	if !cfg.LocalPresetSet {
-		switch persisted.Mode {
-		case settings.ModeLocal:
-			cfg.LocalPreset = true
-		case settings.ModeRemote:
-			cfg.LocalPreset = false
-		}
+	// Always use persisted endpoint and model if available
+	if endpoint := trim(persisted.Endpoint); endpoint != "" {
+		cfg.Endpoint = endpoint
 	}
-
-	if !cfg.EndpointProvided {
-		switch persisted.Mode {
-		case settings.ModeCustom:
-			if endpoint := trim(persisted.Endpoint); endpoint != "" {
-				cfg.Endpoint = endpoint
-			}
-		case settings.ModeLocal, settings.ModeRemote:
-			if endpoint := trim(persisted.Endpoint); endpoint != "" {
-				cfg.Endpoint = endpoint
-			}
-		}
-	}
-
-	if !cfg.ModelProvided {
-		switch persisted.Mode {
-		case settings.ModeCustom:
-			if model := trim(persisted.Model); model != "" {
-				cfg.Model = model
-			}
-		case settings.ModeLocal, settings.ModeRemote:
-			if model := trim(persisted.Model); model != "" {
-				cfg.Model = model
-			}
-		}
+	if model := trim(persisted.Model); model != "" {
+		cfg.Model = model
 	}
 
 	return cfg

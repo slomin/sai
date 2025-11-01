@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/slomin/sai/internal/lm"
@@ -78,5 +79,27 @@ func TestTrimLastRune(t *testing.T) {
 	}
 	if got := trimLastRune(""); got != "" {
 		t.Fatalf("trimLastRune empty expected empty, got %q", got)
+	}
+}
+
+func TestFriendlyErrorMessageLocalEndpoint(t *testing.T) {
+	err := &lm.EndpointUnreachableError{Endpoint: "http://localhost:1234/v1/chat/completions"}
+	msg := friendlyErrorMessage(err, "")
+	if !strings.Contains(msg, "Cannot reach http://localhost:1234/v1/chat/completions") {
+		t.Fatalf("friendly message missing endpoint: %q", msg)
+	}
+	if !strings.Contains(msg, "Start LM Studio") {
+		t.Fatalf("expected LM Studio guidance: %q", msg)
+	}
+}
+
+func TestFriendlyErrorMessageRemoteEndpoint(t *testing.T) {
+	err := &lm.EndpointUnreachableError{Endpoint: "http://192.168.1.90:8080/v1/chat/completions"}
+	msg := friendlyErrorMessage(err, "")
+	if !strings.Contains(msg, "Cannot reach http://192.168.1.90:8080/v1/chat/completions") {
+		t.Fatalf("friendly message missing endpoint: %q", msg)
+	}
+	if !strings.Contains(msg, "remote llama.cpp server") {
+		t.Fatalf("expected remote guidance: %q", msg)
 	}
 }

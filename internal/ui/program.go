@@ -2,7 +2,9 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -66,8 +68,9 @@ type model struct {
 	width        int
 	height       int
 
-	err      error
-	quitting bool
+	err        error
+	errMessage string
+	quitting   bool
 
 	keys keyMap
 }
@@ -254,6 +257,12 @@ func (m model) handleSuccess(msg completionSuccessMsg) (tea.Model, tea.Cmd) {
 func (m model) handleError(err error) (tea.Model, tea.Cmd) {
 	m.phase = phaseError
 	m.err = err
+	var endpoint string
+	var unreachable *lm.EndpointUnreachableError
+	if errors.As(err, &unreachable) {
+		endpoint = unreachable.Endpoint
+	}
+	m.errMessage = friendlyErrorMessage(err, endpoint)
 	return m, nil
 }
 
@@ -552,11 +561,13 @@ func (m model) renderMenu() string {
 func (m model) renderError() string {
 	width := m.bodyWidth()
 	prompt := m.renderPromptPanel(width)
-	var message string
-	if m.err != nil {
-		message = m.err.Error()
-	} else {
-		message = "Unknown error."
+	message := strings.TrimSpace(m.errMessage)
+	if message == "" {
+		if m.err != nil {
+			message = m.err.Error()
+		} else {
+			message = "Unknown error."
+		}
 	}
 	errorPanel := stylePanel.Width(width).
 		Render(lipgloss.NewStyle().Foreground(colorError).Render(message))
@@ -817,6 +828,46 @@ func trimLastRune(input string) string {
 		return input
 	}
 	return string(runes[:len(runes)-1])
+}
+
+func friendlyErrorMessage(err error, endpoint string) string {
+	var unreachable *lm.EndpointUnreachableError
+	if errors.As(err, &unreachable) {
+		target := strings.TrimSpace(unreachable.Endpoint)
+		if target == "" {
+			target = strings.TrimSpace(endpoint)
+		}
+		if target == "" {
+			target = "the configured endpoint"
+		}
+		message := fmt.Sprintf("Cannot reach %s.", target)
+		if looksLocalEndpoint(target) {
+			message += "\n\nStart LM Studio with the HTTP server enabled on port 1234, or update the endpoint via `sai --settings`."
+		} else {
+			message += "\n\nCheck that the remote llama.cpp server is online and reachable from this machine."
+		}
+		return message
+	}
+	return strings.TrimSpace(err.Error())
+}
+
+func looksLocalEndpoint(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if host == "" {
+		return false
+	}
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	if strings.HasPrefix(host, "127.") {
+		return true
+	}
+	return false
 }
 
 // Commands -------------------------------------------------------------------

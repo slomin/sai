@@ -3,3 +3,4 @@
 # Go build outputs
 build/
 .venv
+sai
