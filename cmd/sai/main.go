@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -44,30 +43,14 @@ func main() {
 func parseFlags(args []string) app.Config {
 	var cfg app.Config
 
-	endpointDefault, endpointFromEnv := envString("SAI_LM_ENDPOINT")
-	if endpointDefault == "" {
-		endpointDefault = "http://192.168.1.90:8080/v1/chat/completions"
-		endpointFromEnv = false
-	}
-	modelDefault, modelFromEnv := envString("SAI_LM_MODEL")
-	if modelDefault == "" {
-		modelDefault = "models/qwen3.gguf"
-		modelFromEnv = false
-	}
-	defaultAPIKey, apiKeyFromEnv := envString("SAI_LM_API_KEY")
-	defaultSystemPrompt, systemPromptFromEnv := envString("RAI_SYSTEM_PROMPT")
-	defaultLogFilter := envOrDefault("RAI_LOG", "info")
+	defaultSystemPrompt, systemPromptFromEnv := envString("SAI_SYSTEM_PROMPT")
+	defaultLogFilter := envOrDefault("SAI_LOG", "info")
 	defaultNoClipboard := false
 	defaultNoStream := envBool("SAI_NO_STREAM")
 
 	fs := flag.NewFlagSet("sai", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.Usage = printUsage
 
-	fs.StringVar(&cfg.Endpoint, "endpoint", endpointDefault, "chat completion endpoint URL")
-	fs.StringVar(&cfg.Model, "model", modelDefault, "model identifier to request")
-	fs.StringVar(&cfg.APIKey, "api-key", defaultAPIKey, "optional API key or bearer token")
-	fs.BoolVar(&cfg.LocalPreset, "local", false, "use the local LM Studio preset")
-	fs.BoolVar(&cfg.LocalPreset, "l", false, "use the local LM Studio preset (alias)")
 	fs.BoolVar(&cfg.DisableClipboard, "no-clipboard", defaultNoClipboard, "disable clipboard integration")
 	fs.BoolVar(&cfg.DisableStream, "no-stream", defaultNoStream, "disable streaming chat output")
 	fs.StringVar(&cfg.SystemPrompt, "system-prompt", defaultSystemPrompt, "custom system prompt (optional)")
@@ -93,32 +76,57 @@ func parseFlags(args []string) app.Config {
 
 	cfg.Args = fs.Args()
 
-	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	cfg.SystemPrompt = strings.TrimSpace(cfg.SystemPrompt)
 	if cfg.SystemPrompt == "" && systemPromptFromEnv {
 		cfg.SystemPrompt = defaultSystemPrompt
 	}
 
-	var endpointFlagSet, modelFlagSet, apiKeyFlagSet, localFlagSet bool
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "endpoint":
-			endpointFlagSet = true
-		case "model":
-			modelFlagSet = true
-		case "api-key":
-			apiKeyFlagSet = true
-		case "local", "l":
-			localFlagSet = true
-		}
-	})
-
-	cfg.EndpointProvided = endpointFlagSet || endpointFromEnv
-	cfg.ModelProvided = modelFlagSet || modelFromEnv
-	cfg.APIKeyProvided = apiKeyFlagSet || apiKeyFromEnv
-	cfg.LocalPresetSet = localFlagSet
-
 	return cfg
+}
+
+func printUsage() {
+	fmt.Fprintf(os.Stderr, `SAI - Streaming Assistant Interface
+
+A terminal-based chat client for llama.cpp and OpenAI-compatible backends.
+
+Usage:
+  sai [prompt]                 Start chat with optional initial prompt
+  sai -s, --settings           Configure endpoint and model
+  sai -h, --help               Show this help message
+
+Chat Modes:
+  -g, --guess                  Intent prediction mode (with context)
+  -lc, --long-chat             Long-form conversation mode
+  -ih, --interactive-help      SAI help desk
+
+Configuration:
+  -s, --settings               Open interactive settings menu
+                               (Configure endpoint, model, API key)
+
+Options:
+  --no-stream                  Disable streaming output
+  --no-clipboard               Disable clipboard integration
+  --system-prompt <text>       Custom system prompt
+  --log-filter <level>         Log level (debug, info, warn, error)
+  --debug                      Dump request/response JSON
+  --debug-performance          Print formatted output without TUI
+
+Environment Variables:
+  SAI_SYSTEM_PROMPT            Custom system prompt
+  SAI_LOG                      Log level filter
+  SAI_NO_STREAM                Disable streaming (true/false)
+
+Examples:
+  sai                          Start interactive chat
+  sai "how do I list files?"   Quick query
+  sai -g                       Start intent prediction mode
+  sai -s                       Configure LM Studio or remote endpoint
+
+Configuration is stored in:
+  macOS: ~/Library/Application Support/sai/config.json
+  Linux: ~/.config/sai/config.json
+
+`)
 }
 
 func envOrDefault(key, fallback string) string {

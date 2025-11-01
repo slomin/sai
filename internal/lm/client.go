@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -22,6 +24,7 @@ const (
 )
 
 var ErrStreamUnsupported = errors.New("lm streaming unsupported")
+var ErrEndpointUnreachable = errors.New("lm: endpoint unreachable")
 
 // Client performs chat completion requests against the configured endpoint.
 type Client struct {
@@ -420,7 +423,7 @@ func (c *Client) send(ctx context.Context, messages []chatMessage, temperature f
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return chatResponse{}, nil, fmt.Errorf("send request: %w", err)
+		return chatResponse{}, nil, wrapEndpointError(c.endpoint, err)
 	}
 	defer resp.Body.Close()
 
@@ -475,4 +478,56 @@ var ioReadAll = func(r io.Reader) ([]byte, error) {
 
 type streamOptions struct {
 	IncludeUsage bool `json:"include_usage,omitempty"`
+}
+
+// EndpointUnreachableError signals that the configured endpoint rejected the
+// TCP connection.
+type EndpointUnreachableError struct {
+	Endpoint string
+	Err      error
+}
+
+func (e *EndpointUnreachableError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("endpoint %s unreachable: %v", e.Endpoint, e.Err)
+	}
+	return fmt.Sprintf("endpoint %s unreachable", e.Endpoint)
+}
+
+func (e *EndpointUnreachableError) Unwrap() error {
+	return e.Err
+}
+
+func (e *EndpointUnreachableError) Is(target error) bool {
+	return target == ErrEndpointUnreachable
+}
+
+func wrapEndpointError(endpoint string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if isConnectionRefused(err) {
+		return &EndpointUnreachableError{
+			Endpoint: endpoint,
+			Err:      err,
+		}
+	}
+	return fmt.Errorf("send request: %w", err)
+}
+
+func isConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if errors.Is(opErr.Err, syscall.ECONNREFUSED) || errors.Is(opErr.Err, syscall.EHOSTUNREACH) || errors.Is(opErr.Err, syscall.ENETUNREACH) {
+			return true
+		}
+	}
+	return false
 }

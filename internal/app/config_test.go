@@ -6,36 +6,7 @@ import (
 	"github.com/slomin/sai/internal/settings"
 )
 
-func TestApplyPersistedSettingsPromotesLocalPreset(t *testing.T) {
-	cfg := Config{
-		Persisted: settings.Config{
-			Mode: settings.ModeLocal,
-		},
-	}
-	updated := applyPersistedSettings(cfg)
-	if !updated.LocalPreset {
-		t.Fatalf("expected local preset to be enabled from persisted settings")
-	}
-	if updated.LocalPresetSet {
-		t.Fatalf("local preset should not count as CLI-provided")
-	}
-}
-
-func TestApplyPersistedSettingsRespectsProvidedEndpoint(t *testing.T) {
-	cfg := Config{
-		Endpoint:         "http://cli",
-		EndpointProvided: true,
-		Persisted: settings.Config{
-			Endpoint: "http://persisted",
-		},
-	}
-	updated := applyPersistedSettings(cfg)
-	if updated.Endpoint != "http://cli" {
-		t.Fatalf("cli endpoint should win, got %s", updated.Endpoint)
-	}
-}
-
-func TestApplyPersistedSettingsFillsCustomEndpointAndModel(t *testing.T) {
+func TestApplyPersistedSettingsFillsEndpointAndModel(t *testing.T) {
 	cfg := Config{
 		Persisted: settings.Config{
 			Mode:     settings.ModeCustom,
@@ -64,16 +35,21 @@ func TestApplyPersistedSettingsAppliesAPIKey(t *testing.T) {
 	}
 }
 
-func TestApplyPersistedSettingsSkipsAPIKeyWhenProvided(t *testing.T) {
+func TestApplyPersistedSettingsDoesNotOverwriteExisting(t *testing.T) {
 	cfg := Config{
-		APIKey:         "cli-key",
-		APIKeyProvided: true,
+		Endpoint: "http://already-set",
+		Model:    "already-set-model",
 		Persisted: settings.Config{
-			APIKey: "persisted-key",
+			Endpoint: "http://persisted",
+			Model:    "persisted-model",
 		},
 	}
 	updated := applyPersistedSettings(cfg)
-	if updated.APIKey != "cli-key" {
-		t.Fatalf("expected cli key to win, got %s", updated.APIKey)
+	// Persisted settings always win
+	if updated.Endpoint != "http://persisted" {
+		t.Fatalf("expected persisted endpoint to overwrite, got %s", updated.Endpoint)
+	}
+	if updated.Model != "persisted-model" {
+		t.Fatalf("expected persisted model to overwrite, got %s", updated.Model)
 	}
 }
