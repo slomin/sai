@@ -30,7 +30,11 @@ running the CLI.
 ### Quick Install (Recommended)
 
 ```bash
+# Install from latest release
 curl -sSL https://raw.githubusercontent.com/slomin/sai/main/install.sh | bash
+
+# Or test from feature branch (if not yet merged)
+# curl -sSL https://raw.githubusercontent.com/slomin/sai/feature/initial-implementation/install.sh | bash
 ```
 
 This script:
