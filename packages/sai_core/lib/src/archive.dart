@@ -3,5 +3,6 @@
 /// this library is one implementation of it.
 library;
 
+export 'archive/archive.dart';
 export 'archive/blobref.dart';
 export 'archive/event.dart';
