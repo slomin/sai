@@ -10,6 +10,14 @@ void main() {
     expect(info.version, saiVersion);
   });
 
+  test('shellGreetingProvider renders name, version and the empty note', () {
+    final container = ProviderContainer.test();
+    expect(
+      container.read(shellGreetingProvider),
+      'sai 2.0.0-dev — nothing here yet',
+    );
+  });
+
   test('shellGreetingProvider derives from appInfoProvider', () {
     final container = ProviderContainer.test(
       overrides: [

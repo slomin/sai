@@ -5,9 +5,16 @@ import 'package:sai_tui/tui_app.dart';
 
 Future<void> main() async {
   final container = ProviderContainer();
-  try {
-    await runApp(RiverpodScope(container: container, child: const TuiApp()));
-  } finally {
-    container.dispose();
-  }
+  await runApp(
+    RiverpodScope(
+      container: container,
+      child: TuiApp(
+        onQuit: () {
+          // shutdownApp() ends the process; dispose providers first.
+          container.dispose();
+          shutdownApp();
+        },
+      ),
+    ),
+  );
 }
