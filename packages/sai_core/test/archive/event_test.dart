@@ -186,6 +186,29 @@ void main() {
       expect(Event.decodeLine(line).model?.provider, 'anthropic');
     });
   });
+
+  test('the golden vector in docs/archive/event-log-v0.md holds', () {
+    final sealed = Event.seal(
+      EventDraft(
+        type: EventTypes.chatMessage,
+        actor: Actor.user,
+        source: 'sai/tui',
+        payload: {'text': 'hello, sai'},
+      ),
+      prev: null,
+      ts: DateTime.utc(2026, 8, 23, 9, 14, 2, 123, 456),
+    );
+    const line =
+        '{"actor":"user","payload":{"text":"hello, sai"},"prev":null,'
+        '"source":"sai/tui","ts":"2026-08-23T09:14:02.123456Z",'
+        '"type":"chat.message","v":0}';
+    expect(sealed.encode(), line);
+    expect(utf8.encode(line).length, 142);
+    expect(
+      sealed.deriveId().toString(),
+      'sha256-ccd8243992f3f5872eb82d8f535443581de8f8549c8c276211df4ff0ff047f69',
+    );
+  });
 }
 
 String mutateModelOntoSystem() {

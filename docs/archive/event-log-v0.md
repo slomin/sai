@@ -27,13 +27,17 @@ can implement another. Every invariant here is checkable from the shell.
   (macOS above; Linux `$XDG_DATA_HOME|~/.local/share/sai/archive`). It
   lives outside any repository: the archive is a life-long record.
 - Day files are named by the **UTC** date of the events they hold and are
-  storage sharding only — no meaning beyond "the day of `ts`". An event in
-  a file that does not match its `ts` date is corruption.
+  storage sharding only. An event is filed under the UTC day of its `ts`
+  — or under the newest existing day when that is later (a clock stepped
+  backwards across midnight, or a deliberately backdated event): day
+  files stay chain-ordered and the log never refuses to write. Readers
+  require `ts` day ≤ file day; an event newer than its file is
+  corruption.
 - Only names matching `^\d{4}-\d{2}-\d{2}\.jsonl$` are part of the log;
   anything else in `events/` (`.DS_Store`, …) is ignored.
-- Day files hold at least one complete line; an empty day file is
-  corruption. Files are UTF-8, no BOM, every line `\n`-terminated
-  ([JSON Lines](https://jsonlines.org/)).
+- A zero-length day file is ignored everywhere — it is the trace of an
+  interrupted first write, never an event. Files are UTF-8, no BOM,
+  every line `\n`-terminated ([JSON Lines](https://jsonlines.org/)).
 
 ## Event ids
 
@@ -52,8 +56,9 @@ head -1 events/2026-08-23.jsonl | tr -d '\n' | shasum -a 256
 ```
 
 The algorithm name is part of the reference, so a future hash migration is
-a value change, not a format change. Readers accept refs with unknown
-algorithm names; sai currently writes only `sha256-`.
+a value change, not a format change. Algorithm names match
+`[a-z][a-z0-9]*` (Perkeep's form — no hyphens inside the name); readers
+accept unknown names of that form, and sai writes only `sha256-`.
 
 Golden vector — this exact line (142 bytes):
 
@@ -82,7 +87,10 @@ everything inside `payload` belongs to the event type.
 
 Unknown top-level keys, a wrong `v`, a malformed `ts`, or an assistant
 event without `model` make the line invalid. A line is at most **1 MiB**;
-larger content goes out of line (v0.2 blob store — see below).
+larger content goes out of line (v0.2 blob store — see below). Writers
+never emit duplicate keys; a hand-made line with duplicates still hashes
+(the id covers the bytes) but readers follow their JSON parser, which
+keeps the last value — do not write duplicates.
 
 Pinned `ts` precision keeps lexicographic order chronological, but `ts`
 is informational: **ordering authority is file order and the chain**, not
@@ -100,9 +108,14 @@ anchored: `HEAD` records `{count, head, updated}` and is rewritten — temp
 file plus atomic rename, under the writer lock — on every append. A tail
 that no longer matches HEAD is corruption.
 
-One inconsistency is legal and self-healing: a crash between the line
-write and the HEAD rename leaves HEAD exactly one event behind a tail
-that still chains from it. Openers roll HEAD forward (metadata only).
+One kind of inconsistency is legal and self-healing: line writes are
+fsynced but HEAD renames are not made durable, so a crash can leave HEAD
+one — or, across a power loss, several — events behind. When HEAD is a
+stale but truthful snapshot (its head id sits at its count position in a
+chain that verifies end to end), openers roll it forward; metadata only.
+A HEAD that matches no prefix of the chain — including a missing or
+hand-reset HEAD over existing events — is corruption: restore HEAD from
+a replica; the day files themselves are untouched.
 
 This anchoring is tamper-evident against accidents, partial copies and
 silent truncation — not against an attacker who can rewrite both the
@@ -114,7 +127,15 @@ files and HEAD. That requires signed checkpoints kept off the machine:
 - One writer at a time per root, enforced with an exclusive lock on
   `LOCK` held across read-tail → append → fsync → HEAD rename. The lock
   is advisory (`fcntl`); it protects sai's processes from each other, not
-  the files from other programs.
+  the files from other programs. In-process, a per-root gate serializes
+  writers — run one `Archive` per process, on the main isolate (the gate
+  is per isolate; `fcntl` locks never conflict within a process).
+- `verify()` runs under the writer lock and cannot misreport a healthy
+  archive. Plain reads are lock-free: one that overlaps an in-flight
+  append may transiently see it as a torn tail — re-read before acting
+  on a tear.
+- `MANIFEST.json` is checked on open: a root whose manifest names
+  another format or version is refused.
 - An append is a single write of `line + "\n"` followed by fsync.
 - Local disks only. Network file systems (NFS &c.) are unsupported.
 - On macOS, fsync does not guarantee the bytes reached the platter
@@ -131,8 +152,8 @@ The one sanctioned repair: bytes after the last `\n` of the newest file
 (a write torn by a crash) never became an event. They are detected as a
 **torn tail** (reads end there loudly; appends refuse), and truncating
 the file back to the reported offset removes them without rewriting any
-event. `HEAD.count` confirms nothing else was lost. If truncation would
-empty the file, remove the file instead.
+event. `HEAD.count` confirms nothing else was lost. Truncating to zero
+bytes is fine — zero-length day files are ignored.
 
 Anything else — a hand-edited line, a missing interior line, a tail that
 does not reach HEAD — is reported as corruption and left untouched.
@@ -184,8 +205,9 @@ A later substrate replays the log with:
    bytes; check `prev` equals the previous line's id (first ever: null);
    check the `ts` date equals the file name; validate the envelope.
 3. After the last line, compare count and final id with `HEAD`; a HEAD
-   exactly one behind a correctly chained tail is a crash trace, treat
-   the tail as authoritative.
+   whose head id sits at its count position in the verified chain is a
+   stale crash trace — treat the tail as authoritative. Anything else is
+   corruption.
 4. Interpret payloads by `type` using the registry, most recent spec
    revision first.
 

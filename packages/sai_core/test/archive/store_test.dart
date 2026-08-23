@@ -17,7 +17,9 @@ void main() {
   tearDown(() => tmp.deleteSync(recursive: true));
 
   test('ensureLayout creates the manifest, head, lock and events dir once', () {
-    store.ensureLayout(createdTs: '2026-08-23T00:00:00.000000Z');
+    store
+      ..ensureRoot()
+      ..ensureState(createdTs: '2026-08-23T00:00:00.000000Z');
     expect(store.eventsDir.existsSync(), isTrue);
     expect(store.lockFile.existsSync(), isTrue);
     final manifest = jsonDecode(
@@ -34,7 +36,9 @@ void main() {
     store.writeHead(
       HeadRecord(count: 3, head: null, updated: '2026-08-23T01:00:00.000000Z'),
     );
-    store.ensureLayout(createdTs: '2027-01-01T00:00:00.000000Z');
+    store
+      ..ensureRoot()
+      ..ensureState(createdTs: '2027-01-01T00:00:00.000000Z');
     expect(
       (jsonDecode(store.manifestFile.readAsStringSync())
           as Map<String, Object?>)['created'],
@@ -44,7 +48,9 @@ void main() {
   });
 
   test('HEAD round-trips and leaves no temp file behind', () {
-    store.ensureLayout(createdTs: '2026-08-23T00:00:00.000000Z');
+    store
+      ..ensureRoot()
+      ..ensureState(createdTs: '2026-08-23T00:00:00.000000Z');
     final ref = BlobRef.sha256OfBytes(utf8.encode('x'));
     store.writeHead(
       HeadRecord(count: 7, head: ref, updated: '2026-08-23T02:00:00.000000Z'),
@@ -60,7 +66,9 @@ void main() {
   });
 
   test('appendLine writes newline-terminated lines in order', () {
-    store.ensureLayout(createdTs: '2026-08-23T00:00:00.000000Z');
+    store
+      ..ensureRoot()
+      ..ensureState(createdTs: '2026-08-23T00:00:00.000000Z');
     final day = store.dayFile('2026-08-23');
     store.appendLine(day, utf8.encode('{"a":1}'));
     store.appendLine(day, utf8.encode('{"b":2}'));
@@ -72,7 +80,9 @@ void main() {
 
   group('readDayLines torn-tail classification', () {
     test('clean and empty files are not torn', () {
-      store.ensureLayout(createdTs: '2026-08-23T00:00:00.000000Z');
+      store
+        ..ensureRoot()
+        ..ensureState(createdTs: '2026-08-23T00:00:00.000000Z');
       final day = store.dayFile('2026-08-23');
       day.writeAsStringSync('');
       final (lines, torn) = store.readDayLines(day);
@@ -81,7 +91,9 @@ void main() {
     });
 
     test('bytes after the last newline are a torn tail at their offset', () {
-      store.ensureLayout(createdTs: '2026-08-23T00:00:00.000000Z');
+      store
+        ..ensureRoot()
+        ..ensureState(createdTs: '2026-08-23T00:00:00.000000Z');
       final day = store.dayFile('2026-08-23');
       day.writeAsStringSync('{"a":1}\n{"b"');
       final (lines, torn) = store.readDayLines(day);
@@ -90,7 +102,9 @@ void main() {
     });
 
     test('a file with no newline at all is torn at offset zero', () {
-      store.ensureLayout(createdTs: '2026-08-23T00:00:00.000000Z');
+      store
+        ..ensureRoot()
+        ..ensureState(createdTs: '2026-08-23T00:00:00.000000Z');
       final day = store.dayFile('2026-08-23');
       day.writeAsStringSync('{"a"');
       final (lines, torn) = store.readDayLines(day);
@@ -100,7 +114,9 @@ void main() {
   });
 
   test('dayFiles lists only day-named files, sorted', () {
-    store.ensureLayout(createdTs: '2026-08-23T00:00:00.000000Z');
+    store
+      ..ensureRoot()
+      ..ensureState(createdTs: '2026-08-23T00:00:00.000000Z');
     store.dayFile('2026-08-24').writeAsStringSync('{}\n');
     store.dayFile('2026-08-22').writeAsStringSync('{}\n');
     store.dayFile('2026-08-23').writeAsStringSync('{}\n');
@@ -114,7 +130,9 @@ void main() {
   });
 
   test('withLock serializes concurrent actions on the same root', () async {
-    store.ensureLayout(createdTs: '2026-08-23T00:00:00.000000Z');
+    store
+      ..ensureRoot()
+      ..ensureState(createdTs: '2026-08-23T00:00:00.000000Z');
     final other = ArchiveStore(tmp); // a second instance, same root
     var inside = 0;
     final order = <int>[];

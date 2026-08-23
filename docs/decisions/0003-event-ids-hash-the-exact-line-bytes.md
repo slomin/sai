@@ -37,7 +37,14 @@ source for its I/O and JSON guarantees) changed the design.
    in-process gate because `fcntl` locks are per-process.
 5. **Recovery is point-in-time and non-destructive** (LevelDB, RocksDB,
    SQLite WAL): a torn tail stops reads and appends loudly; the sanctioned
-   repair truncates only bytes that never became an event.
+   repair truncates only bytes that never became an event, and zero-length
+   day files (an interrupted first write) are ignored outright.
+6. **HEAD is best-effort durable, and recovery compensates.** Lines are
+   fsynced; the HEAD rename is not (Dart cannot fsync a directory), so a
+   power loss can leave HEAD several events behind. Openers accept a HEAD
+   that is a stale but truthful prefix of the verified chain and roll it
+   forward; anything else — including a lost HEAD — stays loud, because a
+   silently rebuilt anchor would erase truncation detection.
 
 ## Consequences
 

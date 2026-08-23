@@ -64,7 +64,8 @@ final class TornTailError implements Exception {
   @override
   String toString() =>
       'TornTailError: $file has a torn tail at byte $offset; '
-      'repair by truncating the file to that offset, then retry';
+      'repair by truncating the file to that offset (a file truncated to '
+      'zero bytes is ignored), then retry';
 }
 
 /// The append-only event log. `append` and read-only iteration — there is no
@@ -91,28 +92,39 @@ final class Archive {
     DateTime Function()? clock,
   }) async {
     final archive = Archive._(ArchiveStore(root), clock ?? DateTime.timestamp);
-    archive._store.ensureLayout(createdTs: formatTs(archive._clock()));
-    await archive._store.withLock(() async => archive._reconcileHead());
+    archive._store.ensureRoot();
+    await archive._store.withLock(() async {
+      try {
+        archive._store.ensureState(createdTs: formatTs(archive._clock()));
+      } on FormatException catch (e) {
+        throw ArchiveCorruptionError(
+          file: archive._store.manifestFile.path,
+          reason: e.message,
+        );
+      }
+      await archive._reconcileHead();
+    });
     return archive;
   }
 
   /// Appends one event: seals [draft] onto the chain, writes its line with
   /// fsync, then advances HEAD. Returns the stored event with its id.
   Future<StoredEvent> append(EventDraft draft) => _store.withLock(() async {
-    final tail = _tailState();
+    final tail = await _tailState();
     final ts = (draft.ts ?? _clock()).toUtc();
-    final day = formatTs(ts).substring(0, 10);
+    final event = Event.seal(draft, prev: tail.head, ts: ts);
+    // File under the event's UTC day — or the newest existing day when the
+    // clock stepped backwards across midnight (NTP, suspend) or the draft
+    // is backdated: day files stay chain-ordered, the log never goes
+    // write-dead, and ts stays truthful. Readers allow event day ≤ file day.
+    var day = event.tsText.substring(0, 10);
     final files = _store.dayFiles();
     if (files.isNotEmpty) {
       final newestDay = p.basenameWithoutExtension(files.last.path);
       if (day.compareTo(newestDay) < 0) {
-        throw ArgumentError(
-          'event ts falls on $day, before the newest day file $newestDay: '
-          'day files are chain-ordered',
-        );
+        day = newestDay;
       }
     }
-    final event = Event.seal(draft, prev: tail.head, ts: ts);
     final bytes = utf8.encode(event.encode());
     final id = BlobRef.sha256OfBytes(bytes);
     _store.appendLine(_store.dayFile(day), bytes);
@@ -123,21 +135,25 @@ final class Archive {
   });
 
   /// All events, oldest first, verifying as it goes: every line's id links
-  /// the next line's `prev`, every event sits in its own UTC day's file.
+  /// the next line's `prev`, and no event is newer than its file's UTC day.
   /// Throws [ArchiveCorruptionError] on the first violation and
   /// [TornTailError] after the last complete line when the newest file was
   /// torn mid-write.
+  ///
+  /// Lock-free: a read that overlaps an in-flight append may transiently
+  /// see it as a torn tail — re-read before acting on a tear reported here.
+  /// [verify] takes the writer lock and cannot misreport.
   Stream<StoredEvent> events() async* {
     BlobRef? prev;
     final files = _store.dayFiles();
     for (final (index, file) in files.indexed) {
       final day = p.basenameWithoutExtension(file.path);
-      final (lines, torn) = _store.readDayLines(file);
-      if (lines.isEmpty && torn == null) {
-        throw ArchiveCorruptionError(
-          file: file.path,
-          reason: 'empty day file: day files hold at least one event',
-        );
+      final List<String> lines;
+      final int? torn;
+      try {
+        (lines, torn) = _store.readDayLines(file);
+      } on FormatException catch (e) {
+        throw ArchiveCorruptionError(file: file.path, reason: e.message);
       }
       for (final (i, line) in lines.indexed) {
         final id = BlobRef.sha256OfBytes(utf8.encode(line));
@@ -158,12 +174,12 @@ final class Archive {
             reason: 'chain broken: prev is ${event.prev}, expected $prev',
           );
         }
-        if (!event.tsText.startsWith(day)) {
+        if (event.tsText.substring(0, 10).compareTo(day) > 0) {
           throw ArchiveCorruptionError(
             file: file.path,
             line: i + 1,
             reason:
-                'event at ${event.tsText} sits in the wrong day file ($day)',
+                'event at ${event.tsText} is newer than its day file ($day)',
           );
         }
         yield StoredEvent(id: id, event: event);
@@ -183,16 +199,17 @@ final class Archive {
   }
 
   /// Full integrity pass: walks [events] end to end, then requires HEAD to
-  /// match the recomputed count and head exactly. This is what a restore
-  /// drill runs against a replica.
-  Future<ArchiveReport> verify() async {
+  /// match the recomputed count and head exactly. Runs under the writer
+  /// lock so a concurrent append cannot make a healthy archive look
+  /// corrupt. This is what a restore drill runs against a replica.
+  Future<ArchiveReport> verify() => _store.withLock(() async {
     var count = 0;
     BlobRef? last;
     await for (final stored in events()) {
       count++;
       last = stored.id;
     }
-    final head = _store.readHead();
+    final head = _readHead();
     if (head.count != count || head.head != last) {
       throw ArchiveCorruptionError(
         file: _store.headFile.path,
@@ -202,12 +219,31 @@ final class Archive {
       );
     }
     return ArchiveReport(count: count, head: last);
+  });
+
+  /// Releases the archive's lock handle. Call at a quiet point (provider
+  /// disposal, shutdown) — the next operation reopens it transparently.
+  Future<void> close() => _store.close();
+
+  /// [ArchiveStore.readHead], with damage surfaced as the documented
+  /// [ArchiveCorruptionError] instead of a bare [FormatException].
+  HeadRecord _readHead() {
+    try {
+      return _store.readHead();
+    } on FormatException catch (e) {
+      throw ArchiveCorruptionError(
+        file: _store.headFile.path,
+        reason:
+            '${e.message}; restore HEAD from a replica — the day files '
+            'themselves are untouched',
+      );
+    }
   }
 
   /// The chain position to append after, cross-checked against the newest
   /// file's tail. Caller holds the lock.
-  HeadRecord _tailState() {
-    final head = _store.readHead();
+  Future<HeadRecord> _tailState() async {
+    final head = _readHead();
     final files = _store.dayFiles();
     if (files.isEmpty) {
       if (head.count != 0 || head.head != null) {
@@ -219,22 +255,22 @@ final class Archive {
       return head;
     }
     final file = files.last;
-    final (lastLine, torn) = _store.readTail(file);
+    final String? lastLine;
+    final int? torn;
+    try {
+      (lastLine, torn) = _store.readTail(file);
+    } on FormatException catch (e) {
+      throw ArchiveCorruptionError(file: file.path, reason: e.message);
+    }
     if (torn != null) {
       throw TornTailError(file: file.path, offset: torn);
     }
-    if (lastLine == null) {
-      throw ArchiveCorruptionError(
-        file: file.path,
-        reason: 'empty day file: day files hold at least one event',
-      );
-    }
-    final lastId = BlobRef.sha256OfBytes(utf8.encode(lastLine));
+    final lastId = BlobRef.sha256OfBytes(utf8.encode(lastLine!));
     if (head.head == lastId) {
       return head;
     }
-    // A crash between line-fsync and HEAD-rename leaves HEAD exactly one
-    // event behind a tail that still chains from it.
+    // The common crash trace: HEAD exactly one event behind a tail that
+    // still chains from it (crash between line-fsync and HEAD-rename).
     final Event lastEvent;
     try {
       lastEvent = Event.decodeLine(lastLine);
@@ -248,27 +284,46 @@ final class Archive {
         updated: head.updated,
       );
     }
+    // HEAD renames are not durably synced the way lines are, so a power
+    // loss can leave HEAD several events behind. Recover iff HEAD is a
+    // stale but truthful snapshot: its head id sits at its count position
+    // in a chain that verifies end to end. Anything else stays loud.
+    final ids = <BlobRef>[];
+    await for (final stored in events()) {
+      ids.add(stored.id);
+    }
+    final truthful =
+        head.count > 0 &&
+        head.count <= ids.length &&
+        ids[head.count - 1] == head.head;
+    if (truthful) {
+      return HeadRecord(
+        count: ids.length,
+        head: ids.last,
+        updated: head.updated,
+      );
+    }
     throw ArchiveCorruptionError(
       file: _store.headFile.path,
       reason:
-          'HEAD (${head.head}) matches neither the newest line ($lastId) '
-          'nor its prev (${lastEvent.prev}); run verify() and restore from '
-          'a replica if needed',
+          'HEAD (count ${head.count}, ${head.head}) is not a prefix of the '
+          'chain (count ${ids.length}, tail $lastId): the anchor is lost or '
+          'the tail was cut; restore from a replica',
     );
   }
 
   /// Open-time reconciliation: persist a roll-forward if [_tailState] found
   /// one. Caller holds the lock.
-  void _reconcileHead() {
+  Future<void> _reconcileHead() async {
     final HeadRecord tail;
     try {
-      tail = _tailState();
+      tail = await _tailState();
     } on TornTailError {
       // Still readable up to the tear; append will refuse until the
       // documented repair, so there is nothing to roll forward yet.
       return;
     }
-    final head = _store.readHead();
+    final head = _readHead();
     if (tail.count != head.count) {
       _store.writeHead(
         HeadRecord(

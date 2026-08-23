@@ -189,23 +189,23 @@ void main() {
     expect((await b.verify()).count, 20);
   });
 
-  test('an event in the wrong day file is corruption', () async {
+  test('an event newer than its day file is corruption', () async {
     final archive = await Archive.open(tmp, clock: clock);
     await archive.append(draft());
-    dayFile('2026-08-23').renameSync(dayFile('2026-08-24').path);
+    dayFile('2026-08-23').renameSync(dayFile('2026-08-22').path);
     await expectLater(
       archive.events().toList(),
       throwsA(
         isA<ArchiveCorruptionError>().having(
           (e) => e.reason,
           'reason',
-          contains('day'),
+          contains('newer than its day file'),
         ),
       ),
     );
   });
 
-  test('a draft timestamped before the newest day file is refused', () async {
+  test('a backdated ts (backwards clock) files under the newest day', () async {
     final archive = await Archive.open(tmp, clock: clock);
     await archive.append(draft());
     final stale = EventDraft(
@@ -215,17 +215,100 @@ void main() {
       payload: {'text': 'yesterday'},
       ts: DateTime.utc(2026, 8, 22, 12),
     );
-    await expectLater(archive.append(stale), throwsArgumentError);
+    final stored = await archive.append(stale);
+    expect(stored.event.tsText, startsWith('2026-08-22'));
+    expect(dayFile('2026-08-22').existsSync(), isFalse);
+    expect((await archive.verify()).count, 2);
   });
 
-  test('an empty day file is corruption', () async {
+  test(
+    'a ts outside four-digit years is refused before anything is written',
+    () async {
+      final archive = await Archive.open(tmp, clock: clock);
+      final farFuture = EventDraft(
+        type: EventTypes.chatMessage,
+        actor: Actor.user,
+        source: 'sai/tui',
+        payload: {'text': 'unit mix-up'},
+        ts: DateTime.fromMicrosecondsSinceEpoch(
+          DateTime.utc(9999, 12, 31).microsecondsSinceEpoch * 1000,
+          isUtc: true,
+        ),
+      );
+      await expectLater(archive.append(farFuture), throwsArgumentError);
+      expect((await archive.verify()).count, 0);
+    },
+  );
+
+  test('a zero-length day file is ignored, and appends carry on', () async {
     final archive = await Archive.open(tmp, clock: clock);
     await archive.append(draft());
-    dayFile('2026-08-22').writeAsStringSync('');
+    dayFile('2026-08-23')
+        .writeAsStringSync(''); // interrupted-first-write trace
+    // Its event is gone, so HEAD no longer matches: loud, not silent.
     await expectLater(
-      archive.events().toList(),
+      Archive.open(tmp, clock: clock),
       throwsA(isA<ArchiveCorruptionError>()),
     );
+    // But a fresh root with only a zero-length file is simply empty.
+    final tmp2 = Directory.systemTemp.createTempSync('sai_archive_test');
+    addTearDown(() => tmp2.deleteSync(recursive: true));
+    final fresh = await Archive.open(tmp2, clock: clock);
+    File('${tmp2.path}/events/2026-08-23.jsonl').writeAsStringSync('');
+    await fresh.append(draft());
+    expect((await fresh.verify()).count, 1);
+  });
+
+  test('HEAD several events behind a truthful chain rolls forward', () async {
+    final archive = await Archive.open(tmp, clock: clock);
+    await archive.append(draft('#0'));
+    final headBefore = File('${tmp.path}/HEAD').readAsStringSync();
+    await archive.append(draft('#1'));
+    await archive.append(draft('#2'));
+    File('${tmp.path}/HEAD').writeAsStringSync(headBefore); // two behind
+    final reopened = await Archive.open(tmp, clock: clock);
+    expect((await reopened.verify()).count, 3);
+  });
+
+  test('a damaged HEAD is archive corruption, not a type error', () async {
+    final archive = await Archive.open(tmp, clock: clock);
+    await archive.append(draft());
+    for (final bad in ['not json', '{"count":"3"}', '[]', '{"count":1.0}']) {
+      File('${tmp.path}/HEAD').writeAsStringSync(bad);
+      await expectLater(
+        archive.append(draft()),
+        throwsA(
+          isA<ArchiveCorruptionError>().having(
+            (e) => e.file,
+            'file',
+            endsWith('HEAD'),
+          ),
+        ),
+      );
+    }
+  });
+
+  test('invalid UTF-8 is corruption naming the file and line', () async {
+    final archive = await Archive.open(tmp, clock: clock);
+    await archive.append(draft());
+    dayFile('2026-08-23')
+        .writeAsBytesSync([0xff, 0xfe, 0x0a], mode: FileMode.append);
+    await expectLater(
+      archive.events().toList(),
+      throwsA(
+        isA<ArchiveCorruptionError>()
+            .having((e) => e.file, 'file', endsWith('2026-08-23.jsonl'))
+            .having((e) => e.reason, 'reason', contains('line 2')),
+      ),
+    );
+  });
+
+  test('close releases the lock handle; the archive keeps working', () async {
+    final archive = await Archive.open(tmp, clock: clock);
+    await archive.append(draft());
+    await archive.close();
+    await archive.append(draft());
+    expect((await archive.verify()).count, 2);
   });
 
   test('stray files in events/ are ignored', () async {

@@ -27,7 +27,10 @@ final archiveRootProvider = Provider<Directory>(
 );
 
 /// The opened archive. Every client appends and reads through this single
-/// instance; there is no other write path to the log.
-final archiveProvider = FutureProvider<Archive>(
-  (ref) => Archive.open(ref.watch(archiveRootProvider)),
-);
+/// instance; there is no other write path to the log. Disposal releases
+/// the archive's lock handle so rebuilt providers never leak descriptors.
+final archiveProvider = FutureProvider<Archive>((ref) async {
+  final archive = await Archive.open(ref.watch(archiveRootProvider));
+  ref.onDispose(archive.close);
+  return archive;
+});

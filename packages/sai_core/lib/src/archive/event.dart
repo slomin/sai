@@ -202,6 +202,12 @@ final class Event {
   static final _typeForm = RegExp(r'^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$');
 
   void _validate({required Object Function(String) throwing}) {
+    if (!_tsForm.hasMatch(tsText)) {
+      throw throwing(
+        'ts must be RFC 3339 UTC with a four-digit year and six fractional '
+        'digits, got "$tsText"',
+      );
+    }
     if (!_typeForm.hasMatch(type)) {
       throw throwing('type must be dotted lowercase, got "$type"');
     }
