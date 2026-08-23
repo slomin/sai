@@ -1,0 +1,29 @@
+#!/bin/sh
+# Block any push carrying tool-generated attribution.
+# Policy: commits in this repository are authored solely by the person
+# committing. Install with: git config core.hooksPath .githooks
+
+remote="$1"
+z40=0000000000000000000000000000000000000000
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+	[ "$local_sha" = "$z40" ] && continue
+
+	if [ "$remote_sha" = "$z40" ]; then
+		range="$local_sha"
+	else
+		range="$remote_sha..$local_sha"
+	fi
+
+	bad=$(git log --format='%H %s%n%b' "$range" 2>/dev/null |
+		grep -iE 'co-authored-by:.*(claude|anthropic)|claude-session:|generated with \[claude code\]|noreply@anthropic\.com')
+
+	if [ -n "$bad" ]; then
+		echo "pre-push: BLOCKED - attribution trailer found in commits bound for $remote" >&2
+		echo "$bad" >&2
+		echo "Rewrite those commit messages before pushing." >&2
+		exit 1
+	fi
+done
+
+exit 0
