@@ -4,3 +4,6 @@
 build/
 .venv
 sai
+
+# Reference clones (not our code)
+ref_code_examples_only/
