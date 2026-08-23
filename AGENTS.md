@@ -1,41 +1,60 @@
 # Repository Guidelines
 
-## Feedback Loop & Research Prerequisites
-- **TDD first**: write or update tests, watch them fail, code the change, and re-run `go test ./...` until green.
-- **Compile often**: `go build ./cmd/sai` or `./sai_deploy.sh` (both require elevated permissions) after non-trivial edits.
-- **Context7 MCP required**: consult `/charmbracelet/bubbletea` and `/ggml-org/llama.cpp` before altering UI or streaming logic; summarize insights in PRs.
+sai v2 is a Dart workspace: `packages/sai_core` (pure Dart), `apps/sai_app`
+(Flutter macOS), `apps/sai_tui` (nocterm terminal client). The README has
+the layout and the toolchain; this file has the rules.
 
-## Build, Test, and Development Commands
-- `go test ./...` – runs the Go unit suite against the remote default endpoint; grant elevated permissions (`sudo` or CLI escalation) so caches can be created.
-- `go build ./cmd/sai` – compiles the CLI into the repository root; reuse elevated privileges if the build cache complains.
-- `./sai_deploy.sh` – produces `build/sai` and installs it to `/usr/local/bin/sai`; the script escalates via `sudo` automatically.
+## Feedback loop
 
-## Project Structure & Module Organization
-- `go.mod` at the repository root declares the `github.com/slomin/sai` module.
-- `cmd/sai`: CLI entrypoint and flag parsing.
-- `internal/app`, `context`, `lm`, `ui`, `ui/chat`, `prompts`: state orchestration, context capture, LM client, Bubble Tea models, and system prompt text respectively.
-- Tests live alongside implementations (`internal/*_test.go`). `build/` holds compiled binaries when `sai_deploy.sh` runs.
+- Tests first: write or update the test, watch it fail, make the change,
+  re-run until green. Unit and provider tests in `packages/sai_core/test`
+  (`dart test`), widget tests in `apps/sai_app/test` (`flutter test`),
+  `testNocterm` tests in `apps/sai_tui/test` (`dart test`).
+- Resolve once from the root with `flutter pub get` (the workspace has
+  Flutter members, so plain `dart pub get` cannot resolve it).
+- Before pushing, run what CI runs — the "Verify" block in the README.
+  `dart format` and `dart analyze --fatal-infos` gate every PR.
+- Use the Context7 MCP for upstream docs (`riverpod`, `flutter`,
+  `nocterm`) before changing state management or UI code, and cite what
+  you relied on in the PR.
 
-## Coding Style & Naming Conventions
-- Always run `gofmt -w` on touched files.
-- Use `internal/<module>` naming; exported identifiers UpperCamelCase, unexported lowerCamelCase.
-- Keep Bubble Tea styling in helpers or future `internal/styles` package; avoid inline color literals.
+## Boundaries
 
-## Testing Guidelines
-- Tests use Go’s standard `testing` package and sit in `*_test.go`.
-- Extend coverage when touching streaming, prompt composition, or Bubble Tea state machines; fail-first tests document regressions.
-- Reviews require a fresh `go test ./...` run with elevated permissions if prompted.
+- `sai_core` never imports Flutter or a client. A test and a CI step fail
+  if it does. If something needs Flutter, it belongs in `apps/sai_app`.
+- Clients depend on `sai_core` only; they never depend on each other.
+- State lives in riverpod providers in `sai_core`; clients render them
+  (`flutter_riverpod` in the app, `nocterm_riverpod` in the TUI). View
+  logic that both clients need goes into the core, not into a client.
+- `spikes/` are frozen evidence behind a decision. They stay out of the
+  workspace and nothing imports them.
+- Technical decisions with consequences go to `docs/decisions/` as ADRs
+  (see `0001-…`). Decisions made on the assistant's behalf are a separate
+  log (#14).
 
-## Commit & Pull Request Guidelines
-- Use imperative, scoped commit messages (e.g., `chat: add streaming placeholder guard`).
-- Pull requests should summarize behavior changes, call out impacted commands/environments, and list verification steps (`go test ./...`). Include screenshots or clips when modifying terminal UI output.
+## Style
 
-## Architecture Notes
-- Streaming logic surfaces via `internal/lm.Client.StreamChat` (tested against the remote default endpoint) and UI handlers; keep cross-cutting helpers in `internal/util` when introduced.
-- The CLI targets the remote llama.cpp server by default. Endpoint, model, and API key are configured through the interactive settings menu (`sai -s`) and persisted via `internal/settings`; the old `--endpoint`/`--model`/`--api-key`/`-l` flags were removed. Update docs/tests accordingly when changing endpoints.
-- Glamour markdown rendering no longer auto-detects terminal backgrounds; set `GLAMOUR_STYLE` (`dark`, `light`, etc.) explicitly if your workflow depends on a non-default theme.
-- See `opencode_reference_arch.md` for structural inspiration and planned refactors (themes, componentization, command registry).
+- `dart format` output is canonical. Lints: `package:lints/recommended`
+  in Dart packages, `package:flutter_lints/flutter` in the app.
+- No code generation in the workspace yet (no `build_runner`,
+  no `riverpod_generator`); revisit when a package earns it.
+- Keep secrets, device identifiers, and machine-specific paths out of the
+  tree.
 
-## Documentation & Research Workflow
-- Use the Context7 MCP integration for upstream docs (e.g., `/charmbracelet/bubbletea`, `/ggml-org/llama.cpp`) before making changes; this keeps guidance consistent with the libraries we mirror.
-- Record any critical external references in PR descriptions so reviewers can trace design decisions quickly.
+## Commits and pull requests
+
+- Imperative, scoped subjects: `core: …`, `app: …`, `tui: …`, `ci: …`,
+  `docs: …`, `chore: …`, `spike: …`. Body says what changed, not how it
+  was found.
+- Commits carry no tool-generated attribution or trailers. The hooks in
+  `.githooks/` enforce it; enable them with
+  `git config core.hooksPath .githooks`.
+- Pull requests summarise the behaviour delivered, link the issue
+  (`Closes #N`), and list the verification that was actually run. Include
+  a clip or screenshot for UI changes, app or terminal.
+
+## The Go prototype (until #11)
+
+`cmd/`, `internal/`, `go.mod`, `install.sh`, `sai_deploy.sh`, `RELEASING.md`
+and `.github/workflows/release.yml` are the v1 Go/Bubble Tea client, frozen
+at tag `go-final`. Do not extend them; #11 removes them from `main`.

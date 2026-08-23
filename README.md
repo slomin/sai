@@ -1,154 +1,93 @@
-# sai – Streaming Assistant Interface
+# sai
 
-`sai` is a Bubble Tea–powered chat client for working with llama.cpp and other
-OpenAI-compatible backends. The current session focused on polishing the chat
-experience, so this README highlights the behaviours you can now rely on when
-running the CLI.
+sai (Super AI) is a personal assistant that lives with one person's task
+list. Version 2 starts as a Things-like todo app for macOS with an always-on
+assistant beside it, built so that everything the assistant sees and does is
+kept in an auditable archive. The roadmap lives on the
+[project board](https://github.com/users/slomin/projects/12); the first
+milestone is a walking skeleton (one task list, one model provider, events
+logged, both clients showing the same data).
 
-## Highlights
+This repository is a Dart workspace:
 
-- **Snappy startup** – Markdown rendering no longer probes the terminal for its
-  background colour. Opening chat views is immediate even inside multiplexers
-  or when OSC queries are blocked.
-- **Live streaming telemetry** – The footer displays `tok/s` using
-  llama.cpp’s `timings.predicted_per_second` metadata whenever it is available.
-  When the server omits the field we fall back to a local cadence estimate.
-- **Snippet workflow upgrades**
-  - `Tab` cycles through assistant code fences. The hint only appears when a
-    selectable fence exists.
-  - Selected snippets are highlighted inline (`▶ Snippet selected`) so you can
-    confirm the exact block that will be copied.
-  - `Enter` copies the highlighted fence; `Esc` cancels the selection.
-  - Clipboard write failures (e.g. headless hosts) keep the UI open and display
-    the snippet inline with a red fallback banner instead of quitting.
-- **Theme control** – Respect the `GLAMOUR_STYLE` environment variable
-  (e.g. `light`, `dark`, `dracula`). Because we skip auto-detection for speed,
-  set this explicitly if you prefer a light theme.
+| Path                 | What it is                                                                 |
+| -------------------- | -------------------------------------------------------------------------- |
+| `packages/sai_core`  | Pure Dart. Task model, archive, provider routing, and the shared riverpod layer. No Flutter. |
+| `apps/sai_app`       | The Flutter macOS app. Depends on `sai_core`.                              |
+| `apps/sai_tui`       | The terminal client on [nocterm](https://pub.dev/packages/nocterm). Depends on `sai_core`; built with `dart compile exe`. |
+| `spikes/`            | Throwaway experiments that settled a decision. Not part of the workspace; each keeps its own `pubspec.lock`. |
+| `docs/decisions/`    | Technical ADRs.                                                            |
 
-## Installation
+Both clients read the same providers from `sai_core`; nothing in `sai_core`
+knows about either client.
 
-### Quick Install (Recommended)
+## Toolchain
 
-```bash
-# Install from latest release
-curl -sSL https://raw.githubusercontent.com/slomin/sai/main/install.sh | bash
+- Flutter 3.47.1 stable (Dart 3.13.1). CI pins the same version
+  (`.github/workflows/ci.yml`), so match it locally.
+- Xcode with the macOS platform, for `apps/sai_app`.
 
-# Or test from feature branch (if not yet merged)
-# curl -sSL https://raw.githubusercontent.com/slomin/sai/feature/initial-implementation/install.sh | bash
+## Build and run
+
+Resolve the whole workspace once from the repository root:
+
+```sh
+flutter pub get
 ```
 
-This script:
-- Detects your platform (macOS/Linux, ARM64/AMD64)
-- Downloads the latest release
-- Installs to `~/.local/bin/sai`
-- Removes macOS quarantine attributes automatically
+Run the clients:
 
-### Manual Installation
+```sh
+# macOS app
+cd apps/sai_app && flutter run -d macos
 
-Download the latest release from [GitHub Releases](https://github.com/slomin/sai/releases):
-
-**macOS:**
-```bash
-# Apple Silicon (M1/M2/M3)
-curl -L -o sai https://github.com/slomin/sai/releases/latest/download/sai-darwin-arm64
-
-# Intel Mac
-curl -L -o sai https://github.com/slomin/sai/releases/latest/download/sai-darwin-amd64
-
-chmod +x sai
-mkdir -p ~/.local/bin
-mv sai ~/.local/bin/
-
-# Remove quarantine attribute (prevents macOS Gatekeeper blocking)
-xattr -d com.apple.quarantine ~/.local/bin/sai
+# terminal client, from the root …
+dart run apps/sai_tui/bin/sai_tui.dart
+# … or from its own directory
+cd apps/sai_tui && dart run
 ```
 
-**Linux:**
-```bash
-# AMD64
-curl -L -o sai https://github.com/slomin/sai/releases/latest/download/sai-linux-amd64
+Build a debug app bundle (what CI does): `cd apps/sai_app && flutter build
+macos --debug` → `apps/sai_app/build/macos/Build/Products/Debug/sai.app`.
 
-# ARM64
-curl -L -o sai https://github.com/slomin/sai/releases/latest/download/sai-linux-arm64
+## Verify
 
-chmod +x sai
-sudo mv sai /usr/local/bin/
+Same commands CI runs, from the repository root:
+
+```sh
+dart format --output=none --set-exit-if-changed packages apps/sai_tui apps/sai_app/lib apps/sai_app/test
+dart analyze --fatal-infos packages apps
+(cd packages/sai_core && dart test)
+(cd apps/sai_tui && dart test)
+(cd apps/sai_app && flutter test)
+(cd apps/sai_app && flutter build macos --debug)
 ```
 
-### Build from Source
+`sai_core` must stay free of Flutter: `dart test` there fails if a
+`package:flutter` import appears under `lib/`, and CI checks the pubspec.
 
-```bash
-git clone https://github.com/slomin/sai.git
-cd sai
-go build ./cmd/sai
-./sai --help
+## Git hooks
+
+Commits here carry no tool-generated attribution. Two hooks enforce it:
+`commit-msg` strips such trailers, `pre-push` refuses to push commits that
+still have them. Enable them once per clone:
+
+```sh
+git config core.hooksPath .githooks
 ```
 
-## Configuration
+## The Go prototype
 
-Configure your LM Studio or llama.cpp endpoint using the interactive settings menu:
+sai v1 was a Go/Bubble Tea terminal chat client for llama.cpp. It is kept
+as is at tag [`go-final`](https://github.com/slomin/sai/tree/go-final) and
+branch
+[`archive/go-bubbletea`](https://github.com/slomin/sai/tree/archive/go-bubbletea);
+its last binaries are the
+[v0.1.0 release](https://github.com/slomin/sai/releases/tag/v0.1.0). The Go
+sources still present on `main` are removed by
+[#11](https://github.com/slomin/sai/issues/11); until then, build them with
+`go build ./cmd/sai` and test with `go test ./...`.
 
-```bash
-sai --settings    # or sai -s
-```
+## License
 
-This will save your configuration to:
-- **macOS**: `~/Library/Application Support/sai/config.json`
-- **Linux**: `~/.config/sai/config.json`
-
-## Usage
-
-```bash
-sai                          # Start interactive chat
-sai "how do I list files?"   # Quick query
-sai -g                       # Intent prediction mode (with context)
-sai -lc                      # Long-form conversation
-sai --help                   # Show all options
-```
-
-### Keyboard Shortcuts
-
-| Key            | Action                                  |
-| -------------- | --------------------------------------- |
-| `Enter`        | Submit prompt / copy selected snippet   |
-| `Esc`/`Ctrl+C` | Quit                                    |
-| `PgUp/PgDn`    | Scroll transcript                       |
-| `Alt+Up/Down`  | Scroll one line                         |
-| `Alt+C`        | Copy the last assistant reply           |
-| `Tab`          | Cycle assistant code snippets (if any)  |
-
-## Testing
-
-- `go test ./...` – run the Go unit suite (requires elevated permissions in
-  sandboxed environments).
-- Python integration tests are not yet included; see `project_progress/…` for
-  the proposed harness if you plan to add them.
-
-## Environment Variables
-
-- `SAI_SYSTEM_PROMPT` – Custom system prompt
-- `SAI_LOG` – Log level (debug, info, warn, error)
-- `SAI_NO_STREAM` – Disable streaming (true/false)
-- `GLAMOUR_STYLE` – Markdown theme (light, dark, dracula, etc.)
-
-Example:
-```bash
-export GLAMOUR_STYLE=light
-export SAI_LOG=debug
-sai
-```
-
-## Testing
-
-Run the test suite:
-```bash
-go test ./...
-```
-
-To test clipboard fallback behavior:
-```bash
-sai --no-clipboard
-```
-
-For deeper architectural guidance, refer to `AGENTS.md` and
-`opencode_reference_arch.md`.
+Mozilla Public License 2.0 — see [LICENSE](LICENSE).
