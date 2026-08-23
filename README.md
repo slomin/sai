@@ -32,7 +32,7 @@ knows about either client.
 Resolve the whole workspace once from the repository root:
 
 ```sh
-flutter pub get
+dart pub get   # or flutter pub get
 ```
 
 Run the clients:
@@ -63,14 +63,16 @@ dart analyze --fatal-infos packages apps
 (cd apps/sai_app && flutter build macos --debug)
 ```
 
-`sai_core` must stay free of Flutter: `dart test` there fails if a
-`package:flutter` import appears under `lib/`, and CI checks the pubspec.
+`sai_core` must stay free of Flutter: its tests fail if `lib/` imports
+`package:flutter` or `dart:ui`, or if its pubspec declares a Flutter
+dependency.
 
 ## Git hooks
 
-Commits here carry no tool-generated attribution. Two hooks enforce it:
-`commit-msg` strips such trailers, `pre-push` refuses to push commits that
-still have them. Enable them once per clone:
+Commits here carry no tool-generated attribution. The patterns are in
+`.githooks/attribution-patterns`; `commit-msg` strips matching lines,
+`pre-push` refuses to push commits that still have them, and CI refuses a
+pull request that does. Enable the hooks once per clone:
 
 ```sh
 git config core.hooksPath .githooks

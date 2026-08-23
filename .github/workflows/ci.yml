@@ -3,16 +3,33 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'spikes/**'
   pull_request:
-    paths-ignore:
-      - 'spikes/**'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   FLUTTER_VERSION: 3.47.1
 
 jobs:
+  attribution:
+    name: No attribution trailers
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Inspect the commits this PR adds
+        run: |
+          log=$(git log --format='%H %s%n%b' "origin/${{ github.base_ref }}..HEAD")
+          if bad=$(printf '%s\n' "$log" | grep -iE -f .githooks/attribution-patterns); then
+            echo "Attribution trailer found:" >&2
+            echo "$bad" >&2
+            exit 1
+          fi
+
   dart:
     name: Analyze and test (core, tui)
     runs-on: ubuntu-latest
@@ -24,15 +41,11 @@ jobs:
           channel: stable
           cache: true
       - name: Resolve the workspace
-        run: flutter pub get
+        run: dart pub get
       - name: Format
         run: dart format --output=none --set-exit-if-changed packages apps/sai_tui apps/sai_app/lib apps/sai_app/test
       - name: Analyze
         run: dart analyze --fatal-infos packages apps
-      - name: sai_core stays free of Flutter
-        run: |
-          ! grep -q flutter packages/sai_core/pubspec.yaml
-          ! grep -rq 'package:flutter' packages/sai_core/lib
       - name: Test sai_core
         working-directory: packages/sai_core
         run: dart test
@@ -51,7 +64,7 @@ jobs:
           channel: stable
           cache: true
       - name: Resolve the workspace
-        run: flutter pub get
+        run: dart pub get
       - name: Test sai_app
         working-directory: apps/sai_app
         run: flutter test

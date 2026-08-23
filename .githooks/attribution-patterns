@@ -1,0 +1,5 @@
+co-authored-by:.*(claude|anthropic)
+^claude-session:
+generated with \[claude code\]
+^https://claude\.ai/code/session_
+noreply@anthropic\.com

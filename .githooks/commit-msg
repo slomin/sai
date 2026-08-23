@@ -1,22 +1,23 @@
 #!/bin/sh
 # Strip tool-generated attribution from commit messages.
 # Policy: commits in this repository are authored solely by the person
-# committing. Install with: git config core.hooksPath .githooks
+# committing. Patterns live in attribution-patterns (case-insensitive ERE,
+# one per line) and are shared with pre-push and the CI attribution job.
+# Install with: git config core.hooksPath .githooks
 
 msg_file="$1"
+patterns="$(dirname "$0")/attribution-patterns"
+tmp="$msg_file.tmp"
 
-# Remove attribution trailers and generated-by markers, wherever they appear.
-sed -i '' \
-  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*[Cc]laude/d' \
-  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*[Aa]nthropic/d' \
-  -e '/^[Cc]laude-[Ss]ession:/d' \
-  -e '/Generated with \[Claude Code\]/d' \
-  -e '/^https:\/\/claude\.ai\/code\/session_/d' \
-  -e '/noreply@anthropic\.com/d' \
-  "$msg_file"
+# Drop matching lines. grep -v exits 1 when nothing is left, which is fine.
+grep -viE -f "$patterns" "$msg_file" > "$tmp"
+status=$?
+if [ "$status" -gt 1 ]; then
+  echo "commit-msg: could not filter the message (grep exit $status)" >&2
+  rm -f "$tmp"
+  exit 1
+fi
 
 # Collapse any trailing blank lines left behind by the deletions.
-awk 'BEGIN{n=0} {lines[NR]=$0} END{last=NR; while(last>0 && lines[last]~/^[[:space:]]*$/) last--; for(i=1;i<=last;i++) print lines[i]}' \
-  "$msg_file" > "$msg_file.tmp" && mv "$msg_file.tmp" "$msg_file"
-
-exit 0
+awk '{lines[NR]=$0} END{last=NR; while(last>0 && lines[last]~/^[[:space:]]*$/) last--; for(i=1;i<=last;i++) print lines[i]}' \
+  "$tmp" > "$msg_file" && rm -f "$tmp"

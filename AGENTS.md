@@ -10,8 +10,8 @@ the layout and the toolchain; this file has the rules.
   re-run until green. Unit and provider tests in `packages/sai_core/test`
   (`dart test`), widget tests in `apps/sai_app/test` (`flutter test`),
   `testNocterm` tests in `apps/sai_tui/test` (`dart test`).
-- Resolve once from the root with `flutter pub get` (the workspace has
-  Flutter members, so plain `dart pub get` cannot resolve it).
+- Resolve once from the root with `dart pub get` (the Flutter SDK's
+  `dart`, which knows where Flutter lives; `flutter pub get` does the same).
 - Before pushing, run what CI runs — the "Verify" block in the README.
   `dart format` and `dart analyze --fatal-infos` gate every PR.
 - Use the Context7 MCP for upstream docs (`riverpod`, `flutter`,
@@ -20,8 +20,8 @@ the layout and the toolchain; this file has the rules.
 
 ## Boundaries
 
-- `sai_core` never imports Flutter or a client. A test and a CI step fail
-  if it does. If something needs Flutter, it belongs in `apps/sai_app`.
+- `sai_core` never imports Flutter or `dart:ui`, and never a client. Its
+  own test suite fails if it does. If something needs Flutter, it belongs in `apps/sai_app`.
 - Clients depend on `sai_core` only; they never depend on each other.
 - State lives in riverpod providers in `sai_core`; clients render them
   (`flutter_riverpod` in the app, `nocterm_riverpod` in the TUI). View
@@ -46,8 +46,10 @@ the layout and the toolchain; this file has the rules.
 - Imperative, scoped subjects: `core: …`, `app: …`, `tui: …`, `ci: …`,
   `docs: …`, `chore: …`, `spike: …`. Body says what changed, not how it
   was found.
-- Commits carry no tool-generated attribution or trailers. The hooks in
-  `.githooks/` enforce it; enable them with
+- Commits carry no tool-generated attribution or trailers. The patterns
+  live in `.githooks/attribution-patterns`; `commit-msg` strips them,
+  `pre-push` refuses them, and the CI `attribution` job refuses a PR that
+  still carries one. Enable the hooks with
   `git config core.hooksPath .githooks`.
 - Pull requests summarise the behaviour delivered, link the issue
   (`Closes #N`), and list the verification that was actually run. Include
@@ -55,6 +57,9 @@ the layout and the toolchain; this file has the rules.
 
 ## The Go prototype (until #11)
 
-`cmd/`, `internal/`, `go.mod`, `install.sh`, `sai_deploy.sh`, `RELEASING.md`
-and `.github/workflows/release.yml` are the v1 Go/Bubble Tea client, frozen
-at tag `go-final`. Do not extend them; #11 removes them from `main`.
+`cmd/`, `internal/`, `go.mod`, `go.sum`, `stream_repro.go`, `install.sh`,
+`sai_deploy.sh`, `RELEASING.md`, `opencode_reference_arch.md`,
+`project_progress/` and `.github/workflows/release.yml` are the v1
+Go/Bubble Tea client, frozen at tag `go-final`. Do not extend them, and do
+not push a `v*` tag before #11 lands — `release.yml` would publish the Go
+binaries as the latest release. #11 removes all of it from `main`.
