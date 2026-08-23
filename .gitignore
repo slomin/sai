@@ -7,3 +7,6 @@ sai
 
 # Reference clones (not our code)
 ref_code_examples_only/
+
+# Local reference material (not our code)
+/references/
