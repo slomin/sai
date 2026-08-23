@@ -1,0 +1,27 @@
+name: nocterm spike
+
+on:
+  push:
+    paths:
+      - 'spikes/nocterm_spike/**'
+      - '.github/workflows/spike-nocterm.yml'
+  pull_request:
+    paths:
+      - 'spikes/nocterm_spike/**'
+      - '.github/workflows/spike-nocterm.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spikes/nocterm_spike
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - run: dart format --output=none --set-exit-if-changed .
+      - run: dart analyze --fatal-infos
+      - run: dart test
