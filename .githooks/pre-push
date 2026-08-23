@@ -1,0 +1,44 @@
+#!/bin/sh
+# Block any push carrying tool-generated attribution.
+# Policy: commits in this repository are authored solely by the person
+# committing. Patterns live in attribution-patterns (shared with commit-msg
+# and the CI attribution job). Fails closed: if the commits cannot be
+# inspected, the push is refused.
+# Install with: git config core.hooksPath .githooks
+
+remote="$1"
+patterns="$(dirname "$0")/attribution-patterns"
+
+is_zero() {
+	case "$1" in
+		*[!0]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+	# Deleting a remote ref: nothing to inspect.
+	is_zero "$local_sha" && continue
+
+	if is_zero "$remote_sha"; then
+		# New remote branch: only commits the remote does not already have.
+		set -- "$local_sha" --not --remotes="$remote"
+	else
+		set -- "$remote_sha..$local_sha"
+	fi
+
+	if ! log=$(git log --format='%H %s%n%b' "$@"); then
+		echo "pre-push: BLOCKED - could not inspect commits bound for $remote ($*)" >&2
+		exit 1
+	fi
+
+	bad=$(printf '%s\n' "$log" | grep -iE -f "$patterns")
+	if [ -n "$bad" ]; then
+		echo "pre-push: BLOCKED - attribution trailer found in commits bound for $remote" >&2
+		echo "$bad" >&2
+		echo "Rewrite those commit messages before pushing." >&2
+		exit 1
+	fi
+done
+
+exit 0

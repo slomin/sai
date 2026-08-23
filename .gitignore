@@ -10,3 +10,6 @@ ref_code_examples_only/
 
 # Local reference material (not our code)
 /references/
+
+# Dart / Flutter
+.dart_tool/
