@@ -40,6 +40,8 @@ the layout and the toolchain; this file has the rules.
   no `riverpod_generator`); revisit when a package earns it.
 - Keep secrets, device identifiers, and machine-specific paths out of the
   tree.
+- There is no v2 release process yet (#42). Pushing a `v*` tag does
+  nothing; versions are bumped by hand (`saiVersion` and the pubspecs).
 
 ## Commits and pull requests
 

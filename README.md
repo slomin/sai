@@ -87,6 +87,11 @@ README and `install.sh`) and branch
 [`archive/go-bubbletea`](https://github.com/slomin/sai/tree/archive/go-bubbletea),
 and its last binaries are the
 [v0.1.0 release](https://github.com/slomin/sai/releases/tag/v0.1.0).
+The install one-liner in that era's README and release notes fetched
+`install.sh` from `main`, which no longer has it; the working URL is
+`https://raw.githubusercontent.com/slomin/sai/go-final/install.sh`. What
+v1 left on a machine and how to remove it is in
+[`docs/decisions/0002`](docs/decisions/0002-retire-the-go-prototype.md).
 
 ## License
 
