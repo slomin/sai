@@ -1,0 +1,11 @@
+name: _
+description: sai workspace root. Not a package; see README.md.
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+workspace:
+  - packages/sai_core
+  - apps/sai_app
+  - apps/sai_tui
