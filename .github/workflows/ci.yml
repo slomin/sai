@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'spikes/**'
+  pull_request:
+    paths-ignore:
+      - 'spikes/**'
+
+env:
+  FLUTTER_VERSION: 3.47.1
+
+jobs:
+  dart:
+    name: Analyze and test (core, tui)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Resolve the workspace
+        run: flutter pub get
+      - name: Format
+        run: dart format --output=none --set-exit-if-changed packages apps/sai_tui apps/sai_app/lib apps/sai_app/test
+      - name: Analyze
+        run: dart analyze --fatal-infos packages apps
+      - name: sai_core stays free of Flutter
+        run: |
+          ! grep -q flutter packages/sai_core/pubspec.yaml
+          ! grep -rq 'package:flutter' packages/sai_core/lib
+      - name: Test sai_core
+        working-directory: packages/sai_core
+        run: dart test
+      - name: Test sai_tui
+        working-directory: apps/sai_tui
+        run: dart test
+
+  macos:
+    name: Test and build (app)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Resolve the workspace
+        run: flutter pub get
+      - name: Test sai_app
+        working-directory: apps/sai_app
+        run: flutter test
+      - name: Build sai.app (debug)
+        working-directory: apps/sai_app
+        run: flutter build macos --debug
