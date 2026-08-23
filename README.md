@@ -80,15 +80,18 @@ git config core.hooksPath .githooks
 
 ## The Go prototype
 
-sai v1 was a Go/Bubble Tea terminal chat client for llama.cpp. It is kept
-as is at tag [`go-final`](https://github.com/slomin/sai/tree/go-final) and
-branch
-[`archive/go-bubbletea`](https://github.com/slomin/sai/tree/archive/go-bubbletea);
-its last binaries are the
-[v0.1.0 release](https://github.com/slomin/sai/releases/tag/v0.1.0). The Go
-sources still present on `main` are removed by
-[#11](https://github.com/slomin/sai/issues/11); until then, build them with
-`go build ./cmd/sai` and test with `go test ./...`.
+sai v1 was a Go/Bubble Tea terminal chat client for llama.cpp. It is no
+longer on `main`; it is kept as is at tag
+[`go-final`](https://github.com/slomin/sai/tree/go-final) (sources, its own
+README and `install.sh`) and branch
+[`archive/go-bubbletea`](https://github.com/slomin/sai/tree/archive/go-bubbletea),
+and its last binaries are the
+[v0.1.0 release](https://github.com/slomin/sai/releases/tag/v0.1.0).
+The install one-liner in that era's README and release notes fetched
+`install.sh` from `main`, which no longer has it; the working URL is
+`https://raw.githubusercontent.com/slomin/sai/go-final/install.sh`. What
+v1 left on a machine and how to remove it is in
+[`docs/decisions/0002`](docs/decisions/0002-retire-the-go-prototype.md).
 
 ## License
 

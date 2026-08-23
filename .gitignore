@@ -1,9 +1,10 @@
 .DS_Store
 
-# Go build outputs
-build/
-.venv
-sai
+# Local leftovers of the Go prototype (binary, deploy output, venv) and
+# any future compile output at the root. Anchored on purpose.
+/sai
+/build/
+/.venv/
 
 # Reference clones (not our code)
 ref_code_examples_only/

@@ -40,6 +40,8 @@ the layout and the toolchain; this file has the rules.
   no `riverpod_generator`); revisit when a package earns it.
 - Keep secrets, device identifiers, and machine-specific paths out of the
   tree.
+- There is no v2 release process yet (#42). Pushing a `v*` tag does
+  nothing; versions are bumped by hand (`saiVersion` and the pubspecs).
 
 ## Commits and pull requests
 
@@ -54,12 +56,3 @@ the layout and the toolchain; this file has the rules.
 - Pull requests summarise the behaviour delivered, link the issue
   (`Closes #N`), and list the verification that was actually run. Include
   a clip or screenshot for UI changes, app or terminal.
-
-## The Go prototype (until #11)
-
-`cmd/`, `internal/`, `go.mod`, `go.sum`, `stream_repro.go`, `install.sh`,
-`sai_deploy.sh`, `RELEASING.md`, `opencode_reference_arch.md`,
-`project_progress/` and `.github/workflows/release.yml` are the v1
-Go/Bubble Tea client, frozen at tag `go-final`. Do not extend them, and do
-not push a `v*` tag before #11 lands — `release.yml` would publish the Go
-binaries as the latest release. #11 removes all of it from `main`.

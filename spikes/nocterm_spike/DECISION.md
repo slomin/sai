@@ -88,7 +88,7 @@ Not chosen. What it would cost:
   Ratatui's `TestBackend` are fine, but they test a different program
   than the one the Flutter app runs.
 
-Rough size: the Go prototype in this repo (`internal/ui`, `internal/lm`)
+Rough size: the Go prototype at tag `go-final` (`internal/ui`, `internal/lm`)
 is a fair proxy for the client half alone; the socket layer in
 `sai_core` would be new work on top. The nocterm path costs a pre-1.0
 dependency and the rough edges above.
