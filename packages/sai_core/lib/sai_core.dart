@@ -5,4 +5,5 @@
 library;
 
 export 'src/app_info.dart';
+export 'src/archive.dart';
 export 'src/providers.dart';

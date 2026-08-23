@@ -28,6 +28,11 @@ the layout and the toolchain; this file has the rules.
   logic that both clients need goes into the core, not into a client.
 - `spikes/` are frozen evidence behind a decision. They stay out of the
   workspace and nothing imports them.
+- The archive (`sai_core`'s event log) is append-only: no API updates or
+  deletes a stored event, and nothing ever rewrites a line — corrections
+  are new events. The format contract is `docs/archive/event-log-v0.md`;
+  changing it means changing the spec, the ADR trail and the tests
+  together.
 - Technical decisions with consequences go to `docs/decisions/` as ADRs
   (see `0001-…`). Decisions made on the assistant's behalf are a separate
   log (#14).
