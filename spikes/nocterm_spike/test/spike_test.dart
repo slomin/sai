@@ -70,6 +70,8 @@ void main() {
       await tester.sendKey(LogicalKey.keyJ);
       await tester.sendEnter(); // asks about the selected task
       expect(tester.terminalState, containsText('What should I do about'));
+      expect(tester.terminalState, containsText('about "Define the'),
+          reason: 'the row number is presentation, not part of the task');
 
       await pumpUntilText(tester, 'alpha beta');
       expect(tester.terminalState, isNot(containsText('delta')),
@@ -109,5 +111,53 @@ void main() {
       expect(tester.terminalState, containsText('druga linia'));
       expect(tester.terminalState, containsText('sai'));
     }, size: const Size(100, 30));
+  });
+
+  test(
+      'a draft survives asking from the list, and sends are refused while '
+      'streaming', () async {
+    await testNocterm('draft and busy', (tester) async {
+      await tester.pumpComponent(const SpikeApp(
+        reply: 'one two three four five six',
+        tokenGap: Duration(milliseconds: 40),
+      ));
+      await tester.sendTab();
+      await tester.enterText('half written draft');
+      await tester.sendTab();
+      expect(tester.terminalState, containsText('focus:list'));
+      await tester.sendEnter(); // ask about task 1 from the list
+      expect(tester.terminalState, containsText('half written draft'),
+          reason: 'asking from the list must not clear the chat draft');
+
+      await tester.sendTab();
+      await tester.sendEnter(); // try to send the draft mid-stream
+      expect(tester.terminalState, containsText('busy'));
+      expect(tester.terminalState, containsText('half written draft'),
+          reason: 'a refused send keeps the text in the input');
+
+      await pumpUntilText(tester, 'one two three four five six');
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.sendEnter();
+      await tester.pump();
+      expect(tester.terminalState, isNot(containsText('busy')));
+      expect(tester.terminalState, containsText('you'));
+    }, size: const Size(100, 30));
+  });
+
+  test('modified q does not quit (shutdownApp would throw under the tester)',
+      () async {
+    await testNocterm('modified q', (tester) async {
+      await tester.pumpComponent(const SpikeApp());
+      await tester.sendKeyEvent(const KeyboardEvent(
+        logicalKey: LogicalKey.keyQ,
+        character: 'Q',
+        modifiers: ModifierKeys(shift: true),
+      ));
+      await tester.sendKeyEvent(const KeyboardEvent(
+        logicalKey: LogicalKey.keyQ,
+        modifiers: ModifierKeys(alt: true),
+      ));
+      expect(tester.terminalState, containsText('focus:list'));
+    }, size: const Size(100, 20));
   });
 }

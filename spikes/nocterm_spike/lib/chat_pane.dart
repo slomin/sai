@@ -37,6 +37,7 @@ class ChatPane extends StatelessComponent {
             ),
             child: ListView.builder(
               controller: scrollController,
+              lazy: true,
               padding: EdgeInsets.symmetric(horizontal: 1),
               itemCount: messages.length,
               itemBuilder: (context, index) {
@@ -54,7 +55,7 @@ class ChatPane extends StatelessComponent {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Text('${m.text}$cursor'),
+                    Text(cursor.isEmpty ? m.text : '${m.text}$cursor'),
                     Text(''),
                   ],
                 );

@@ -1,5 +1,7 @@
 /// Simulated token stream: emits [text] in word-sized chunks, one every
-/// [gap], which approximates a local llama-server at ~40 tokens/s.
+/// [gap] (plus scheduling drift, so ~35-40 chunks/s at the default).
+/// Real tokens are sub-word, so this understates the chunk rate a little
+/// and overstates the bytes per chunk.
 Stream<String> fakeTokens(
   String text, {
   Duration gap = const Duration(milliseconds: 25),
@@ -21,7 +23,7 @@ const cannedReply =
 
 List<String> fakeTasks() => List.generate(
       30,
-      (i) => [
+      (i) => const [
         'Bootstrap the Dart monorepo for macOS',
         'Define the append-only event log',
         'Import tasks from Things 3',
@@ -32,6 +34,5 @@ List<String> fakeTasks() => List.generate(
         'Wire the TUI to shared state',
         'Back up the archive nightly',
         'Sign and notarize the macOS build',
-      ][i % 10]
-          .replaceFirst(RegExp(r'^'), '${(i + 1).toString().padLeft(2)}  '),
+      ][i % 10],
     );

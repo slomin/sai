@@ -5,7 +5,7 @@ Throwaway app for [#10](https://github.com/slomin/sai/issues/10): can
 Nothing here ships; `DECISION.md` holds the outcome.
 
 What it exercises: a scrollable task list (left) next to a chat pane
-(right) that receives a simulated token stream at ~40 tokens/s, vim-style
+(right) that receives a simulated word-chunk stream at ~35-40 chunks/s, vim-style
 navigation, a multi-line UTF-8 text input, hot reload, and `testNocterm`
 tests.
 
@@ -24,6 +24,12 @@ and `Ctrl+J` inserts a newline · `q` / `Ctrl+C` quit.
 Logs (`print`) go to nocterm's log server, not the screen; the port is in
 `~/.nocterm/<project-hash>/log_port.<pid>` and the WebSocket path is
 `/logs`.
+
+## Probe
+
+`python3 tool/pty_probe.py` runs the app under a pseudo-terminal, streams a
+reply, types UTF-8, toggles focus, and reports how much the renderer
+actually wrote — the evidence behind DECISION.md criterion 1.
 
 ## Test
 

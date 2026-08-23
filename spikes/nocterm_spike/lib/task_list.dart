@@ -39,7 +39,7 @@ class TaskList extends StatelessComponent {
                 color: isSelected && focused ? Colors.blue : null,
               ),
               child: Text(
-                '${isSelected ? '▶' : ' '} ${tasks[index]}',
+                '${isSelected ? '▶' : ' '} ${(index + 1).toString().padLeft(2)}  ${tasks[index]}',
                 style: TextStyle(
                   color: isSelected ? Colors.brightWhite : Colors.white,
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
