@@ -1,0 +1,23 @@
+name: sai_app
+description: sai for macOS.
+publish_to: none
+version: 2.0.0-dev+1
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^3.4.2
+  sai_core:
+    path: ../../packages/sai_core
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
