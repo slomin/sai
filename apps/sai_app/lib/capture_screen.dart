@@ -19,6 +19,7 @@ class CaptureScreen extends ConsumerStatefulWidget {
 class _CaptureScreenState extends ConsumerState<CaptureScreen> {
   final _controller = TextEditingController();
   final _focus = FocusNode();
+  String _notice = '';
 
   @override
   void dispose() {
@@ -28,16 +29,36 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen> {
   }
 
   Future<void> _capture(String line) async {
-    final store = ref.read(tasksProvider.notifier).store;
-    await store.quickCapture(line, today: ref.read(todayProvider));
-    if (!mounted) return;
+    // Clear before the append settles: a key-repeated Enter resubmits an
+    // empty line, which captures nothing, instead of the same line twice.
     _controller.clear();
-    _focus.requestFocus();
+    try {
+      final store = ref.read(tasksProvider.notifier).store;
+      await store.quickCapture(line, today: ref.read(todayProvider));
+      if (!mounted) return;
+      setState(() => _notice = '');
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        // Give the line back rather than losing it.
+        _controller.text = line;
+        _notice = 'capture failed: $error';
+      });
+    } finally {
+      if (mounted) _focus.requestFocus();
+    }
   }
 
   Future<void> _undo() async {
     if (!ref.read(canUndoProvider)) return;
-    await ref.read(tasksProvider.notifier).store.undo();
+    try {
+      await ref.read(tasksProvider.notifier).store.undo();
+      if (!mounted) return;
+      setState(() => _notice = '');
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _notice = 'undo failed: $error');
+    }
   }
 
   @override
@@ -62,8 +83,8 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen> {
 
   Widget _loaded(TaskProjection projection) {
     final today = ref.watch(todayProvider);
-    final inbox = projection.list(TaskList.inbox, today: today);
-    final todayList = projection.list(TaskList.today, today: today);
+    final sections = captureSections(projection, today);
+    final empty = sections.every((section) => section.tasks.isEmpty);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -78,9 +99,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen> {
                   autofocus: true,
                   onSubmitted: _capture,
                   decoration: const InputDecoration(
-                    hintText:
-                        'Capture to Inbox — Enter saves, '
-                        '@today !2026-09-01',
+                    hintText: captureHint,
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
@@ -94,16 +113,21 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen> {
             ],
           ),
         ),
+        if (_notice.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(_notice),
+          ),
         Expanded(
-          child: inbox.isEmpty && todayList.isEmpty
+          child: empty
               ? Center(child: Text(ref.watch(shellGreetingProvider)))
               : ListView(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   children: [
-                    _header(context, 'Inbox', inbox.length),
-                    for (final task in inbox) _row(task, today),
-                    _header(context, 'Today', todayList.length),
-                    for (final task in todayList) _row(task, today),
+                    for (final section in sections) ...[
+                      _header(context, section),
+                      for (final task in section.tasks) _row(task, today),
+                    ],
                   ],
                 ),
         ),
@@ -111,12 +135,9 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen> {
     );
   }
 
-  Widget _header(BuildContext context, String list, int count) => Padding(
+  Widget _header(BuildContext context, CaptureSection section) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 6),
-    child: Text(
-      '$list ($count)',
-      style: Theme.of(context).textTheme.titleSmall,
-    ),
+    child: Text(section.label, style: Theme.of(context).textTheme.titleSmall),
   );
 
   Widget _row(Task task, CalendarDate today) => Padding(
