@@ -53,6 +53,28 @@ void main() {
       expect(container.read(todayProvider), const CalendarDate(2026, 8, 24));
     });
 
+    test('archive events are stamped with clockProvider', () async {
+      final tmp = Directory.systemTemp.createTempSync('sai_providers_test');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final container = ProviderContainer.test(
+        overrides: [
+          archiveRootProvider.overrideWithValue(tmp),
+          eventSourceProvider.overrideWithValue('sai/test'),
+          clockProvider.overrideWithValue(
+            () => DateTime(2026, 8, 24, 12, 30, 15, 123, 456),
+          ),
+        ],
+      );
+      await container.read(tasksProvider.future);
+      await container.read(tasksProvider.notifier).store.createTask(title: 'x');
+      final archive = await container.read(archiveProvider.future);
+      final stored = await archive.events().single;
+      expect(
+        stored.event.ts,
+        DateTime(2026, 8, 24, 12, 30, 15, 123, 456).toUtc(),
+      );
+    });
+
     test('tasksProvider opens the store and reflects its commands', () async {
       final tmp = Directory.systemTemp.createTempSync('sai_providers_test');
       addTearDown(() => tmp.deleteSync(recursive: true));

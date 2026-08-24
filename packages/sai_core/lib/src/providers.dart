@@ -41,8 +41,12 @@ final archiveRootProvider = Provider<Directory>(
 /// The opened archive. Every client appends and reads through this single
 /// instance; there is no other write path to the log. Disposal releases
 /// the archive's lock handle so rebuilt providers never leak descriptors.
+/// Event timestamps come from [clockProvider], so a test clock pins them.
 final archiveProvider = FutureProvider<Archive>((ref) async {
-  final archive = await Archive.open(ref.watch(archiveRootProvider));
+  final archive = await Archive.open(
+    ref.watch(archiveRootProvider),
+    clock: ref.watch(clockProvider),
+  );
   ref.onDispose(archive.close);
   return archive;
 });
