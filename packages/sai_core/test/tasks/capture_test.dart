@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
 
@@ -209,5 +211,80 @@ void main() {
         expect(parsed.deadline, sample.deadline);
       }
     });
+  });
+
+  group('captureSections', () {
+    late Directory tmp;
+    late Archive archive;
+    late TaskStore store;
+
+    setUp(() async {
+      tmp = Directory.systemTemp.createTempSync('sai_capture_test');
+      archive = await Archive.open(tmp);
+      store = await TaskStore.open(archive, source: 'sai/tui');
+    });
+
+    tearDown(() async {
+      store.dispose();
+      await archive.close();
+      tmp.deleteSync(recursive: true);
+    });
+
+    test('covers every list a capture can land in, in a fixed order', () {
+      final sections = captureSections(store.projection, today);
+      expect(sections.map((s) => s.name), [
+        'Inbox',
+        'Today',
+        'Upcoming',
+        'Someday',
+      ]);
+      expect(sections.map((s) => s.label), [
+        'Inbox (0)',
+        'Today (0)',
+        'Upcoming (0)',
+        'Someday (0)',
+      ]);
+      expect(sections.every((s) => s.tasks.isEmpty), isTrue);
+    });
+
+    test('every capture outcome is visible in at least one section', () async {
+      for (final line in [
+        'Buy oat milk',
+        'Call mom @today',
+        'Ring dentist @tomorrow',
+        'Book flights @2026-12-01',
+        'Learn the violin @someday',
+      ]) {
+        final id = await store.quickCapture(line, today: today);
+        final task = store.projection.task(id!);
+        final sections = captureSections(store.projection, today);
+        expect(
+          sections.any((s) => s.tasks.contains(task)),
+          isTrue,
+          reason: line,
+        );
+      }
+      final byName = {
+        for (final s in captureSections(store.projection, today))
+          s.name: s.tasks.map((t) => t.title).toList(),
+      };
+      expect(byName['Inbox'], ['Buy oat milk']);
+      expect(byName['Today'], ['Call mom']);
+      expect(byName['Upcoming'], ['Ring dentist', 'Book flights']);
+      expect(byName['Someday'], ['Learn the violin']);
+    });
+
+    test(
+      'the view unions apply: a due-later Inbox task is also Upcoming',
+      () async {
+        await store.quickCapture('Pay rent !2026-09-01', today: today);
+        final byName = {
+          for (final s in captureSections(store.projection, today))
+            s.name: s.tasks.map((t) => t.title).toList(),
+        };
+        expect(byName['Inbox'], ['Pay rent']);
+        expect(byName['Upcoming'], ['Pay rent']);
+      },
+    );
   });
 }

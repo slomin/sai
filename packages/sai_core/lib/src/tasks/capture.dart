@@ -7,7 +7,9 @@
 library;
 
 import 'date.dart';
+import 'lists.dart';
 import 'model.dart';
+import 'projection.dart';
 
 /// One captured line, parsed. [title] is never empty. Capture never
 /// files: no project, area, heading or tag — an Inbox task is the point.
@@ -98,6 +100,39 @@ String formatQuickCapture(Task task, {CalendarDate? today}) {
   if (deadline != null) parts.add('!${_dayText(deadline, today)}');
   return parts.join(' ');
 }
+
+/// The hint both capture fields show.
+const captureHint = 'Capture to Inbox — Enter saves, @today !2026-09-01';
+
+/// One section of the capture surface: a list's name and its tasks.
+final class CaptureSection {
+  const CaptureSection(this.name, this.tasks);
+
+  final String name;
+  final List<Task> tasks;
+
+  /// The header both clients render, e.g. `Inbox (2)`.
+  String get label => '$name (${tasks.length})';
+}
+
+/// The sections the capture surfaces render (#19), in a fixed order
+/// covering every list a quick-captured task can land in: Inbox, Today,
+/// Upcoming, Someday. The view unions of [TaskProjection.list] apply, so
+/// a task can show in more than one section — an Inbox task with a
+/// future deadline is also Upcoming. All-empty means show the empty
+/// state. Shared here so the clients cannot drift apart.
+List<CaptureSection> captureSections(
+  TaskProjection projection,
+  CalendarDate today,
+) => [
+  for (final (name, list) in [
+    ('Inbox', TaskList.inbox),
+    ('Today', TaskList.today),
+    ('Upcoming', TaskList.upcoming),
+    ('Someday', TaskList.someday),
+  ])
+    CaptureSection(name, projection.list(list, today: today)),
+];
 
 final _whitespace = RegExp(r'\s');
 
