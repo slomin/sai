@@ -157,7 +157,7 @@ final class Event {
     }
     final prevText = map['prev'];
     final event = Event._(
-      ts: _parseTs(tsText),
+      ts: parseTs(tsText),
       tsText: tsText,
       type: _requireString(map, 'type', where: 'event'),
       actor: actor,
@@ -274,7 +274,10 @@ String formatTs(DateTime time) {
       '.${pad(micros, 6)}Z';
 }
 
-DateTime _parseTs(String text) {
+/// Parses the spec's timestamp form back into a UTC [DateTime], with the
+/// same strictness the envelope applies: exactly six fractional digits and
+/// a real instant. Throws [FormatException] on anything else.
+DateTime parseTs(String text) {
   if (!_tsForm.hasMatch(text)) {
     throw FormatException(
       'ts must be RFC 3339 UTC with exactly six fractional digits, got "$text"',
