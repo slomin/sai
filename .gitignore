@@ -14,3 +14,6 @@ ref_code_examples_only/
 
 # Dart / Flutter
 .dart_tool/
+
+# Per-machine Xcode signing overrides (ADR 0008)
+apps/sai_app/macos/Runner/Configs/Local.xcconfig

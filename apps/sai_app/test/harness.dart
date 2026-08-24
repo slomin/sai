@@ -73,6 +73,8 @@ Future<ProviderContainer> pumpApp(
       archiveRootProvider.overrideWithValue(root),
       settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
       eventSourceProvider.overrideWithValue(EventSources.app),
+      // Never the login keychain from a test.
+      secretStoreProvider.overrideWithValue(InMemorySecretStore()),
       ...overrides,
     ],
   );

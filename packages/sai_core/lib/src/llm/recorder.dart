@@ -73,9 +73,10 @@ final class LlmRecorder {
           text: '',
           finish: LlmFinish.failed,
           model: target,
+          // Type only: exception text may quote a key, a header, a URL.
           failure: LlmFailure(
             LlmFailureKind.internal,
-            'provider.start threw: $error',
+            'provider.start threw: ${error.runtimeType}',
           ),
         ),
       );
@@ -105,7 +106,7 @@ final class LlmRecorder {
         usage: result.usage,
         failure: LlmFailure(
           LlmFailureKind.internal,
-          'provider deltas stream errored: $streamError',
+          'provider deltas stream errored: ${streamError.runtimeType}',
         ),
       );
     }

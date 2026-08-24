@@ -118,7 +118,7 @@ void main() {
       expect(result.finish, LlmFinish.failed);
       expect(result.text, 'par');
       expect(result.failure?.kind, LlmFailureKind.internal);
-      expect(result.failure?.message, contains('adapter bug'));
+      expect(result.failure?.message, 'provider threw: StateError');
     });
 
     test('a body that finishes with the wrong text fails, not hangs', () async {

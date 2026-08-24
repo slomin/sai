@@ -203,7 +203,9 @@ final class LlmCallController {
         },
         onError: (Object error) {
           if (isDone) return;
-          _fail('provider threw: $error');
+          // The type, never the text: an exception from a transport can
+          // quote a header or a URL, and this message goes to the archive.
+          _fail('provider threw: ${error.runtimeType}');
         },
       ),
     );

@@ -26,6 +26,11 @@ the layout and the toolchain; this file has the rules.
 - State lives in riverpod providers in `sai_core`; clients render them
   (`flutter_riverpod` in the app, `nocterm_riverpod` in the TUI). View
   logic that both clients need goes into the core, not into a client.
+- Secrets go only through `SecretStore` in `sai_core` (the Keychain via
+  `Security.framework`, ADR 0008): never `settings.json`, never the
+  archive, never a log line, never an exception message, never the
+  `security` command. Tests use `InMemorySecretStore` or a throwaway
+  keychain file; nothing under `test/` touches the login keychain.
 - `spikes/` are frozen evidence behind a decision. They stay out of the
   workspace and nothing imports them.
 - The archive (`sai_core`'s event log) is append-only: no API updates or

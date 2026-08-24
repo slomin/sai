@@ -18,6 +18,8 @@ This repository is a Dart workspace:
 | `spikes/`            | Throwaway experiments that settled a decision. Not part of the workspace; each keeps its own `pubspec.lock`. |
 | `docs/archive/`      | The archive format contract ([event log v0](docs/archive/event-log-v0.md)). |
 | `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
+| `docs/settings/`     | The settings file contract ([settings v0](docs/settings/settings-v0.md)).   |
+| `tool/`              | Developer scripts (`sign-tui.sh`).                                          |
 | `docs/decisions/`    | Technical ADRs.                                                            |
 
 Both clients read the same providers from `sai_core`; nothing in `sai_core`
@@ -56,9 +58,47 @@ point `SAI_ARCHIVE_ROOT` at a throwaway directory, e.g.
 `SAI_ARCHIVE_ROOT=/tmp/sai-demo/archive`. Non-secret settings live in
 `settings.json` in the same data directory as the default archive;
 `SAI_SETTINGS_FILE` moves them, and a scratch run sets both. No LLM
-provider is selected out of the box; the
-built-in `fake` provider answers offline — `{"version":0,"llm":"fake"}`
-in the settings file selects it.
+provider is selected out of the box; the built-in `fake` provider
+answers offline — `{"version":0,"llm":"fake"}` in the settings file
+selects it.
+
+## Providers and keys
+
+Provider settings (endpoints, default models, the active provider) are
+managed from the terminal client's subcommands and stored in
+`settings.json`; API keys go to the macOS Keychain and are never written
+to a file or the archive (ADR 0008, [settings v0](docs/settings/settings-v0.md)):
+
+```sh
+dart run apps/sai_tui/bin/sai_tui.dart provider add demo --kind fake --model demo-1 --key
+dart run apps/sai_tui/bin/sai_tui.dart secret set demo    # hidden prompt
+dart run apps/sai_tui/bin/sai_tui.dart provider use demo
+dart run apps/sai_tui/bin/sai_tui.dart provider list
+```
+
+Only the `fake` kind can be built today; `openai_compatible` endpoints
+(`--endpoint https://…/v1`) are stored but stay "not available" until #22
+lands. Adding an existing id changes only the options given (`--no-key`
+drops the key reference); `secret clear <id>` removes a key whether or not
+its provider is still configured.
+
+The app reads the same settings and keys; `sai › Provider API Key…`
+enters or removes a key from there. `sai_tui help` lists every command.
+
+Keychain items trust the binary that created them by its code-signing
+identity. Ad-hoc signed builds (the default) get a new identity on every
+build and so a Keychain prompt after every rebuild. To avoid that in
+development, make a self-signed identity once — Keychain Access →
+Certificate Assistant → Create a Certificate, type *Code Signing*, name
+it e.g. `sai-dev` — and point both builds at it, keeping the name out of
+the tree:
+
+```sh
+# app: gitignored per-machine override, picked up by Debug and Release
+echo 'CODE_SIGN_IDENTITY = sai-dev' > apps/sai_app/macos/Runner/Configs/Local.xcconfig
+# terminal client: compile and sign in one step
+SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/sai_tui
+```
 
 Build a debug app bundle (what CI does): `cd apps/sai_app && flutter build
 macos --debug` → `apps/sai_app/build/macos/Build/Products/Debug/sai.app`.

@@ -172,7 +172,11 @@ void main() {
       'provider.usage',
     ]);
     expect((log[1]['payload'] as Map)['kind'], 'internal');
-    expect((log[1]['payload'] as Map)['message'], contains('boom'));
+    expect(
+      (log[1]['payload'] as Map)['message'],
+      'provider.start threw: StateError',
+      reason: 'the type, never the text, which could quote a key',
+    );
     expect(log[1]['model'], {'provider': 'throwing', 'id': 'm'});
   });
 

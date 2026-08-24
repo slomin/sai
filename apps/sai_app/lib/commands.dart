@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import 'api_key_dialog.dart';
 import 'shell.dart';
 
 /// Focus for the quick-capture field: Cmd+N and File > New Task land
@@ -49,6 +50,7 @@ class AppCommands {
     required this.undo,
     required this.toggleChat,
     required this.showShortcuts,
+    required this.setApiKey,
     required this.select,
   });
 
@@ -62,6 +64,7 @@ class AppCommands {
       undo: () => _undo(container),
       toggleChat: () => _toggleChat(container, context),
       showShortcuts: () => _showShortcuts(context),
+      setApiKey: () => _setApiKey(context),
       select: container.read(selectedSectionProvider.notifier).select,
     );
   }
@@ -70,6 +73,9 @@ class AppCommands {
   final VoidCallback undo;
   final VoidCallback toggleChat;
   final VoidCallback showShortcuts;
+
+  /// Opens the provider API key dialog (`api_key_dialog.dart`).
+  final VoidCallback setApiKey;
   final void Function(SidebarSection) select;
 
   static Future<void> _undo(ProviderContainer container) async {
@@ -99,6 +105,13 @@ class AppCommands {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       container.read(chatFocusProvider).requestFocus();
     });
+  }
+
+  static void _setApiKey(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => const ApiKeyDialog(),
+    );
   }
 
   static void _showShortcuts(BuildContext context) {

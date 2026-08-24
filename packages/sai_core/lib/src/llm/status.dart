@@ -15,3 +15,16 @@ String missingProviderStatus(String id) =>
 String llmStatusLine(LlmProvider provider) =>
     '${provider.displayName} (${provider.defaultModel}) — '
     '${provider.privacy.name}';
+
+/// What it shows when the selected provider is configured but no
+/// factory in this build knows its kind.
+String unavailableKindStatus(String id, String kind) =>
+    "provider '$id' has kind '$kind', which this sai cannot build — "
+    'local only';
+
+/// Appended to the status line when the provider names a credential the
+/// secret store does not hold.
+const missingCredentialSuffix = ' · no key';
+
+/// Appended when the secret store could not be asked.
+const unavailableSecretsSuffix = ' · keychain unavailable';

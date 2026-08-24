@@ -1,6 +1,8 @@
 import 'dart:collection';
 import 'dart:convert';
 
+import 'provider_config.dart';
+
 /// The file's content was not settings: not JSON, not an object, or a
 /// known key with the wrong type. The store quarantines such a file.
 final class SettingsFormatException implements Exception {
@@ -25,10 +27,16 @@ final class NewerSettingsVersion implements Exception {
       'this sai understands ${Settings.version}';
 }
 
-/// The settings value: the selected provider, plus whatever a newer or
-/// later sai stored, carried verbatim so a write never erases it.
+/// The settings value: the selected provider, the configured providers,
+/// plus whatever a newer or later sai stored, carried verbatim so a write
+/// never erases it. Never a secret (`docs/settings/settings-v0.md`).
 final class Settings {
-  const Settings({this.llm, this.problem, this.extra = const {}});
+  const Settings({
+    this.llm,
+    this.providers = const [],
+    this.problem,
+    this.extra = const {},
+  });
 
   /// Nothing selected, nothing wrong.
   static const empty = Settings();
@@ -39,6 +47,17 @@ final class Settings {
   /// Id of the selected `LlmProvider`, or null for none.
   final String? llm;
 
+  /// The configured providers, in file order; ids unique.
+  final List<ProviderConfig> providers;
+
+  /// The configured provider with [id], or null.
+  ProviderConfig? provider(String id) {
+    for (final p in providers) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
+
   /// Why the stored settings could not be used, when they could not be —
   /// shown to the user, never written.
   final String? problem;
@@ -48,7 +67,30 @@ final class Settings {
 
   /// The same settings with [id] selected. Clears [problem]: a write
   /// after a quarantine starts the file fresh.
-  Settings withLlm(String? id) => Settings(llm: id, extra: extra);
+  Settings withLlm(String? id) =>
+      Settings(llm: id, providers: providers, extra: extra);
+
+  /// The same settings with [config] added, or replacing the provider
+  /// with its id in place. Clears [problem] like [withLlm].
+  Settings withProvider(ProviderConfig config) {
+    final next = [
+      for (final p in providers)
+        if (p.id == config.id) config else p,
+      if (provider(config.id) == null) config,
+    ];
+    return Settings(llm: llm, providers: next, extra: extra);
+  }
+
+  /// The same settings without the provider [id]; a selection of it is
+  /// cleared too, so `llm` never names a provider that is gone.
+  Settings withoutProvider(String id) => Settings(
+    llm: llm == id ? null : llm,
+    providers: [
+      for (final p in providers)
+        if (p.id != id) p,
+    ],
+    extra: extra,
+  );
 
   /// Parses the file's text. Throws [SettingsFormatException] on anything
   /// that is not a v0 settings object and [NewerSettingsVersion] on a
@@ -74,21 +116,59 @@ final class Settings {
         'llm must be a non-empty string or null',
       );
     }
+    rejectSecretLike(json, where: 'settings');
+    final rawProviders = json['providers'];
+    if (rawProviders != null && rawProviders is! List) {
+      throw const SettingsFormatException('providers must be a list');
+    }
+    final providers = [
+      for (final p in rawProviders as List? ?? const [])
+        ProviderConfig.fromJson(p),
+    ];
+    final ids = <String>{};
+    for (final p in providers) {
+      if (!ids.add(p.id)) {
+        throw SettingsFormatException('two providers share the id "${p.id}"');
+      }
+    }
     return Settings(
       llm: llm as String?,
+      providers: providers,
       extra: {
         for (final e in json.entries)
-          if (e.key != 'version' && e.key != 'llm') e.key: e.value,
+          if (!_known.contains(e.key)) e.key: e.value,
       },
     );
   }
 
+  static const _known = {'version', 'llm', 'providers'};
+
   /// The file's text: compact JSON, keys sorted, unknown keys included.
-  String encode() => jsonEncode(
+  ///
+  /// Throws [ArgumentError] when the result would be refused by [decode]
+  /// — a secret-looking key or value somewhere in [extra]. What sai
+  /// writes, sai can read back; a file that would be quarantined on the
+  /// next start is never produced.
+  String encode() {
+    final text = _encode();
+    try {
+      rejectSecretLike(
+        jsonDecode(text) as Map<String, Object?>,
+        where: 'settings',
+      );
+    } on SettingsFormatException catch (e) {
+      throw ArgumentError('refusing to write settings: ${e.reason}');
+    }
+    return text;
+  }
+
+  String _encode() => jsonEncode(
     SplayTreeMap<String, Object?>.of({
       ...extra,
       'version': version,
       'llm': llm,
+      if (providers.isNotEmpty)
+        'providers': [for (final p in providers) p.toJson()],
     }),
   );
 }
