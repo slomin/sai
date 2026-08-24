@@ -566,6 +566,59 @@ void main() {
       ]);
     });
 
+    test('list() serves the view unions, not just the partition', () {
+      const today = CalendarDate(2026, 8, 24);
+      final project = emit(ProjectCreated(title: 'P'));
+      final filedToday = emit(
+        TaskCreated(
+          title: 'filed today',
+          project: project.id,
+          when: TaskWhen.date(today),
+        ),
+      );
+      final dueLater = emit(
+        TaskCreated(
+          title: 'due later',
+          project: project.id,
+          deadline: const CalendarDate(2026, 9, 1),
+        ),
+      );
+      final p = applyAll([project, filedToday, dueLater]);
+      expect(
+        p.list(TaskList.anytime, today: today).map((t) => t.title).toSet(),
+        {'filed today', 'due later'},
+      );
+      expect(p.list(TaskList.upcoming, today: today).map((t) => t.title), [
+        'due later',
+      ]);
+      expect(p.list(TaskList.today, today: today).map((t) => t.title), [
+        'filed today',
+      ]);
+    });
+
+    test('placement queries serve open tasks in living containers only', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final heading = emit(HeadingCreated(project: project.id, title: 'H'));
+      final open = emit(TaskCreated(title: 'open', project: project.id));
+      final done = emit(TaskCreated(title: 'done', project: project.id));
+      final finish = emit(TaskCompleted(done.id));
+      final under = emit(
+        TaskCreated(title: 'under', project: project.id, heading: heading.id),
+      );
+      final headingGone = emit(HeadingDeleted(heading.id));
+      final p = applyAll([
+        project,
+        heading,
+        open,
+        done,
+        finish,
+        under,
+        headingGone,
+      ]);
+      expect(p.inProject(project.id).map((t) => t.title), ['open']);
+      expect(p.underHeading(heading.id), isEmpty);
+    });
+
     test('inProject and underHeading answer from placement', () {
       final project = emit(ProjectCreated(title: 'P'));
       final heading = emit(HeadingCreated(project: project.id, title: 'H'));

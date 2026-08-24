@@ -44,9 +44,7 @@ Set<TaskList> listsOf(Task task, CalendarDate today) {
     lists.add(TaskList.anytime);
   }
   final deadline = task.deadline;
-  if ((primary == TaskList.anytime || primary == TaskList.inbox) &&
-      deadline != null &&
-      deadline > today) {
+  if (primary != TaskList.logbook && deadline != null && deadline > today) {
     lists.add(TaskList.upcoming);
   }
   return lists;

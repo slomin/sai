@@ -108,7 +108,7 @@ void main() {
       });
     });
 
-    test('a future deadline surfaces in Upcoming from Anytime or Inbox', () {
+    test('any open task with a future deadline surfaces in Upcoming', () {
       expect(listsOf(task(filed: true, deadline: tomorrow), today), {
         TaskList.anytime,
         TaskList.upcoming,
@@ -116,6 +116,18 @@ void main() {
       expect(listsOf(task(deadline: tomorrow), today), {
         TaskList.inbox,
         TaskList.upcoming,
+      });
+      expect(listsOf(task(when: TaskWhen.someday, deadline: tomorrow), today), {
+        TaskList.someday,
+        TaskList.upcoming,
+      });
+      expect(
+        listsOf(task(when: TaskWhen.date(today), deadline: tomorrow), today),
+        {TaskList.today, TaskList.upcoming},
+      );
+      // A finished task surfaces nowhere but the Logbook.
+      expect(listsOf(task(completed: true, deadline: tomorrow), today), {
+        TaskList.logbook,
       });
     });
 

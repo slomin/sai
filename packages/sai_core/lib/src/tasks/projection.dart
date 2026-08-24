@@ -98,14 +98,16 @@ final class TaskProjection {
   /// task or container. What a re-run of an importer dedupes against.
   BlobRef? idByExternal(String system, String id) => _externals['$system:$id'];
 
-  /// The tasks of [list] as of [today], visible containers only, in the
-  /// deterministic v0.1 order (manual ordering is #20). A task whose
-  /// project, area or heading is deleted is hidden here — that is container
-  /// visibility, deliberately outside the pure [listOf].
+  /// The tasks of [list] as of [today] — the view unions of [listsOf], so a
+  /// filed Today task also answers for Anytime and a future deadline
+  /// surfaces in Upcoming — visible containers only, in the deterministic
+  /// v0.1 order (manual ordering is #20). A task whose project, area or
+  /// heading is deleted is hidden here — that is container visibility,
+  /// deliberately outside the pure list rules.
   List<Task> list(TaskList list, {required CalendarDate today}) =>
       _sorted(list, [
         for (final task in tasks.values)
-          if (_visible(task) && listOf(task, today) == list) task,
+          if (_visible(task) && listsOf(task, today).contains(list)) task,
       ]);
 
   /// Deleted tasks, newest deletion first. The Trash is a query, not a list.
@@ -122,18 +124,23 @@ final class TaskProjection {
   }
 
   /// Open, undeleted tasks placed in [id] (directly or under one of its
-  /// headings), in the deterministic order.
+  /// headings), visible containers only, in the deterministic order.
   List<Task> inProject(ProjectId id) => _placed((t) => t.project == id);
 
-  /// Open, undeleted tasks placed directly in area [id].
+  /// Open, undeleted tasks placed directly in area [id], visible
+  /// containers only.
   List<Task> inArea(AreaId id) => _placed((t) => t.area == id);
 
-  /// Open, undeleted tasks under heading [id].
+  /// Open, undeleted tasks under heading [id], visible containers only.
   List<Task> underHeading(HeadingId id) => _placed((t) => t.heading == id);
 
   List<Task> _placed(bool Function(Task) where) => _sorted(null, [
     for (final task in tasks.values)
-      if (task.deletedAt == null && where(task)) task,
+      if (task.deletedAt == null &&
+          task.status == TaskStatus.open &&
+          _visible(task) &&
+          where(task))
+        task,
   ]);
 
   bool _visible(Task task) {
