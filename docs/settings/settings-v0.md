@@ -28,6 +28,10 @@ and `test/no_secrets_test.dart` enforce that.
 
 ## Rules
 
+- **What sai writes, sai reads back.** The writer applies the same
+  secret-looking guard as the reader, so a provider id or model that
+  merely looks like a key (`sk-…`) is refused at entry rather than
+  quarantined on the next start; `none` is reserved as a provider id.
 - **No secret, ever.** A secret-looking key (`api_key`, `key`, `token`,
   `secret`, `password`, `authorization`, any case, at any depth) or a
   secret-looking value (`sk-…`, `Bearer …`) makes the file unreadable:
