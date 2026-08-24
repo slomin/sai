@@ -8,4 +8,5 @@ export 'src/app_info.dart';
 export 'src/archive.dart';
 export 'src/llm.dart';
 export 'src/providers.dart';
+export 'src/settings.dart';
 export 'src/tasks.dart';
