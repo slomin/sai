@@ -50,6 +50,22 @@ void main() {
     }, size: size);
   });
 
+  test('the footer names the missing provider', () async {
+    await testNocterm('no provider', (tester) async {
+      await pumpTui(tester);
+      expect(tester.terminalState, containsText(noProviderStatus));
+    }, size: size);
+  });
+
+  test('the footer follows the selected provider', () async {
+    await testNocterm('fake provider', (tester) async {
+      final container = await pumpTui(tester);
+      container.read(settingsProvider.notifier).selectLlm('fake');
+      await pumpUntilText(tester, 'fake (fake-1) — local');
+      expect(tester.terminalState, isNot(containsText(noProviderStatus)));
+    }, size: size);
+  });
+
   test('the shell reads through the shared provider layer', () async {
     await testNocterm('override', (tester) async {
       await pumpTui(

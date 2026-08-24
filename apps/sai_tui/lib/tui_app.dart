@@ -119,6 +119,11 @@ class _TuiAppState extends State<TuiApp> {
             ),
             if (_notice.isNotEmpty)
               Text(_notice, style: TextStyle(color: Colors.yellow)),
+            RiverpodConsumer<String>(
+              provider: llmStatusProvider,
+              builder: (context, status) =>
+                  Text(status, style: TextStyle(color: Colors.gray)),
+            ),
             Text(
               '^C quit · ^U undo · Enter capture',
               style: TextStyle(color: Colors.gray),

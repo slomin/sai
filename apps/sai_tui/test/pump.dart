@@ -9,8 +9,11 @@ import 'package:test/test.dart';
 /// A per-test container over a temp archive root — TUI tests must never
 /// touch the real archive under Application Support.
 ProviderContainer testContainer({List<Override> overrides = const []}) {
-  final root = Directory.systemTemp.createTempSync('sai_tui_test');
-  addTearDown(() => root.deleteSync(recursive: true));
+  // A private parent for the archive keeps the settings file beside it
+  // (ADR 0006) in the temp dir too.
+  final tmp = Directory.systemTemp.createTempSync('sai_tui_test');
+  addTearDown(() => tmp.deleteSync(recursive: true));
+  final root = Directory('${tmp.path}/archive');
   return ProviderContainer.test(
     overrides: [
       archiveRootProvider.overrideWithValue(root),
