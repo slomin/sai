@@ -1,0 +1,69 @@
+import 'dart:io';
+
+import 'package:nocterm/nocterm.dart';
+import 'package:riverpod/misc.dart' show Override;
+import 'package:riverpod/riverpod.dart';
+import 'package:sai_core/sai_core.dart';
+import 'package:test/test.dart';
+
+/// A per-test container over a temp archive root — TUI tests must never
+/// touch the real archive under Application Support.
+ProviderContainer testContainer({List<Override> overrides = const []}) {
+  final root = Directory.systemTemp.createTempSync('sai_tui_test');
+  addTearDown(() => root.deleteSync(recursive: true));
+  return ProviderContainer.test(
+    overrides: [
+      archiveRootProvider.overrideWithValue(root),
+      eventSourceProvider.overrideWithValue(EventSources.tui),
+      ...overrides,
+    ],
+  );
+}
+
+/// Every event line under the container's archive root, oldest first.
+List<String> archiveLines(ProviderContainer container) {
+  final dir = Directory('${container.read(archiveRootProvider).path}/events');
+  if (!dir.existsSync()) return const [];
+  final lines = <String>[];
+  final files = dir.listSync().whereType<File>().toList()
+    ..sort((a, b) => a.path.compareTo(b.path));
+  for (final file in files) {
+    lines.addAll(
+      file.readAsStringSync().split('\n').where((l) => l.isNotEmpty),
+    );
+  }
+  return lines;
+}
+
+/// Pumps frames for [total] in [step]s. `pumpAndSettle` never settles
+/// under the nocterm tester (it counts the frame it just pumped as a
+/// change), so tests drive time explicitly instead.
+Future<void> pumpFor(
+  NoctermTester tester,
+  Duration total, {
+  Duration step = const Duration(milliseconds: 20),
+}) async {
+  var elapsed = Duration.zero;
+  while (elapsed < total) {
+    await tester.pump(step);
+    elapsed += step;
+  }
+}
+
+/// Pumps until [text] shows on the terminal, failing after [timeout]
+/// with the current screen for diagnosis.
+Future<void> pumpUntilText(
+  NoctermTester tester,
+  String text, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!tester.terminalState.containsText(text)) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail(
+        'timed out waiting for "$text" — screen:\n${tester.renderToString()}',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+}
