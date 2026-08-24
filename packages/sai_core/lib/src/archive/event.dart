@@ -256,9 +256,19 @@ abstract final class EventTypes {
   static const chatMessage = 'chat.message';
   static const providerRequest = 'provider.request';
   static const providerResponse = 'provider.response';
+  static const providerFailure = 'provider.failure';
+  static const providerUsage = 'provider.usage';
   static const toolCall = 'tool.call';
   static const toolResult = 'tool.result';
   static const correction = 'archive.correction';
+
+  /// The provider-traffic rows (#21): what one model call may write.
+  static const provider = <String>[
+    providerRequest,
+    providerResponse,
+    providerFailure,
+    providerUsage,
+  ];
 }
 
 /// The `source` values sai's own clients write. The field is free-form in

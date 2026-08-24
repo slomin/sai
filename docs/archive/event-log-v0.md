@@ -164,8 +164,10 @@ Restore from a replica (#15); do not edit the log.
 | type | actor | notes |
 | --- | --- | --- |
 | `chat.message` | user / assistant | `payload.text`; assistant messages carry `model` |
-| `provider.request` | system | the raw request as sent; `model` names the target (#21) |
-| `provider.response` | assistant | the raw response as received; `model.request_id` where exposed |
+| `provider.request` | system | the raw request as sent; `model` names the target — see [provider traffic](#provider-traffic-21) |
+| `provider.response` | assistant | the assembled response as received; `model.request_id` and `version` where exposed; `refs` → the request |
+| `provider.failure` | system | a call that produced no answer; `refs` → the request |
+| `provider.usage` | system | tokens and timings, written for every call including failures; `refs` → the request |
 | `tool.call` | assistant | `payload.name`, `payload.arguments` |
 | `tool.result` | system | `refs` → the `tool.call` |
 | `archive.correction` | any | `refs` → the corrected event; the payload says what is wrong |
@@ -175,6 +177,32 @@ type. A breaking payload change is a new type name, never a rewrite.
 `decision` is reserved for #14. Provider traffic is recorded **raw**, not
 paraphrased — the log is an audit record, and secrets must never enter
 it (#29 keeps keys in the Keychain).
+
+### Provider traffic (#21)
+
+One model call is **three lines, never more**: the request, then either
+the response or the failure, then the usage. Streamed deltas are not
+events — an append is a locked, fsynced line, and a paragraph is not
+worth five hundred of them (ADR
+[0007](../decisions/0007-provider-traffic-is-three-events-per-call.md)).
+`packages/sai_core/lib/src/llm/recorder.dart` is the one writer; every
+line's `model` carries the target `{provider, id}`, and the response adds
+`version` and `request_id` where the backend exposes them. `refs` on the
+response, failure and usage lines name the request line (usage also
+names the response, when there is one).
+
+| type | payload |
+| --- | --- |
+| `provider.request` | `messages` — `[{role, text}]`, `role` ∈ `system` \| `user` \| `assistant`; optional `max_tokens`, `temperature`. The request as sent, so it never holds a key, header or URL. |
+| `provider.response` | `text`, `finish` ∈ `stop` \| `length` \| `cancelled` — a cancelled call's partial text is still what the assistant said; optional `truncated` (below) |
+| `provider.failure` | `kind` ∈ `unreachable` \| `timeout` \| `rejected` \| `protocol` \| `internal`, `message`; optional `endpoint`, `status`, `text` (partial output), `truncated` |
+| `provider.usage` | `finish` ∈ `stop` \| `length` \| `cancelled` \| `failed`, `duration_ms`; optional `prompt_tokens`, `completion_tokens`, `total_tokens`, `tokens_per_second` |
+
+The 1 MiB line cap applies asymmetrically. A request that cannot be
+recorded is not sent (the writer refuses before the call). A response or
+failure whose `text` would not fit is recorded with the text cut to a
+rune boundary and `truncated` set to the original byte length — a marked
+cut beats a lost record, and it is the one place "raw" is qualified.
 
 ### Task domain (#17)
 
