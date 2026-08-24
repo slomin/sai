@@ -53,17 +53,22 @@ class _TuiAppState extends State<TuiApp> {
   }
 
   Future<void> _capture(String line) async {
+    // Clear before the append settles: a key-repeated Enter resubmits an
+    // empty line, which captures nothing, instead of the same line twice.
+    setState(_controller.clear);
     final container = context.container;
     try {
       final store = container.read(tasksProvider.notifier).store;
       await store.quickCapture(line, today: container.read(todayProvider));
       if (!mounted) return;
-      setState(() {
-        _controller.clear();
-        _notice = '';
-      });
+      setState(() => _notice = '');
     } on Object catch (error) {
-      _setNotice('capture failed: $error');
+      if (!mounted) return;
+      setState(() {
+        // Give the line back rather than losing it.
+        _controller.text = line;
+        _notice = 'capture failed: $error';
+      });
     }
   }
 
@@ -93,9 +98,7 @@ class _TuiAppState extends State<TuiApp> {
             TextField(
               controller: _controller,
               focused: true,
-              placeholder:
-                  'Capture to Inbox — Enter saves, '
-                  '@today !2026-09-01',
+              placeholder: captureHint,
               onSubmitted: _capture,
             ),
             Expanded(
@@ -124,17 +127,16 @@ class _TuiAppState extends State<TuiApp> {
 
   Component _lists(BuildContext context, TaskProjection projection) {
     final today = context.read(todayProvider);
-    final inbox = projection.list(TaskList.inbox, today: today);
-    final todayList = projection.list(TaskList.today, today: today);
-    if (inbox.isEmpty && todayList.isEmpty) {
+    final sections = captureSections(projection, today);
+    if (sections.every((section) => section.tasks.isEmpty)) {
       return Center(child: Text(context.read(shellGreetingProvider)));
     }
     final lines = [
-      'Inbox (${inbox.length})',
-      for (final task in inbox) '  ${formatQuickCapture(task, today: today)}',
-      'Today (${todayList.length})',
-      for (final task in todayList)
-        '  ${formatQuickCapture(task, today: today)}',
+      for (final section in sections) ...[
+        section.label,
+        for (final task in section.tasks)
+          '  ${formatQuickCapture(task, today: today)}',
+      ],
     ];
     return ListView(children: [for (final line in lines) Text(line)]);
   }

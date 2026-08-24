@@ -94,12 +94,41 @@ void main() {
     }, size: size);
   });
 
-  test('a deadline token renders on the row', () async {
+  test('a deadline token renders, in Inbox and in Upcoming', () async {
     await testNocterm('deadline', (tester) async {
       await pumpTui(tester);
       await tester.enterText('Pay rent !2026-09-01');
       await tester.sendEnter();
       await pumpUntilText(tester, 'Pay rent !2026-09-01');
+      // The view union: a due-later Inbox task also surfaces in Upcoming.
+      expect(tester.terminalState, containsText('Inbox (1)'));
+      expect(tester.terminalState, containsText('Upcoming (1)'));
+    }, size: size);
+  });
+
+  test('@tomorrow and @someday captures stay visible', () async {
+    await testNocterm('later lists', (tester) async {
+      await pumpTui(tester);
+      await tester.enterText('Ring dentist @tomorrow');
+      await tester.sendEnter();
+      await pumpUntilText(tester, 'Upcoming (1)');
+      expect(tester.terminalState, containsText('Ring dentist @tomorrow'));
+      await tester.enterText('Learn the violin @someday');
+      await tester.sendEnter();
+      await pumpUntilText(tester, 'Someday (1)');
+      expect(tester.terminalState, containsText('Learn the violin @someday'));
+    }, size: size);
+  });
+
+  test('a failed capture keeps the line and says so', () async {
+    await testNocterm('capture failure', (tester) async {
+      final container = await pumpTui(tester);
+      container.read(tasksProvider.notifier).store.dispose();
+      await tester.enterText('Buy oat milk');
+      await tester.sendEnter();
+      await pumpUntilText(tester, 'capture failed:');
+      // The line is given back rather than lost.
+      expect(tester.terminalState, containsText('Buy oat milk'));
     }, size: size);
   });
 
