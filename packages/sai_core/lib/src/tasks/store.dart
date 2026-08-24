@@ -138,13 +138,19 @@ final class TaskStore {
       _serialized(() async {
         _checkOpen();
         if (_undoStack.isEmpty) return null;
-        final entry = _undoStack.last;
+        // Pop first, so the commit's own notification already shows the
+        // shrunk stack to synchronous listeners; a refused inverse never
+        // notifies, so pushing the entry back is invisible.
+        final entry = _undoStack.removeLast();
         final attribution = entry.inverse.refs.contains(entry.undone)
             ? by
             : by.withRefs([entry.undone]);
-        final stored = await _apply(entry.inverse, attribution, record: false);
-        _undoStack.removeLast();
-        return stored;
+        try {
+          return await _apply(entry.inverse, attribution, record: false);
+        } catch (_) {
+          _undoStack.add(entry);
+          rethrow;
+        }
       });
 
   /// Validate → append → apply → notify, serialized with [reload].
@@ -176,13 +182,18 @@ final class TaskStore {
     before.apply(StoredEvent(id: tentative.deriveId(), event: tentative));
     final stored = await _archive.append(draft);
     _projection = before.apply(stored);
-    if (record) {
-      _undoStack.add((
-        inverse: invertEvent(event, before, created: stored.id),
-        undone: stored.id,
-      ));
+    try {
+      if (record) {
+        _undoStack.add((
+          inverse: invertEvent(event, before, created: stored.id),
+          undone: stored.id,
+        ));
+      }
+    } finally {
+      // The append is durable and applied; listeners are told even if
+      // recording the inverse ever throws.
+      _notify();
     }
-    _notify();
     return stored;
   }
 

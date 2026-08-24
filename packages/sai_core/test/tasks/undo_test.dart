@@ -401,6 +401,33 @@ void main() {
       store = await TaskStore.open(archive, source: 'sai/tui');
     });
 
+    test('a synchronous changes listener sees the popped stack', () async {
+      final seen = <(bool, int)>[];
+      store.changes.listen((_) => seen.add((store.canUndo, store.undoDepth)));
+      await store.createTask(title: 'x');
+      expect(seen.last, (true, 1));
+      await store.undo();
+      expect(seen.last, (false, 0));
+    });
+
+    test('a failed undo still leaves listeners consistent', () async {
+      final project = await store.createProject(title: 'P');
+      final id = await store.createTask(title: 'x', project: project);
+      await store.moveTask(id);
+      final other = await TaskStore.open(archive, source: 'sai/app');
+      await other.deleteProject(project);
+      other.dispose();
+      await store.reload();
+
+      final seen = <(bool, int)>[];
+      store.changes.listen((_) => seen.add((store.canUndo, store.undoDepth)));
+      await expectLater(store.undo(), throwsA(isA<TaskProjectionError>()));
+      // The refused inverse appended nothing, notified nothing, and the
+      // stack still holds every entry.
+      expect(seen, isEmpty);
+      expect(store.undoDepth, 3);
+    });
+
     test('undo interleaves with commands without losing events', () async {
       await Future.wait([
         store.createTask(title: 'a'),
