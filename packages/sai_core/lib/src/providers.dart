@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -22,6 +23,7 @@ import 'tasks/lists.dart';
 import 'tasks/projection.dart';
 import 'tasks/sidebar.dart';
 import 'tasks/store.dart';
+import 'tasks/views.dart';
 
 /// The application identity every client shows.
 final appInfoProvider = Provider<AppInfo>(
@@ -76,10 +78,9 @@ final eventSourceProvider = Provider<String>(
 /// The wall clock. Override in tests for deterministic "now".
 final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
 
-/// Today as a local calendar day. Computed once per provider lifetime — a
-/// midnight rollover does not refresh it; the list views (#20) own that.
-final todayProvider = Provider<CalendarDate>(
-  (ref) => CalendarDate.fromLocal(ref.watch(clockProvider)()),
+/// Today as a local calendar day, refreshed at each local midnight.
+final todayProvider = NotifierProvider<TodayNotifier, CalendarDate>(
+  TodayNotifier.new,
 );
 
 /// The task store and its projection, replayed from the archive. Read the
@@ -88,6 +89,27 @@ final todayProvider = Provider<CalendarDate>(
 final tasksProvider = AsyncNotifierProvider<TasksNotifier, TaskProjection>(
   TasksNotifier.new,
 );
+
+/// The reactive shared view for any value-equal sidebar selection. Loading
+/// and errors from task replay remain visible to clients unchanged.
+final taskViewProvider = Provider.family<AsyncValue<TaskView>, SidebarSection>((
+  ref,
+  section,
+) {
+  final today = ref.watch(todayProvider);
+  return ref
+      .watch(tasksProvider)
+      .whenData((projection) => taskView(projection, section, today: today));
+});
+
+/// The reactive sidebar counts and hierarchy from the same snapshot/day as
+/// [taskViewProvider].
+final sidebarProvider = Provider<AsyncValue<SidebarModel>>((ref) {
+  final today = ref.watch(todayProvider);
+  return ref
+      .watch(tasksProvider)
+      .whenData((projection) => sidebarModel(projection, today: today));
+});
 
 /// Whether the task store has a mutation to undo — false until
 /// [tasksProvider] has settled. Recomputed on every commit: the
@@ -396,6 +418,37 @@ class SelectedSection extends Notifier<SidebarSection> {
   SidebarSection build() => const ListSection(TaskList.today);
 
   void select(SidebarSection section) => state = section;
+}
+
+/// Owns the one-shot timer that turns the wall clock into a reactive local
+/// calendar day. A late callback (sleep/wake or clock movement) reads the
+/// clock again before scheduling the following midnight.
+class TodayNotifier extends Notifier<CalendarDate> {
+  Timer? _timer;
+  late DateTime Function() _clock;
+
+  @override
+  CalendarDate build() {
+    _timer?.cancel();
+    _clock = ref.watch(clockProvider);
+    ref.onDispose(() => _timer?.cancel());
+    final today = CalendarDate.fromLocal(_clock());
+    _schedule();
+    return today;
+  }
+
+  void _schedule() {
+    _timer?.cancel();
+    final local = _clock().toLocal();
+    final midnight = DateTime(local.year, local.month, local.day + 1);
+    final delay = midnight.difference(local);
+    _timer = Timer(delay.isNegative ? Duration.zero : delay, _rollOver);
+  }
+
+  void _rollOver() {
+    state = CalendarDate.fromLocal(_clock());
+    _schedule();
+  }
 }
 
 class ChatVisible extends Notifier<bool> {

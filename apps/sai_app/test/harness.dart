@@ -75,6 +75,12 @@ Future<ProviderContainer> pumpApp(
       eventSourceProvider.overrideWithValue(EventSources.app),
       // Never the login keychain from a test.
       secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+      // Widget tests must finish with no pending timers. Core exercises the
+      // real midnight scheduler with fake_async; app tests pin the same read
+      // contract without creating a day-long timer in Flutter's fake clock.
+      todayProvider.overrideWithBuild(
+        (ref, notifier) => CalendarDate.fromLocal(ref.watch(clockProvider)()),
+      ),
       ...overrides,
     ],
   );

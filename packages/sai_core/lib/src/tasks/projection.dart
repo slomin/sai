@@ -37,6 +37,8 @@ final class TaskProjection {
     required Map<AreaId, Area> areas,
     required Map<TagId, Tag> tags,
     required Map<String, BlobRef> externals,
+    required List<TaskId> structuralOrder,
+    required List<TaskId> todayOrder,
     required this.lastEventId,
     required this.eventCount,
   }) : tasks = Map.unmodifiable(tasks),
@@ -44,7 +46,9 @@ final class TaskProjection {
        headings = Map.unmodifiable(headings),
        areas = Map.unmodifiable(areas),
        tags = Map.unmodifiable(tags),
-       _externals = Map.unmodifiable(externals);
+       _externals = Map.unmodifiable(externals),
+       structuralOrder = List.unmodifiable(structuralOrder),
+       todayOrder = List.unmodifiable(todayOrder);
 
   static final TaskProjection empty = TaskProjection._(
     tasks: const {},
@@ -53,6 +57,8 @@ final class TaskProjection {
     areas: const {},
     tags: const {},
     externals: const {},
+    structuralOrder: const [],
+    todayOrder: const [],
     lastEventId: null,
     eventCount: 0,
   );
@@ -73,6 +79,12 @@ final class TaskProjection {
   final Map<AreaId, Area> areas;
   final Map<TagId, Tag> tags;
   final Map<String, BlobRef> _externals;
+
+  /// Replayable task order for Inbox and placement/container groups.
+  final List<TaskId> structuralOrder;
+
+  /// Replayable manual order used only by Today.
+  final List<TaskId> todayOrder;
 
   /// The id of the last event applied (task-domain or not), or null on
   /// [empty] — where a catch-up resumes from.
@@ -134,7 +146,7 @@ final class TaskProjection {
   /// Open, undeleted tasks under heading [id], visible containers only.
   List<Task> underHeading(HeadingId id) => _placed((t) => t.heading == id);
 
-  List<Task> _placed(bool Function(Task) where) => _sorted(null, [
+  List<Task> _placed(bool Function(Task) where) => _ordered(structuralOrder, [
     for (final task in tasks.values)
       if (task.deletedAt == null &&
           task.status == TaskStatus.open &&
@@ -163,10 +175,51 @@ final class TaskProjection {
             ? byWhen
             : a.id.toString().compareTo(b.id.toString());
       });
-    } else {
+    } else if (list == TaskList.upcoming) {
       items.sort(_openOrder);
+    } else {
+      return _ordered(
+        list == TaskList.today ? todayOrder : structuralOrder,
+        items,
+      );
     }
     return List.unmodifiable(items);
+  }
+
+  List<Task> _ordered(List<TaskId> order, List<Task> items) {
+    final byId = {for (final task in items) task.id: task};
+    return List.unmodifiable([
+      for (final id in order) ?byId.remove(id),
+      ...byId.values,
+    ]);
+  }
+
+  /// The prior live sibling in [task]'s structural group, for an inverse
+  /// move. Null means the task was first.
+  TaskId? structuralPredecessor(TaskId task) {
+    final target = tasks[task];
+    if (target == null) return null;
+    TaskId? prior;
+    for (final id in structuralOrder) {
+      if (id == task) return prior;
+      final candidate = tasks[id];
+      if (candidate != null &&
+          candidate.deletedAt == null &&
+          candidate.status == TaskStatus.open &&
+          _visible(candidate) &&
+          _samePlacement(candidate, target)) {
+        prior = id;
+      }
+    }
+    return prior;
+  }
+
+  /// The prior task in Today's independent sequence, for exact undo. Unlike
+  /// structural anchors, Today anchors need not currently be visible: the
+  /// sequence deliberately retains filtered tasks.
+  TaskId? todayPredecessor(TaskId task) {
+    final index = todayOrder.indexOf(task);
+    return index <= 0 ? null : todayOrder[index - 1];
   }
 
   static int _openOrder(Task a, Task b) {
@@ -198,6 +251,8 @@ final class TaskProjection {
     'headings': [for (final h in _byId(headings)) h.toJson()],
     'areas': [for (final a in _byId(areas)) a.toJson()],
     'tags': [for (final t in _byId(tags)) t.toJson()],
+    'structural_order': [for (final id in structuralOrder) id.toString()],
+    'today_order': [for (final id in todayOrder) id.toString()],
     'externals': {
       for (final key in _externals.keys.toList()..sort())
         key: _externals[key]!.toString(),
@@ -220,6 +275,8 @@ final class TaskProjection {
       'headings',
       'areas',
       'tags',
+      'structural_order',
+      'today_order',
       'externals',
     }, where: 'projection');
     final count = map['count'];
@@ -229,11 +286,12 @@ final class TaskProjection {
       );
     }
     final externalsJson = requireObject(map['externals'], 'externals');
+    final tasks = <TaskId, Task>{
+      for (final json in jsonList(map, 'tasks', where: 'projection'))
+        Task.fromJson(json).id: Task.fromJson(json),
+    };
     return TaskProjection._(
-      tasks: {
-        for (final json in jsonList(map, 'tasks', where: 'projection'))
-          Task.fromJson(json).id: Task.fromJson(json),
-      },
+      tasks: tasks,
       projects: {
         for (final json in jsonList(map, 'projects', where: 'projection'))
           Project.fromJson(json).id: Project.fromJson(json),
@@ -254,6 +312,16 @@ final class TaskProjection {
         for (final entry in externalsJson.entries)
           entry.key: BlobRef.parse(entry.value as String),
       },
+      structuralOrder: _decodeOrder(
+        map['structural_order'],
+        'projection.structural_order',
+        tasks.keys,
+      ),
+      todayOrder: _decodeOrder(
+        map['today_order'],
+        'projection.today_order',
+        tasks.keys,
+      ),
       lastEventId: map['last_event'] == null
           ? null
           : BlobRef.parse(map['last_event'] as String),
@@ -261,6 +329,34 @@ final class TaskProjection {
     );
   }
 }
+
+List<TaskId> _decodeOrder(
+  Object? json,
+  String where,
+  Iterable<TaskId> taskIds,
+) {
+  if (json is! List<Object?>) {
+    throw FormatException('$where must be an array');
+  }
+  final order = <TaskId>[];
+  try {
+    for (final value in json) {
+      if (value is! String) throw FormatException('$where entries are ids');
+      order.add(BlobRef.parse(value));
+    }
+  } on ArgumentError catch (error) {
+    throw FormatException('$where contains an invalid id: $error');
+  }
+  if (order.toSet().length != order.length ||
+      order.toSet().difference(taskIds.toSet()).isNotEmpty ||
+      taskIds.toSet().difference(order.toSet()).isNotEmpty) {
+    throw FormatException('$where must contain every task id exactly once');
+  }
+  return order;
+}
+
+bool _samePlacement(Task a, Task b) =>
+    a.project == b.project && a.area == b.area && a.heading == b.heading;
 
 /// The reducer's working state: plain mutable maps, so a bulk [replay]
 /// stays O(events) instead of copying every map per event.
@@ -272,6 +368,8 @@ final class _Builder {
       _areas = Map.of(base.areas),
       _tags = Map.of(base.tags),
       _externals = Map.of(base._externals),
+      _structuralOrder = List.of(base.structuralOrder),
+      _todayOrder = List.of(base.todayOrder),
       _lastEventId = base.lastEventId,
       _eventCount = base.eventCount;
 
@@ -281,6 +379,8 @@ final class _Builder {
   final Map<AreaId, Area> _areas;
   final Map<TagId, Tag> _tags;
   final Map<String, BlobRef> _externals;
+  final List<TaskId> _structuralOrder;
+  final List<TaskId> _todayOrder;
   BlobRef? _lastEventId;
   int _eventCount;
 
@@ -291,6 +391,8 @@ final class _Builder {
     areas: _areas,
     tags: _tags,
     externals: _externals,
+    structuralOrder: _structuralOrder,
+    todayOrder: _todayOrder,
     lastEventId: _lastEventId,
     eventCount: _eventCount,
   );
@@ -338,6 +440,8 @@ final class _Builder {
           modifiedAt: ts,
           external: event.external,
         );
+        _structuralOrder.add(stored.id);
+        _todayOrder.add(stored.id);
         _index(stored, event.external);
       case TaskEdited():
         if (event.tags != null) _checkTags(stored, event.tags!.value);
@@ -350,18 +454,43 @@ final class _Builder {
           modifiedAt: Patch(ts),
         );
       case TaskMoved():
+        final task = _task(stored, event.task);
         _checkPlacement(
           stored,
           project: event.project,
           area: event.area,
           heading: event.heading,
         );
-        _tasks[event.task] = _task(stored, event.task).copyWith(
+        if (event.after case Patch(value: final after)) {
+          _checkStructuralAnchor(
+            stored,
+            task: event.task,
+            after: after,
+            project: event.project,
+            area: event.area,
+            heading: event.heading,
+          );
+        }
+        _tasks[event.task] = task.copyWith(
           project: Patch(event.project),
           area: Patch(event.area),
           heading: Patch(event.heading),
           modifiedAt: Patch(ts),
         );
+        _positionStructural(event);
+      case TaskReordered():
+        final task = _task(stored, event.task);
+        if (!_isLive(task)) {
+          _refuse(stored, 'the Today task ${event.task} is not live');
+        }
+        final after = event.after;
+        if (after == event.task) {
+          _refuse(stored, 'a task cannot be ordered after itself');
+        }
+        if (after != null) {
+          _task(stored, after);
+        }
+        _position(_todayOrder, event.task, after: after, first: after == null);
       case TaskCompleted():
         _tasks[event.task] = _task(stored, event.task).copyWith(
           completedAt: Patch(event.at ?? ts),
@@ -599,6 +728,113 @@ final class _Builder {
     return actual == null
         ? 'unknown $wanted: $id'
         : '$id is a $actual, not a $wanted';
+  }
+
+  void _checkStructuralAnchor(
+    StoredEvent stored, {
+    required TaskId task,
+    required TaskId? after,
+    required ProjectId? project,
+    required AreaId? area,
+    required HeadingId? heading,
+  }) {
+    final target = _tasks[task]!;
+    if (!_isLive(target)) {
+      _refuse(stored, 'the structurally ordered task $task is not live');
+    }
+    if (after == null) return;
+    if (after == task) {
+      _refuse(stored, 'a task cannot be ordered after itself');
+    }
+    final anchor = _task(stored, after);
+    if (!_isLive(anchor)) {
+      _refuse(stored, 'the structural anchor $after is not live');
+    }
+    if (anchor.project != project ||
+        anchor.area != area ||
+        anchor.heading != heading) {
+      _refuse(stored, 'the structural anchor $after is in another group');
+    }
+  }
+
+  bool _isLive(Task task) {
+    if (task.deletedAt != null || task.status != TaskStatus.open) return false;
+    if (task.project case final project?) {
+      if (_projects[project]?.deletedAt != null) return false;
+    }
+    if (task.area case final area?) {
+      if (_areas[area]?.deletedAt != null) return false;
+    }
+    if (task.heading case final heading?) {
+      if (_headings[heading]?.deletedAt != null) return false;
+    }
+    return true;
+  }
+
+  void _positionStructural(TaskMoved event) {
+    _structuralOrder.remove(event.task);
+    if (event.after case Patch(value: final after)) {
+      if (after != null) {
+        final index = _structuralOrder.indexOf(after);
+        _structuralOrder.insert(index + 1, event.task);
+        return;
+      }
+      final first = _structuralOrder.indexWhere(
+        (id) => _hasPlacement(
+          id,
+          project: event.project,
+          area: event.area,
+          heading: event.heading,
+        ),
+      );
+      _structuralOrder.insert(
+        first < 0 ? _structuralOrder.length : first,
+        event.task,
+      );
+      return;
+    }
+
+    var last = -1;
+    for (var index = 0; index < _structuralOrder.length; index++) {
+      if (_hasPlacement(
+        _structuralOrder[index],
+        project: event.project,
+        area: event.area,
+        heading: event.heading,
+      )) {
+        last = index;
+      }
+    }
+    _structuralOrder.insert(
+      last < 0 ? _structuralOrder.length : last + 1,
+      event.task,
+    );
+  }
+
+  bool _hasPlacement(
+    TaskId id, {
+    required ProjectId? project,
+    required AreaId? area,
+    required HeadingId? heading,
+  }) {
+    final task = _tasks[id]!;
+    return task.project == project &&
+        task.area == area &&
+        task.heading == heading;
+  }
+
+  void _position(
+    List<TaskId> order,
+    TaskId task, {
+    required TaskId? after,
+    required bool first,
+  }) {
+    order.remove(task);
+    if (first) {
+      order.insert(0, task);
+      return;
+    }
+    order.insert(order.indexOf(after!) + 1, task);
   }
 
   void _checkPlacement(

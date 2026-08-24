@@ -264,6 +264,66 @@ void main() {
       expect(store.projection.task(id)!.project, project);
     });
 
+    test('undoing structural reorder restores its prior predecessor', () async {
+      const today = CalendarDate(2026, 8, 24);
+      await store.createTask(title: 'a');
+      await store.createTask(title: 'b');
+      final c = await store.createTask(title: 'c');
+      await store.reorderTask(c, after: null);
+      expect(
+        store.projection.list(TaskList.inbox, today: today).map((t) => t.title),
+        ['c', 'a', 'b'],
+      );
+      await store.undo();
+      expect(
+        store.projection.list(TaskList.inbox, today: today).map((t) => t.title),
+        ['a', 'b', 'c'],
+      );
+    });
+
+    test('undoing atomic move restores placement and order', () async {
+      const today = CalendarDate(2026, 8, 24);
+      await store.createTask(title: 'a');
+      await store.createTask(title: 'b');
+      final c = await store.createTask(title: 'c');
+      final project = await store.createProject(title: 'P');
+      final filed = await store.createTask(title: 'filed', project: project);
+      await store.moveTask(c, project: project, after: Patch(filed));
+      await store.undo();
+      expect(store.projection.task(c)!.project, isNull);
+      expect(
+        store.projection.list(TaskList.inbox, today: today).map((t) => t.title),
+        ['a', 'b', 'c'],
+      );
+    });
+
+    test('undoing Today reorder does not change structural order', () async {
+      const today = CalendarDate(2026, 8, 24);
+      final a = await store.createTask(
+        title: 'a',
+        when: const TaskWhen.date(today),
+      );
+      final b = await store.createTask(
+        title: 'b',
+        when: const TaskWhen.date(today),
+      );
+      final c = await store.createTask(
+        title: 'c',
+        when: const TaskWhen.date(today),
+      );
+      await store.reorderToday(c, after: null);
+      expect(
+        store.projection.list(TaskList.today, today: today).map((t) => t.title),
+        ['c', 'a', 'b'],
+      );
+      await store.undo();
+      expect(
+        store.projection.list(TaskList.today, today: today).map((t) => t.title),
+        ['a', 'b', 'c'],
+      );
+      expect(store.projection.structuralOrder, [a, b, c]);
+    });
+
     test('undoing lifecycle changes restores the exact instants', () async {
       final id = await store.createTask(title: 'x');
       await store.completeTask(id);

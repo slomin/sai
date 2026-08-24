@@ -2,6 +2,7 @@ import '../archive/blobref.dart';
 import '../archive/event.dart';
 import 'codec.dart';
 import 'date.dart';
+import 'lists.dart';
 import 'model.dart';
 
 /// The task-domain event types. The registry lives in
@@ -12,6 +13,7 @@ abstract final class TaskEventTypes {
   static const taskCreate = 'task.create';
   static const taskEdit = 'task.edit';
   static const taskMove = 'task.move';
+  static const taskReorder = 'task.reorder';
   static const taskComplete = 'task.complete';
   static const taskCancel = 'task.cancel';
   static const taskReopen = 'task.reopen';
@@ -39,6 +41,7 @@ abstract final class TaskEventTypes {
     taskCreate,
     taskEdit,
     taskMove,
+    taskReorder,
     taskComplete,
     taskCancel,
     taskReopen,
@@ -387,7 +390,7 @@ final class TaskEdited extends TaskEvent {
 /// `task.move` — a full placement replacement: every placement key is
 /// written, so the line is unambiguous on its own.
 final class TaskMoved extends TaskEvent {
-  TaskMoved(this.task, {this.project, this.area, this.heading}) {
+  TaskMoved(this.task, {this.project, this.area, this.heading, this.after}) {
     _checkPlacement(
       project: project,
       area: area,
@@ -401,6 +404,10 @@ final class TaskMoved extends TaskEvent {
   final AreaId? area;
   final HeadingId? heading;
 
+  /// Absent appends in the destination group; a patch of null places the
+  /// task first; a task id places it immediately after that sibling.
+  final Patch<TaskId?>? after;
+
   @override
   String get type => TaskEventTypes.taskMove;
 
@@ -408,7 +415,7 @@ final class TaskMoved extends TaskEvent {
   BlobRef? get subject => task;
 
   @override
-  List<BlobRef> get refs => [task, ?project, ?area, ?heading];
+  List<BlobRef> get refs => [task, ?project, ?area, ?heading, ?after?.value];
 
   @override
   Map<String, Object?> toPayload() => {
@@ -416,6 +423,7 @@ final class TaskMoved extends TaskEvent {
     'project': project?.toString(),
     'area': area?.toString(),
     'heading': heading?.toString(),
+    if (after != null) 'after': after!.value?.toString(),
   };
 
   factory TaskMoved._decode(Map<String, Object?> payload) {
@@ -425,6 +433,7 @@ final class TaskMoved extends TaskEvent {
       'project',
       'area',
       'heading',
+      'after',
     }, where: where);
     for (final key in const ['project', 'area', 'heading']) {
       if (!payload.containsKey(key)) {
@@ -448,6 +457,57 @@ final class TaskMoved extends TaskEvent {
       project: project,
       area: area,
       heading: heading,
+      after: payload.containsKey('after')
+          ? Patch(optionalId(payload, 'after', where: where))
+          : null,
+    );
+  }
+}
+
+/// `task.reorder` — an independent manual ordering change for Today.
+/// The list key is explicit so future list-specific order vocabularies can
+/// use new compatible rows without changing this event's meaning.
+final class TaskReordered extends TaskEvent {
+  TaskReordered(this.task, {required this.list, required this.after}) {
+    if (list != TaskList.today) {
+      throw ArgumentError('task.reorder only supports the today list');
+    }
+  }
+
+  final TaskId task;
+  final TaskList list;
+  final TaskId? after;
+
+  @override
+  String get type => TaskEventTypes.taskReorder;
+
+  @override
+  BlobRef? get subject => task;
+
+  @override
+  List<BlobRef> get refs => [task, ?after];
+
+  @override
+  Map<String, Object?> toPayload() => {
+    'task': task.toString(),
+    'list': list.name,
+    'after': after?.toString(),
+  };
+
+  factory TaskReordered._decode(Map<String, Object?> payload) {
+    const where = TaskEventTypes.taskReorder;
+    rejectUnknownKeys(payload, const {'task', 'list', 'after'}, where: where);
+    if (!payload.containsKey('after')) {
+      throw const FormatException('$where.after is required');
+    }
+    final list = payload['list'];
+    if (list != TaskList.today.name) {
+      throw const FormatException('$where.list must be "today"');
+    }
+    return TaskReordered(
+      requireId(payload, 'task', where: where),
+      list: TaskList.today,
+      after: optionalId(payload, 'after', where: where),
     );
   }
 }
@@ -1217,6 +1277,7 @@ final _decoders = <String, TaskEvent Function(Map<String, Object?>)>{
   TaskEventTypes.taskCreate: TaskCreated._decode,
   TaskEventTypes.taskEdit: TaskEdited._decode,
   TaskEventTypes.taskMove: TaskMoved._decode,
+  TaskEventTypes.taskReorder: TaskReordered._decode,
   TaskEventTypes.taskComplete: TaskCompleted._decode,
   TaskEventTypes.taskCancel: TaskCancelled._decode,
   TaskEventTypes.taskReopen: _subjectOnly(

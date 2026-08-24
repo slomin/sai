@@ -49,6 +49,13 @@ TaskEvent invertEvent(
         project: prior.project,
         area: prior.area,
         heading: prior.heading,
+        after: Patch(before.structuralPredecessor(event.task)),
+      );
+    case TaskReordered():
+      return TaskReordered(
+        event.task,
+        list: event.list,
+        after: before.todayPredecessor(event.task),
       );
     case TaskCompleted(:final task) ||
         TaskCancelled(:final task) ||

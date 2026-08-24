@@ -6,6 +6,7 @@ import '../archive/event.dart';
 import 'capture.dart';
 import 'date.dart';
 import 'events.dart';
+import 'lists.dart';
 import 'model.dart';
 import 'projection.dart';
 import 'undo.dart';
@@ -163,6 +164,16 @@ final class TaskStore {
         return _apply(event, by, record: true);
       });
 
+  /// Builds a command from the projection inside the serialized lane. Used
+  /// by reorder commands whose event must repeat the task's current group.
+  Future<StoredEvent> _commitFrom(
+    TaskEvent Function(TaskProjection) build,
+    Attribution by,
+  ) => _serialized(() async {
+    _checkOpen();
+    return _apply(build(_projection), by, record: true);
+  });
+
   /// The unserialized commit body; [undo] and [_commit] wrap it in
   /// [_serialized] themselves (nesting would deadlock on [_queue]).
   /// With [record], pushes the committed event's inverse — computed
@@ -254,11 +265,46 @@ final class TaskStore {
     ProjectId? project,
     AreaId? area,
     HeadingId? heading,
+    Patch<TaskId?>? after,
     Attribution by = const Attribution.user(),
   }) => _commit(
-    TaskMoved(task, project: project, area: area, heading: heading),
+    TaskMoved(
+      task,
+      project: project,
+      area: area,
+      heading: heading,
+      after: after,
+    ),
     by,
   );
+
+  /// Repositions [task] inside its current Inbox/area/project/heading group.
+  Future<void> reorderTask(
+    TaskId task, {
+    required TaskId? after,
+    Attribution by = const Attribution.user(),
+  }) => _commitFrom((projection) {
+    final current = projection.task(task);
+    if (current == null) {
+      // The tentative reducer turns this into the normal projection error;
+      // keeping event construction total avoids a separate validation path.
+      return TaskMoved(task, after: Patch(after));
+    }
+    return TaskMoved(
+      task,
+      project: current.project,
+      area: current.area,
+      heading: current.heading,
+      after: Patch(after),
+    );
+  }, by);
+
+  /// Repositions [task] in Today's independent manual order.
+  Future<void> reorderToday(
+    TaskId task, {
+    required TaskId? after,
+    Attribution by = const Attribution.user(),
+  }) => _commit(TaskReordered(task, list: TaskList.today, after: after), by);
 
   Future<void> completeTask(
     TaskId task, {
