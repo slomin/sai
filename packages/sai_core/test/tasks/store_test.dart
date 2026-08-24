@@ -255,4 +255,55 @@ void main() {
       'c',
     });
   });
+
+  group('quickCapture', () {
+    const today = CalendarDate(2026, 8, 24);
+
+    test('one line, one task.create, straight into the Inbox', () async {
+      final id = await store.quickCapture('Buy oat milk', today: today);
+      final lines = logLines();
+      expect(lines, hasLength(1));
+      final json = jsonDecode(lines.single) as Map<String, Object?>;
+      expect(json['type'], 'task.create');
+      expect(json['payload'], {'title': 'Buy oat milk'});
+      expect(store.projection.list(TaskList.inbox, today: today), [
+        store.projection.task(id!),
+      ]);
+    });
+
+    test('a when token surfaces the capture in Today', () async {
+      final id = await store.quickCapture('Call mom @today', today: today);
+      final task = store.projection.task(id!)!;
+      expect(task.title, 'Call mom');
+      expect(task.when, const TaskWhen.date(today));
+      expect(store.projection.list(TaskList.today, today: today), [task]);
+      expect(store.projection.list(TaskList.inbox, today: today), isEmpty);
+    });
+
+    test('a deadline token sets the deadline', () async {
+      final id = await store.quickCapture('Pay rent !2026-09-01', today: today);
+      expect(
+        store.projection.task(id!)!.deadline,
+        const CalendarDate(2026, 9, 1),
+      );
+    });
+
+    test('a blank line appends nothing', () async {
+      expect(await store.quickCapture('   ', today: today), isNull);
+      expect(logLines(), isEmpty);
+      expect(store.projection.eventCount, 0);
+    });
+
+    test('attribution passes through', () async {
+      const model = ModelRef(provider: 'anthropic', id: 'claude-fable-5');
+      await store.quickCapture(
+        'From the assistant',
+        today: today,
+        by: const Attribution.assistant(model),
+      );
+      final json = jsonDecode(logLines().single) as Map<String, Object?>;
+      expect(json['actor'], 'assistant');
+      expect((json['model'] as Map<String, Object?>)['id'], 'claude-fable-5');
+    });
+  });
 }

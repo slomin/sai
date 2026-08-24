@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../archive/archive.dart';
 import '../archive/event.dart';
+import 'capture.dart';
 import 'date.dart';
 import 'events.dart';
 import 'model.dart';
@@ -226,6 +227,26 @@ final class TaskStore {
     List<ChecklistItem> items, {
     Attribution by = const Attribution.user(),
   }) => _commit(TaskChecklistSet(task, items), by);
+
+  /// Creates the Inbox task [line] describes — see [parseQuickCapture]
+  /// for the grammar — and returns its id, or null when [line] is blank,
+  /// in which case nothing is appended. One line, one `task.create`
+  /// event. [today] anchors the `@today`/`@tomorrow` tokens; the store
+  /// has no clock of its own.
+  Future<TaskId?> quickCapture(
+    String line, {
+    required CalendarDate today,
+    Attribution by = const Attribution.user(),
+  }) async {
+    final capture = parseQuickCapture(line, today: today);
+    if (capture == null) return null;
+    return createTask(
+      title: capture.title,
+      when: capture.when,
+      deadline: capture.deadline,
+      by: by,
+    );
+  }
 
   // --- areas ---
 
