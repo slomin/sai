@@ -157,7 +157,7 @@ final class Event {
     }
     final prevText = map['prev'];
     final event = Event._(
-      ts: _parseTs(tsText),
+      ts: parseTs(tsText),
       tsText: tsText,
       type: _requireString(map, 'type', where: 'event'),
       actor: actor,
@@ -261,6 +261,13 @@ abstract final class EventTypes {
   static const correction = 'archive.correction';
 }
 
+/// The `source` values sai's own clients write. The field is free-form in
+/// the spec; these are the two names this repository owns.
+abstract final class EventSources {
+  static const app = 'sai/app';
+  static const tui = 'sai/tui';
+}
+
 final _tsForm = RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$');
 
 /// Formats [time] as the spec's timestamp: RFC 3339 UTC, literal `Z`,
@@ -274,7 +281,10 @@ String formatTs(DateTime time) {
       '.${pad(micros, 6)}Z';
 }
 
-DateTime _parseTs(String text) {
+/// Parses the spec's timestamp form back into a UTC [DateTime], with the
+/// same strictness the envelope applies: exactly six fractional digits and
+/// a real instant. Throws [FormatException] on anything else.
+DateTime parseTs(String text) {
   if (!_tsForm.hasMatch(text)) {
     throw FormatException(
       'ts must be RFC 3339 UTC with exactly six fractional digits, got "$text"',

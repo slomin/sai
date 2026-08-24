@@ -1,0 +1,625 @@
+import '../archive/archive.dart';
+import '../archive/blobref.dart';
+import 'codec.dart';
+import 'date.dart';
+import 'events.dart';
+import 'lists.dart';
+import 'model.dart';
+
+/// A task-domain event that cannot be applied: its subject is unknown, of
+/// the wrong kind, or violates a placement rule. Only sai writes task
+/// events, so this means a bug or a hand-edited log — loud, never repaired.
+final class TaskProjectionError implements Exception {
+  const TaskProjectionError({required this.eventId, required this.reason});
+
+  /// The id of the event that could not be applied.
+  final BlobRef eventId;
+
+  final String reason;
+
+  @override
+  String toString() => 'TaskProjectionError: $reason (event $eventId)';
+}
+
+/// The current state of the task domain: a disposable, in-memory projection
+/// of the archive (ADR 0004, amended by #17 — the SQLite medium is
+/// deferred). Rebuild it any time with [replay]; advance it one event at a
+/// time with [apply]. Both run the same reducer.
+///
+/// Events outside the task family are counted but change nothing. A
+/// malformed family payload throws [FormatException]; an unappliable one
+/// throws [TaskProjectionError].
+final class TaskProjection {
+  TaskProjection._({
+    required Map<TaskId, Task> tasks,
+    required Map<ProjectId, Project> projects,
+    required Map<HeadingId, Heading> headings,
+    required Map<AreaId, Area> areas,
+    required Map<TagId, Tag> tags,
+    required Map<String, BlobRef> externals,
+    required this.lastEventId,
+    required this.eventCount,
+  }) : tasks = Map.unmodifiable(tasks),
+       projects = Map.unmodifiable(projects),
+       headings = Map.unmodifiable(headings),
+       areas = Map.unmodifiable(areas),
+       tags = Map.unmodifiable(tags),
+       _externals = Map.unmodifiable(externals);
+
+  static final TaskProjection empty = TaskProjection._(
+    tasks: const {},
+    projects: const {},
+    headings: const {},
+    areas: const {},
+    tags: const {},
+    externals: const {},
+    lastEventId: null,
+    eventCount: 0,
+  );
+
+  /// Rebuilds the projection from [events], oldest first — the whole
+  /// archive, or any prefix of it.
+  static TaskProjection replay(Iterable<StoredEvent> events) {
+    final builder = _Builder.from(empty);
+    for (final stored in events) {
+      builder.apply(stored);
+    }
+    return builder.build();
+  }
+
+  final Map<TaskId, Task> tasks;
+  final Map<ProjectId, Project> projects;
+  final Map<HeadingId, Heading> headings;
+  final Map<AreaId, Area> areas;
+  final Map<TagId, Tag> tags;
+  final Map<String, BlobRef> _externals;
+
+  /// The id of the last event applied (task-domain or not), or null on
+  /// [empty] — where a catch-up resumes from.
+  final BlobRef? lastEventId;
+
+  /// How many events this projection has seen, task-domain or not.
+  final int eventCount;
+
+  /// Applies one event and returns the advanced projection; the receiver is
+  /// untouched.
+  TaskProjection apply(StoredEvent stored) =>
+      (_Builder.from(this)..apply(stored)).build();
+
+  Task? task(TaskId id) => tasks[id];
+
+  /// The task created by the import identified as [system]/[id], if any.
+  Task? byExternal(String system, String id) {
+    final ref = _externals['$system:$id'];
+    return ref == null ? null : tasks[ref];
+  }
+
+  /// The entity id minted for the import identified as [system]/[id] —
+  /// task or container. What a re-run of an importer dedupes against.
+  BlobRef? idByExternal(String system, String id) => _externals['$system:$id'];
+
+  /// The tasks of [list] as of [today] — the view unions of [listsOf], so a
+  /// filed Today task also answers for Anytime and a future deadline
+  /// surfaces in Upcoming — visible containers only, in the deterministic
+  /// v0.1 order (manual ordering is #20). A task whose project, area or
+  /// heading is deleted is hidden here — that is container visibility,
+  /// deliberately outside the pure list rules.
+  List<Task> list(TaskList list, {required CalendarDate today}) =>
+      _sorted(list, [
+        for (final task in tasks.values)
+          if (_visible(task) && listsOf(task, today).contains(list)) task,
+      ]);
+
+  /// Deleted tasks, newest deletion first. The Trash is a query, not a list.
+  List<Task> trash() {
+    final deleted = [
+      for (final task in tasks.values)
+        if (task.deletedAt != null) task,
+    ];
+    deleted.sort((a, b) {
+      final byWhen = b.deletedAt!.compareTo(a.deletedAt!);
+      return byWhen != 0 ? byWhen : a.id.toString().compareTo(b.id.toString());
+    });
+    return List.unmodifiable(deleted);
+  }
+
+  /// Open, undeleted tasks placed in [id] (directly or under one of its
+  /// headings), visible containers only, in the deterministic order.
+  List<Task> inProject(ProjectId id) => _placed((t) => t.project == id);
+
+  /// Open, undeleted tasks placed directly in area [id], visible
+  /// containers only.
+  List<Task> inArea(AreaId id) => _placed((t) => t.area == id);
+
+  /// Open, undeleted tasks under heading [id], visible containers only.
+  List<Task> underHeading(HeadingId id) => _placed((t) => t.heading == id);
+
+  List<Task> _placed(bool Function(Task) where) => _sorted(null, [
+    for (final task in tasks.values)
+      if (task.deletedAt == null &&
+          task.status == TaskStatus.open &&
+          _visible(task) &&
+          where(task))
+        task,
+  ]);
+
+  bool _visible(Task task) {
+    final project = task.project;
+    if (project != null && projects[project]?.deletedAt != null) return false;
+    final area = task.area;
+    if (area != null && areas[area]?.deletedAt != null) return false;
+    final heading = task.heading;
+    if (heading != null && headings[heading]?.deletedAt != null) return false;
+    return true;
+  }
+
+  List<Task> _sorted(TaskList? list, List<Task> items) {
+    if (list == TaskList.logbook) {
+      items.sort((a, b) {
+        final aDone = a.cancelledAt ?? a.completedAt!;
+        final bDone = b.cancelledAt ?? b.completedAt!;
+        final byWhen = bDone.compareTo(aDone);
+        return byWhen != 0
+            ? byWhen
+            : a.id.toString().compareTo(b.id.toString());
+      });
+    } else {
+      items.sort(_openOrder);
+    }
+    return List.unmodifiable(items);
+  }
+
+  static int _openOrder(Task a, Task b) {
+    final aWhen = a.when is TaskWhenDate ? (a.when as TaskWhenDate).date : null;
+    final bWhen = b.when is TaskWhenDate ? (b.when as TaskWhenDate).date : null;
+    final byWhen = _nullsLast(aWhen, bWhen);
+    if (byWhen != 0) return byWhen;
+    final byDeadline = _nullsLast(a.deadline, b.deadline);
+    if (byDeadline != 0) return byDeadline;
+    final byCreated = a.createdAt.compareTo(b.createdAt);
+    if (byCreated != 0) return byCreated;
+    return a.id.toString().compareTo(b.id.toString());
+  }
+
+  static int _nullsLast(CalendarDate? a, CalendarDate? b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return a.compareTo(b);
+  }
+
+  /// A plain-JSON dump of the whole projection — for tests, debugging and
+  /// an importer's dry-run diff. Not a wire contract.
+  Map<String, Object?> toJson() => {
+    'last_event': lastEventId?.toString(),
+    'count': eventCount,
+    'tasks': [for (final t in _byId(tasks)) t.toJson()],
+    'projects': [for (final p in _byId(projects)) p.toJson()],
+    'headings': [for (final h in _byId(headings)) h.toJson()],
+    'areas': [for (final a in _byId(areas)) a.toJson()],
+    'tags': [for (final t in _byId(tags)) t.toJson()],
+    'externals': {
+      for (final key in _externals.keys.toList()..sort())
+        key: _externals[key]!.toString(),
+    },
+  };
+
+  static List<V> _byId<V>(Map<BlobRef, V> map) {
+    final keys = map.keys.toList()
+      ..sort((a, b) => a.toString().compareTo(b.toString()));
+    return [for (final key in keys) map[key] as V];
+  }
+
+  factory TaskProjection.fromJson(Object? json) {
+    final map = requireObject(json, 'projection');
+    rejectUnknownKeys(map, const {
+      'last_event',
+      'count',
+      'tasks',
+      'projects',
+      'headings',
+      'areas',
+      'tags',
+      'externals',
+    }, where: 'projection');
+    final count = map['count'];
+    if (count is! int || count < 0) {
+      throw const FormatException(
+        'projection.count must be a non-negative integer',
+      );
+    }
+    final externalsJson = requireObject(map['externals'], 'externals');
+    return TaskProjection._(
+      tasks: {
+        for (final json in jsonList(map, 'tasks', where: 'projection'))
+          Task.fromJson(json).id: Task.fromJson(json),
+      },
+      projects: {
+        for (final json in jsonList(map, 'projects', where: 'projection'))
+          Project.fromJson(json).id: Project.fromJson(json),
+      },
+      headings: {
+        for (final json in jsonList(map, 'headings', where: 'projection'))
+          Heading.fromJson(json).id: Heading.fromJson(json),
+      },
+      areas: {
+        for (final json in jsonList(map, 'areas', where: 'projection'))
+          Area.fromJson(json).id: Area.fromJson(json),
+      },
+      tags: {
+        for (final json in jsonList(map, 'tags', where: 'projection'))
+          Tag.fromJson(json).id: Tag.fromJson(json),
+      },
+      externals: {
+        for (final entry in externalsJson.entries)
+          entry.key: BlobRef.parse(entry.value as String),
+      },
+      lastEventId: map['last_event'] == null
+          ? null
+          : BlobRef.parse(map['last_event'] as String),
+      eventCount: count,
+    );
+  }
+}
+
+/// The reducer's working state: plain mutable maps, so a bulk [replay]
+/// stays O(events) instead of copying every map per event.
+final class _Builder {
+  _Builder.from(TaskProjection base)
+    : _tasks = Map.of(base.tasks),
+      _projects = Map.of(base.projects),
+      _headings = Map.of(base.headings),
+      _areas = Map.of(base.areas),
+      _tags = Map.of(base.tags),
+      _externals = Map.of(base._externals),
+      _lastEventId = base.lastEventId,
+      _eventCount = base.eventCount;
+
+  final Map<TaskId, Task> _tasks;
+  final Map<ProjectId, Project> _projects;
+  final Map<HeadingId, Heading> _headings;
+  final Map<AreaId, Area> _areas;
+  final Map<TagId, Tag> _tags;
+  final Map<String, BlobRef> _externals;
+  BlobRef? _lastEventId;
+  int _eventCount;
+
+  TaskProjection build() => TaskProjection._(
+    tasks: _tasks,
+    projects: _projects,
+    headings: _headings,
+    areas: _areas,
+    tags: _tags,
+    externals: _externals,
+    lastEventId: _lastEventId,
+    eventCount: _eventCount,
+  );
+
+  void apply(StoredEvent stored) {
+    final TaskEvent? event;
+    try {
+      event = decodeTaskEvent(stored.event);
+    } on FormatException catch (e) {
+      throw FormatException('event ${stored.id}: ${e.message}');
+    }
+    if (event != null) {
+      _reduce(stored, event);
+    }
+    _lastEventId = stored.id;
+    _eventCount++;
+  }
+
+  Never _refuse(StoredEvent stored, String reason) =>
+      throw TaskProjectionError(eventId: stored.id, reason: reason);
+
+  void _reduce(StoredEvent stored, TaskEvent event) {
+    final ts = stored.event.ts;
+    switch (event) {
+      case TaskCreated():
+        _checkPlacement(
+          stored,
+          project: event.project,
+          area: event.area,
+          heading: event.heading,
+        );
+        _checkTags(stored, event.tags);
+        _tasks[stored.id] = Task(
+          id: stored.id,
+          title: event.title,
+          notes: event.notes,
+          when: event.when,
+          deadline: event.deadline,
+          project: event.project,
+          area: event.area,
+          heading: event.heading,
+          tags: event.tags,
+          checklist: event.checklist,
+          createdAt: event.createdAt ?? ts,
+          modifiedAt: ts,
+          external: event.external,
+        );
+        _index(stored, event.external);
+      case TaskEdited():
+        if (event.tags != null) _checkTags(stored, event.tags!.value);
+        _tasks[event.task] = _task(stored, event.task).copyWith(
+          title: event.title,
+          notes: event.notes,
+          when: event.when,
+          deadline: event.deadline,
+          tags: event.tags,
+          modifiedAt: Patch(ts),
+        );
+      case TaskMoved():
+        _checkPlacement(
+          stored,
+          project: event.project,
+          area: event.area,
+          heading: event.heading,
+        );
+        _tasks[event.task] = _task(stored, event.task).copyWith(
+          project: Patch(event.project),
+          area: Patch(event.area),
+          heading: Patch(event.heading),
+          modifiedAt: Patch(ts),
+        );
+      case TaskCompleted():
+        _tasks[event.task] = _task(stored, event.task).copyWith(
+          completedAt: Patch(event.at ?? ts),
+          cancelledAt: const Patch(null),
+          modifiedAt: Patch(ts),
+        );
+      case TaskCancelled():
+        _tasks[event.task] = _task(stored, event.task).copyWith(
+          completedAt: const Patch(null),
+          cancelledAt: Patch(event.at ?? ts),
+          modifiedAt: Patch(ts),
+        );
+      case TaskReopened():
+        _tasks[event.task] = _task(stored, event.task).copyWith(
+          completedAt: const Patch(null),
+          cancelledAt: const Patch(null),
+          modifiedAt: Patch(ts),
+        );
+      case TaskDeleted():
+        _tasks[event.task] = _task(
+          stored,
+          event.task,
+        ).copyWith(deletedAt: Patch(ts), modifiedAt: Patch(ts));
+      case TaskRestored():
+        _tasks[event.task] = _task(
+          stored,
+          event.task,
+        ).copyWith(deletedAt: const Patch(null), modifiedAt: Patch(ts));
+      case TaskChecklistSet():
+        _tasks[event.task] = _task(
+          stored,
+          event.task,
+        ).copyWith(checklist: Patch(event.items), modifiedAt: Patch(ts));
+      case AreaCreated():
+        _areas[stored.id] = Area(
+          id: stored.id,
+          title: event.title,
+          createdAt: event.createdAt ?? ts,
+          modifiedAt: ts,
+          external: event.external,
+        );
+        _index(stored, event.external);
+      case AreaEdited():
+        _areas[event.area] = _area(
+          stored,
+          event.area,
+        ).copyWith(title: event.title, modifiedAt: Patch(ts));
+      case AreaDeleted():
+        _areas[event.area] = _area(
+          stored,
+          event.area,
+        ).copyWith(deletedAt: Patch(ts), modifiedAt: Patch(ts));
+      case AreaRestored():
+        _areas[event.area] = _area(
+          stored,
+          event.area,
+        ).copyWith(deletedAt: const Patch(null), modifiedAt: Patch(ts));
+      case ProjectCreated():
+        if (event.area != null) _livingArea(stored, event.area!);
+        _checkTags(stored, event.tags);
+        _projects[stored.id] = Project(
+          id: stored.id,
+          title: event.title,
+          notes: event.notes,
+          area: event.area,
+          when: event.when,
+          deadline: event.deadline,
+          tags: event.tags,
+          createdAt: event.createdAt ?? ts,
+          modifiedAt: ts,
+          external: event.external,
+        );
+        _index(stored, event.external);
+      case ProjectEdited():
+        if (event.area case Patch(value: final AreaId area)) {
+          _livingArea(stored, area);
+        }
+        if (event.tags != null) _checkTags(stored, event.tags!.value);
+        _projects[event.project] = _project(stored, event.project).copyWith(
+          title: event.title,
+          notes: event.notes,
+          area: event.area,
+          when: event.when,
+          deadline: event.deadline,
+          tags: event.tags,
+          modifiedAt: Patch(ts),
+        );
+      case ProjectDeleted():
+        _projects[event.project] = _project(
+          stored,
+          event.project,
+        ).copyWith(deletedAt: Patch(ts), modifiedAt: Patch(ts));
+      case ProjectRestored():
+        _projects[event.project] = _project(
+          stored,
+          event.project,
+        ).copyWith(deletedAt: const Patch(null), modifiedAt: Patch(ts));
+      case HeadingCreated():
+        _livingProject(stored, event.project);
+        _headings[stored.id] = Heading(
+          id: stored.id,
+          project: event.project,
+          title: event.title,
+          createdAt: event.createdAt ?? ts,
+          modifiedAt: ts,
+        );
+        _index(stored, event.external);
+      case HeadingEdited():
+        _headings[event.heading] = _heading(
+          stored,
+          event.heading,
+        ).copyWith(title: event.title, modifiedAt: Patch(ts));
+      case HeadingDeleted():
+        _headings[event.heading] = _heading(
+          stored,
+          event.heading,
+        ).copyWith(deletedAt: Patch(ts), modifiedAt: Patch(ts));
+      case HeadingRestored():
+        _headings[event.heading] = _heading(
+          stored,
+          event.heading,
+        ).copyWith(deletedAt: const Patch(null), modifiedAt: Patch(ts));
+      case TagCreated():
+        if (event.parent != null) _livingTag(stored, event.parent!);
+        _tags[stored.id] = Tag(
+          id: stored.id,
+          title: event.title,
+          parent: event.parent,
+          createdAt: event.createdAt ?? ts,
+          modifiedAt: ts,
+        );
+        _index(stored, event.external);
+      case TagEdited():
+        if (event.parent case Patch(value: final TagId parent)) {
+          _livingTag(stored, parent);
+          _checkTagParent(stored, event.tag, parent);
+        }
+        _tags[event.tag] = _tag(stored, event.tag).copyWith(
+          title: event.title,
+          parent: event.parent,
+          modifiedAt: Patch(ts),
+        );
+      case TagDeleted():
+        _tags[event.tag] = _tag(
+          stored,
+          event.tag,
+        ).copyWith(deletedAt: Patch(ts), modifiedAt: Patch(ts));
+      case TagRestored():
+        _tags[event.tag] = _tag(
+          stored,
+          event.tag,
+        ).copyWith(deletedAt: const Patch(null), modifiedAt: Patch(ts));
+    }
+  }
+
+  void _index(StoredEvent stored, ExternalRef? external) {
+    if (external != null) {
+      _externals[external.key] = stored.id;
+    }
+  }
+
+  Task _task(StoredEvent stored, TaskId id) =>
+      _tasks[id] ?? _refuse(stored, _describeMiss(id, 'task'));
+
+  Project _project(StoredEvent stored, ProjectId id) =>
+      _projects[id] ?? _refuse(stored, _describeMiss(id, 'project'));
+
+  Heading _heading(StoredEvent stored, HeadingId id) =>
+      _headings[id] ?? _refuse(stored, _describeMiss(id, 'heading'));
+
+  Area _area(StoredEvent stored, AreaId id) =>
+      _areas[id] ?? _refuse(stored, _describeMiss(id, 'area'));
+
+  Tag _tag(StoredEvent stored, TagId id) =>
+      _tags[id] ?? _refuse(stored, _describeMiss(id, 'tag'));
+
+  /// [_project] plus a liveness check: a soft-deleted container refuses
+  /// new members — anything placed into it would vanish from every view.
+  Project _livingProject(StoredEvent stored, ProjectId id) {
+    final project = _project(stored, id);
+    if (project.deletedAt != null) {
+      _refuse(stored, 'project $id is deleted');
+    }
+    return project;
+  }
+
+  Area _livingArea(StoredEvent stored, AreaId id) {
+    final area = _area(stored, id);
+    if (area.deletedAt != null) {
+      _refuse(stored, 'area $id is deleted');
+    }
+    return area;
+  }
+
+  Heading _livingHeading(StoredEvent stored, HeadingId id) {
+    final heading = _heading(stored, id);
+    if (heading.deletedAt != null) {
+      _refuse(stored, 'heading $id is deleted');
+    }
+    return heading;
+  }
+
+  Tag _livingTag(StoredEvent stored, TagId id) {
+    final tag = _tag(stored, id);
+    if (tag.deletedAt != null) {
+      _refuse(stored, 'tag $id is deleted');
+    }
+    return tag;
+  }
+
+  /// Refuses a parent that is, or descends from, [tag] — the log is
+  /// append-only, so a committed cycle could never be removed.
+  void _checkTagParent(StoredEvent stored, TagId tag, TagId parent) {
+    TagId? cursor = parent;
+    while (cursor != null) {
+      if (cursor == tag) {
+        _refuse(stored, 'tag $parent would make $tag its own ancestor');
+      }
+      cursor = _tags[cursor]?.parent;
+    }
+  }
+
+  String _describeMiss(BlobRef id, String wanted) {
+    final actual = _tasks.containsKey(id)
+        ? 'task'
+        : _projects.containsKey(id)
+        ? 'project'
+        : _headings.containsKey(id)
+        ? 'heading'
+        : _areas.containsKey(id)
+        ? 'area'
+        : _tags.containsKey(id)
+        ? 'tag'
+        : null;
+    return actual == null
+        ? 'unknown $wanted: $id'
+        : '$id is a $actual, not a $wanted';
+  }
+
+  void _checkPlacement(
+    StoredEvent stored, {
+    required ProjectId? project,
+    required AreaId? area,
+    required HeadingId? heading,
+  }) {
+    if (project != null) _livingProject(stored, project);
+    if (area != null) _livingArea(stored, area);
+    if (heading != null) {
+      final owner = _livingHeading(stored, heading).project;
+      if (owner != project) {
+        _refuse(stored, 'heading $heading belongs to project $owner');
+      }
+    }
+  }
+
+  void _checkTags(StoredEvent stored, List<TagId> tags) {
+    for (final tag in tags) {
+      _livingTag(stored, tag);
+    }
+  }
+}

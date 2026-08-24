@@ -209,6 +209,25 @@ void main() {
       'sha256-ccd8243992f3f5872eb82d8f535443581de8f8549c8c276211df4ff0ff047f69',
     );
   });
+
+  group('parseTs', () {
+    test('round-trips what formatTs writes', () {
+      const text = '2026-08-23T09:14:02.123456Z';
+      expect(formatTs(parseTs(text)), text);
+    });
+
+    test('rejects malformed and impossible instants', () {
+      for (final text in [
+        '2026-08-23T09:14:02Z',
+        '2026-08-23T09:14:02.123Z',
+        '2026-08-23 09:14:02.123456Z',
+        '2026-13-01T00:00:00.000000Z',
+        '2026-02-30T00:00:00.000000Z',
+      ]) {
+        expect(() => parseTs(text), throwsFormatException, reason: text);
+      }
+    });
+  });
 }
 
 String mutateModelOntoSystem() {

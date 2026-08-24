@@ -17,6 +17,7 @@ This repository is a Dart workspace:
 | `apps/sai_tui`       | The terminal client on [nocterm](https://pub.dev/packages/nocterm). Depends on `sai_core`; built with `dart compile exe`. |
 | `spikes/`            | Throwaway experiments that settled a decision. Not part of the workspace; each keeps its own `pubspec.lock`. |
 | `docs/archive/`      | The archive format contract ([event log v0](docs/archive/event-log-v0.md)). |
+| `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
 | `docs/decisions/`    | Technical ADRs.                                                            |
 
 Both clients read the same providers from `sai_core`; nothing in `sai_core`
