@@ -38,11 +38,14 @@ class _MainPaneState extends ConsumerState<MainPane> {
     try {
       final store = ref.read(tasksProvider.notifier).store;
       await store.quickCapture(line, today: ref.read(todayProvider));
+      if (!mounted) return;
       notice.clear();
     } on Object catch (error) {
+      if (!mounted) return;
       notice.show('capture failed: $error');
-      // Give the line back rather than losing it.
-      if (mounted) _controller.text = line;
+      // Give the line back rather than losing it — unless the field has
+      // moved on to a newer line meanwhile, which wins.
+      if (_controller.text.isEmpty) _controller.text = line;
     } finally {
       if (mounted) focus.requestFocus();
     }
@@ -54,16 +57,14 @@ class _MainPaneState extends ConsumerState<MainPane> {
     final today = ref.watch(todayProvider);
     final section = ref.watch(selectedSectionProvider);
     final tasks = sectionTasks(projection, section, today: today);
+    final title = sectionTitle(projection, section);
     final commands = AppCommands.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Text(
-            sectionTitle(projection, section),
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
+          child: Text(title, style: Theme.of(context).textTheme.titleLarge),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -92,8 +93,16 @@ class _MainPaneState extends ConsumerState<MainPane> {
           ),
         ),
         Expanded(
+          // The greeting is for an archive with nothing in it; an empty
+          // section among full ones says which one it is.
           child: tasks.isEmpty
-              ? Center(child: Text(ref.watch(shellGreetingProvider)))
+              ? Center(
+                  child: Text(
+                    projection.tasks.isEmpty
+                        ? ref.watch(shellGreetingProvider)
+                        : 'Nothing in $title',
+                  ),
+                )
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [

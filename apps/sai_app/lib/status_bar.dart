@@ -18,19 +18,32 @@ class StatusBar extends ConsumerWidget {
         border: Border(top: BorderSide(color: theme.dividerColor)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Row(
-        children: [
-          Text(ref.watch(providerStatusProvider), style: style),
-          const Spacer(),
-          Flexible(
-            child: Text(
-              ref.watch(noticeProvider),
-              style: style,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+      // The provider line may take up to half the row; the notice gets
+      // all of what is left (a flex split would hand it a fixed share).
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          children: [
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: constraints.maxWidth / 2),
+              child: Text(
+                ref.watch(providerStatusProvider),
+                style: style,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                ref.watch(noticeProvider),
+                style: style,
+                textAlign: TextAlign.end,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

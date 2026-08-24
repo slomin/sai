@@ -107,6 +107,35 @@ void main() {
     );
   });
 
+  testWidgets('the status bar fits a long provider line and a long notice', (
+    tester,
+  ) async {
+    await surface(tester, 500);
+    final container = await pumpApp(
+      tester,
+      overrides: [
+        providerStatusProvider.overrideWithValue(
+          'openai-compatible @ http://192.168.1.20:8080 (llama-3.3-70b) — cloud',
+        ),
+      ],
+    );
+    // No RenderFlex overflow is the assertion: flutter_test fails on one.
+    container.read(noticeProvider.notifier).show('undo failed: ${'x' * 200}');
+    await tester.pump();
+    expect(find.textContaining('undo failed:'), findsOneWidget);
+  });
+
+  testWidgets('a notice gets the row, not a fixed half of it', (tester) async {
+    await surface(tester, 900);
+    final container = await pumpApp(tester);
+    container.read(noticeProvider.notifier).show('undo failed: ${'x' * 200}');
+    await tester.pump();
+    expect(
+      tester.getSize(find.textContaining('undo failed:')).width,
+      greaterThan(500),
+    );
+  });
+
   testWidgets('the status bar names the (missing) provider', (tester) async {
     await pumpApp(tester);
     expect(find.text(noProviderStatus), findsOneWidget);

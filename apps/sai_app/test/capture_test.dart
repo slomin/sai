@@ -35,8 +35,10 @@ void main() {
     // Counted in the sidebar straight away…
     expect(find.text('Inbox (1)'), findsOneWidget);
     expect(captureField(tester).controller!.text, isEmpty);
-    // …and listed once the Inbox is the section on show.
+    // …and listed once the Inbox is the section on show; meanwhile the
+    // pane says which section is the empty one.
     expect(find.text('Buy oat milk'), findsNothing);
+    expect(find.text('Nothing in Today'), findsOneWidget);
     await selectSection(tester, container, inbox);
     expect(find.text('Buy oat milk'), findsOneWidget);
   });
@@ -84,7 +86,7 @@ void main() {
     expect(tester.widget<TextButton>(undo).onPressed, isNotNull);
 
     await settleUndo(tester, container, () => tester.tap(undo), depth: 0);
-    expect(find.text('sai 2.0.0-dev — nothing here yet'), findsOneWidget);
+    expect(find.text('Nothing in Inbox'), findsOneWidget);
     expect(find.text('Trash (1)'), findsOneWidget);
     final projection = container.read(tasksProvider).value!;
     expect(projection.trash().single.title, 'Buy oat milk');
