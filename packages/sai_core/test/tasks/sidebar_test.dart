@@ -185,6 +185,16 @@ void main() {
       expect(sectionTitle(p, ProjectSection(project)), 'Garden');
     });
 
+    test('a deleted container reads as gone', () async {
+      final area = await store.createArea(title: 'Home');
+      final project = await store.createProject(title: 'Garden', area: area);
+      await store.deleteProject(project);
+      await store.deleteArea(area);
+      final p = store.projection;
+      expect(sectionTitle(p, AreaSection(area)), '(deleted)');
+      expect(sectionTitle(p, ProjectSection(project)), '(deleted)');
+    });
+
     test('degrades for a container the projection does not know', () {
       final ghost = BlobRef.sha256OfBytes([1, 2, 3]);
       expect(sectionTitle(store.projection, AreaSection(ghost)), '(deleted)');

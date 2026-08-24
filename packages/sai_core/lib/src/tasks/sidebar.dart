@@ -191,16 +191,21 @@ List<Task> sectionTasks(
   ProjectSection(:final project) => projection.inProject(project),
 };
 
-/// The heading a main pane shows for [section]. A container the
-/// projection does not know degrades instead of throwing — a stale
-/// selection is a display problem, not a crash.
+/// The heading a main pane shows for [section]. A container that is
+/// deleted, or that the projection does not know, degrades instead of
+/// throwing — a stale selection is a display problem, not a crash.
 String sectionTitle(TaskProjection projection, SidebarSection section) =>
     switch (section) {
       ListSection(:final list) => listTitle(list),
       TrashSection() => trashTitle,
-      AreaSection(:final area) => projection.areas[area]?.title ?? _unknown,
-      ProjectSection(:final project) =>
-        projection.projects[project]?.title ?? _unknown,
+      AreaSection(:final area) => switch (projection.areas[area]) {
+        Area(deletedAt: null, :final title) => title,
+        _ => _unknown,
+      },
+      ProjectSection(:final project) => switch (projection.projects[project]) {
+        Project(deletedAt: null, :final title) => title,
+        _ => _unknown,
+      },
     };
 
 const _unknown = '(deleted)';
