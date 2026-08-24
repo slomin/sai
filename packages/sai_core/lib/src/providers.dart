@@ -75,6 +75,18 @@ final eventSourceProvider = Provider<String>(
   ),
 );
 
+/// Opens the process task store. This narrow indirection makes the async
+/// provider lifecycle deterministic in tests without abstracting the store
+/// used by clients.
+final taskStoreOpenerProvider = Provider<TaskStoreOpener>(
+  (ref) => TaskStore.open,
+);
+
+typedef TaskStoreOpener = Future<TaskStore> Function(
+  Archive archive, {
+  required String source,
+});
+
 /// The wall clock. Override in tests for deterministic "now".
 final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
 
@@ -479,22 +491,31 @@ class TasksNotifier extends AsyncNotifier<TaskProjection> {
 
   @override
   Future<TaskProjection> build() async {
-    final archive = await ref.watch(archiveProvider.future);
-    final store = await TaskStore.open(
-      archive,
-      source: ref.watch(eventSourceProvider),
-    );
-    _store = store;
-    final subscription = store.changes.listen(
-      (projection) => state = AsyncData(projection),
-    );
+    final archiveFuture = ref.watch(archiveProvider.future);
+    final source = ref.watch(eventSourceProvider);
+    final openStore = ref.watch(taskStoreOpenerProvider);
+    TaskStore? ownedStore;
+    StreamSubscription<TaskProjection>? subscription;
     ref.onDispose(() {
-      subscription.cancel();
-      store.dispose();
-      if (identical(_store, store)) {
+      subscription?.cancel();
+      ownedStore?.dispose();
+      if (identical(_store, ownedStore)) {
         _store = null;
       }
     });
+
+    final archive = await archiveFuture;
+    final store = await openStore(archive, source: source);
+    if (!ref.mounted) {
+      store.dispose();
+      return store.projection;
+    }
+
+    ownedStore = store;
+    _store = store;
+    subscription = store.changes.listen(
+      (projection) => state = AsyncData(projection),
+    );
     return store.projection;
   }
 }

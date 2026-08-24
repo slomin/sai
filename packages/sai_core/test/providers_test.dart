@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -149,6 +150,47 @@ void main() {
       expect(projection.task(id)!.title, 'from the provider');
       expect(projection.eventCount, 1);
     });
+
+    test(
+      'a store opened after provider disposal is immediately closed',
+      () async {
+        final tmp = Directory.systemTemp.createTempSync('sai_providers_test');
+        addTearDown(() => tmp.deleteSync(recursive: true));
+        final archive = await Archive.open(tmp);
+        addTearDown(archive.close);
+        final lateStore = await TaskStore.open(archive, source: 'sai/test');
+        final opening = Completer<TaskStore>();
+        final started = Completer<void>();
+        final container = ProviderContainer.test(
+          overrides: [
+            archiveRootProvider.overrideWithValue(tmp),
+            eventSourceProvider.overrideWithValue('sai/test'),
+            taskStoreOpenerProvider.overrideWithValue((
+              archive, {
+              required source,
+            }) {
+              started.complete();
+              return opening.future;
+            }),
+          ],
+        );
+        final notifier = container.read(tasksProvider.notifier);
+        final build = container.read(tasksProvider.future);
+        await started.future;
+
+        container.dispose();
+        opening.complete(lateStore);
+        await build;
+
+        expect(() => notifier.store, throwsStateError);
+        expect(lateStore.hasChangeListeners, isFalse);
+        await expectLater(
+          lateStore.createTask(title: 'too late'),
+          throwsA(isA<StateError>()),
+        );
+        await expectLater(lateStore.reload(), throwsA(isA<StateError>()));
+      },
+    );
 
     test(
       'taskViewProvider updates synchronously after a committed command',
