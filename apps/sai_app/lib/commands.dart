@@ -17,6 +17,14 @@ final chatFocusProvider = Provider<FocusNode>((ref) {
   return node;
 });
 
+/// The chat pane's draft. Owned here rather than by the pane so a
+/// half-typed message survives the pane unmounting below its breakpoint.
+final chatDraftProvider = Provider<TextEditingController>((ref) {
+  final controller = TextEditingController();
+  ref.onDispose(controller.dispose);
+  return controller;
+});
+
 /// The status bar's notice: the last failure, or empty once something
 /// succeeds again.
 final noticeProvider = NotifierProvider<Notice, String>(Notice.new);

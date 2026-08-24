@@ -38,6 +38,12 @@ class SaiShell extends ConsumerWidget {
   }
 }
 
+/// Keyed, so a pane keeps its state (typed text, focus) when a
+/// breakpoint adds or removes a sibling and shifts its place in the row.
+const _sidebarKey = ValueKey('sidebar');
+const _mainKey = ValueKey('main');
+const _chatKey = ValueKey('chat');
+
 class _Panes extends ConsumerWidget {
   const _Panes(this.projection);
 
@@ -59,15 +65,23 @@ class _Panes extends ConsumerWidget {
                 children: [
                   if (showSidebar) ...[
                     SizedBox(
+                      key: _sidebarKey,
                       width: sidebarWidth,
                       child: SaiSidebar(projection: projection),
                     ),
                     const VerticalDivider(width: 1, thickness: 1),
                   ],
-                  Expanded(child: MainPane(projection: projection)),
+                  Expanded(
+                    key: _mainKey,
+                    child: MainPane(projection: projection),
+                  ),
                   if (showChat) ...[
                     const VerticalDivider(width: 1, thickness: 1),
-                    const SizedBox(width: chatWidth, child: ChatPane()),
+                    const SizedBox(
+                      key: _chatKey,
+                      width: chatWidth,
+                      child: ChatPane(),
+                    ),
                   ],
                 ],
               ),

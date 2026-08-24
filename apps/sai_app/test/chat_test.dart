@@ -83,6 +83,30 @@ void main() {
     expect(find.byType(ChatPane), findsOneWidget);
   });
 
+  testWidgets('typed text survives resizing across the breakpoints', (
+    tester,
+  ) async {
+    await surface(tester, 900);
+    await pumpApp(tester);
+    await tester.enterText(find.byKey(captureFieldKey), 'half a thought');
+    await tester.enterText(find.byKey(chatFieldKey), 'hi');
+    await tester.pump();
+
+    await tester.binding.setSurfaceSize(const Size(500, 600));
+    await tester.pump();
+    expect(find.byType(SaiSidebar), findsNothing);
+    await tester.binding.setSurfaceSize(const Size(900, 600));
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byKey(captureFieldKey)).controller!.text,
+      'half a thought',
+    );
+    expect(
+      tester.widget<TextField>(find.byKey(chatFieldKey)).controller!.text,
+      'hi',
+    );
+  });
+
   testWidgets('the status bar names the (missing) provider', (tester) async {
     await pumpApp(tester);
     expect(find.text(noProviderStatus), findsOneWidget);

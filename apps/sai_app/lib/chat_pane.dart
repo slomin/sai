@@ -32,6 +32,7 @@ class ChatPane extends ConsumerWidget {
           padding: const EdgeInsets.all(12),
           child: TextField(
             key: chatFieldKey,
+            controller: ref.watch(chatDraftProvider),
             focusNode: ref.watch(chatFocusProvider),
             onSubmitted: (_) => ref
                 .read(noticeProvider.notifier)
