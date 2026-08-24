@@ -11,4 +11,5 @@ library;
 
 export 'llm/call.dart';
 export 'llm/failure.dart';
+export 'llm/fake.dart';
 export 'llm/provider.dart';
