@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
@@ -43,38 +44,49 @@ final class KeychainSecretStore implements SecretStore {
   final String service;
   final _Security _sec;
   Pointer<Void>? _keychain;
+  bool _destroyed = false;
+
+  Pointer<Void>? get _where {
+    if (_destroyed) {
+      throw StateError('this keychain store was destroyed');
+    }
+    return _keychain;
+  }
 
   @override
   String? read(String account) {
     checkAccount(account);
-    return _sec.copy(service, account, _keychain, wantData: true);
+    return _sec.copy(service, account, _where, wantData: true);
   }
 
   @override
   bool has(String account) {
     checkAccount(account);
-    return _sec.copy(service, account, _keychain, wantData: false) != null;
+    return _sec.copy(service, account, _where, wantData: false) != null;
   }
 
   @override
   void write(String account, String value) {
     checkAccount(account);
     checkValue(value);
-    _sec.write(service, account, value, _keychain);
+    _sec.write(service, account, value, _where);
   }
 
   @override
   bool delete(String account) {
     checkAccount(account);
-    return _sec.delete(service, account, _keychain);
+    return _sec.delete(service, account, _where);
   }
 
-  /// For a [KeychainSecretStore.file] store: removes the keychain file
-  /// and forgets it. A no-op for the default keychain.
+  /// For a [KeychainSecretStore.file] store: removes the keychain file.
+  /// The store is unusable afterwards — every operation throws
+  /// [StateError] rather than silently falling back to the default
+  /// keychain. A no-op for the default keychain.
   void destroy() {
     final keychain = _keychain;
     if (keychain == null) return;
     _keychain = null;
+    _destroyed = true;
     _sec.destroyKeychain(keychain);
   }
 }
@@ -424,8 +436,16 @@ final class _Security {
           throw const SecretStoreException('the keychain item is not data');
         }
         final length = cfDataGetLength(result);
-        final bytes = cfDataGetBytePtr(result).asTypedList(length);
-        return utf8.decode(bytes);
+        // Copied out of native memory before the release below; decoded
+        // with a fixed message so a non-UTF-8 item cannot leak its bytes.
+        final bytes = Uint8List.fromList(
+          cfDataGetBytePtr(result).asTypedList(length),
+        );
+        try {
+          return utf8.decode(bytes);
+        } on FormatException {
+          throw const SecretStoreException('the keychain item is not UTF-8');
+        }
       } finally {
         cfRelease(result);
       }
@@ -492,6 +512,7 @@ final class _Security {
         status = secKeychainOpen(cPath, out);
         _check(status);
         status = secKeychainUnlock(out.value, passLen, cPass, 1);
+        if (status != _errSecSuccess) cfRelease(out.value);
       } else {
         status = secKeychainCreate(cPath, passLen, cPass, 0, nullptr, out);
       }

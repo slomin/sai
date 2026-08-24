@@ -163,6 +163,40 @@ void main() {
       }
     });
 
+    test('what the writer accepts, the reader accepts: key-looking values are refused at entry', () {
+      for (final bad in [
+        () => ProviderConfig(id: 'sk-lan', kind: 'fake'),
+        () => ProviderConfig(id: 'lan', kind: 'fake', defaultModel: 'sk-r1'),
+        () => ProviderConfig(id: 'lan', kind: 'Bearer x'),
+        () => ProviderConfig(id: 'lan', kind: 'fake', extra: {'token': 'a'}),
+        () => ProviderConfig(id: 'none', kind: 'fake'),
+      ]) {
+        expect(bad, throwsArgumentError);
+      }
+      expect(
+        () => const Settings(extra: {'api_key': 'x'}).encode(),
+        throwsArgumentError,
+      );
+      expect(
+        () => Settings.decode(
+          Settings.empty
+              .withProvider(
+                ProviderConfig(id: 'lan', kind: 'fake', extra: {'note': 'ok'}),
+              )
+              .encode(),
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('equality is over the stored form', () {
+      final a = ProviderConfig(id: 'x', kind: 'fake', defaultModel: 'm');
+      final b = ProviderConfig(id: 'x', kind: 'fake', defaultModel: 'm');
+      expect(a, b);
+      expect(a.hashCode, b.hashCode);
+      expect(a, isNot(a.copyWith(defaultModel: () => 'n')));
+    });
+
     test('toString names no credential value', () {
       expect(
         ProviderConfig(

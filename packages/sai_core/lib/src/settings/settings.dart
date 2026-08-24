@@ -144,7 +144,25 @@ final class Settings {
   static const _known = {'version', 'llm', 'providers'};
 
   /// The file's text: compact JSON, keys sorted, unknown keys included.
-  String encode() => jsonEncode(
+  ///
+  /// Throws [ArgumentError] when the result would be refused by [decode]
+  /// — a secret-looking key or value somewhere in [extra]. What sai
+  /// writes, sai can read back; a file that would be quarantined on the
+  /// next start is never produced.
+  String encode() {
+    final text = _encode();
+    try {
+      rejectSecretLike(
+        jsonDecode(text) as Map<String, Object?>,
+        where: 'settings',
+      );
+    } on SettingsFormatException catch (e) {
+      throw ArgumentError('refusing to write settings: ${e.reason}');
+    }
+    return text;
+  }
+
+  String _encode() => jsonEncode(
     SplayTreeMap<String, Object?>.of({
       ...extra,
       'version': version,

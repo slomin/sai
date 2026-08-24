@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:riverpod/riverpod.dart';
@@ -171,35 +172,59 @@ final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>(
   (ref) => const {'fake': fakeProviderFactory},
 );
 
-/// The providers that ship with every build, needing no configuration.
-/// A configured provider with the same id replaces the built-in one.
-final builtinLlmsProvider = Provider<List<LlmProvider>>(
-  (ref) => [FakeLlmProvider()],
+/// The providers that ship with every build, needing no configuration,
+/// as constructors: the cache below decides when one is built. A
+/// configured provider with the same id replaces the built-in one.
+final builtinLlmsProvider = Provider<List<LlmProvider Function()>>(
+  (ref) => [FakeLlmProvider.new],
 );
+
+/// The open providers, keyed by what built them, so a configuration edit
+/// rebuilds only the providers whose configuration changed and closes
+/// only the ones that are gone — a call running on an untouched provider
+/// is never cut. Closes everything when the container goes.
+final _llmCacheProvider = Provider<_LlmCache>((ref) {
+  final cache = _LlmCache();
+  ref.onDispose(cache.closeAll);
+  return cache;
+});
 
 /// Every [LlmProvider] this build can offer: the built-ins plus one per
 /// configured provider whose kind has a factory. Watches only the
 /// configured list, not the selection — selecting must never rebuild
-/// (and so close) the providers, or a running call would be cut.
+/// (and so close) a provider, or a running call would be cut.
 final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
   final configs = ref.watch(settingsProvider.select((s) => s.providers));
   final factories = ref.watch(llmFactoriesProvider);
   final secrets = ref.watch(secretStoreProvider);
-  final configured = <LlmProvider>[];
+  final cache = ref.watch(_llmCacheProvider);
+  final wanted = <String, LlmProvider Function()>{};
+  final configured = <String>[];
   for (final config in configs) {
     final factory = factories[config.kind];
-    if (factory != null) configured.add(factory(config, secrets));
+    if (factory == null) continue;
+    wanted['config:${jsonEncode(config.toJson())}'] = () =>
+        factory(config, secrets);
+    configured.add(config.id);
   }
-  final taken = {for (final p in configured) p.id};
+  final builtins = ref.watch(builtinLlmsProvider);
+  for (var i = 0; i < builtins.length; i++) {
+    wanted['builtin:$i'] = builtins[i];
+  }
+  final providers = cache.sync(wanted);
+  final taken = configured.toSet();
   return [
-    for (final builtin in ref.watch(builtinLlmsProvider))
-      if (!taken.contains(builtin.id)) builtin,
-    ...configured,
+    for (final key in wanted.keys)
+      if (key.startsWith('builtin:') && !taken.contains(providers[key]!.id))
+        providers[key]!,
+    for (final key in wanted.keys)
+      if (key.startsWith('config:')) providers[key]!,
   ];
 });
 
 /// The installed providers by id. Throws [StateError] on a duplicate id
-/// at first read; closes the providers when disposed.
+/// at first read. Closing is the cache's job, not this map's: the map is
+/// rebuilt on every configuration change, the providers are not.
 final llmRegistryProvider = Provider<Map<String, LlmProvider>>((ref) {
   final installed = ref.watch(installedLlmsProvider);
   final registry = <String, LlmProvider>{};
@@ -213,11 +238,6 @@ final llmRegistryProvider = Provider<Map<String, LlmProvider>>((ref) {
     }
     registry[provider.id] = provider;
   }
-  ref.onDispose(() {
-    for (final provider in registry.values) {
-      provider.close();
-    }
-  });
   return Map.unmodifiable(registry);
 });
 
@@ -312,10 +332,25 @@ class CredentialsNotifier extends Notifier<int> {
   }
 
   /// Removes the credential of [id]; returns whether there was one.
-  bool clear(String id) {
-    final gone = ref.read(secretStoreProvider).delete(_account(id));
+  bool clear(String id) => clearAccount(_account(id));
+
+  /// Removes the secret under [account] whether or not a provider still
+  /// names it — how a key left behind by a removed provider is revoked.
+  bool clearAccount(String account) {
+    final gone = ref.read(secretStoreProvider).delete(account);
     state++;
     return gone;
+  }
+
+  /// Whether [account] holds a secret, configured or not.
+  CredentialStatus statusOf(String account) {
+    try {
+      return ref.read(secretStoreProvider).has(account)
+          ? CredentialStatus.set
+          : CredentialStatus.missing;
+    } on SecretStoreException {
+      return CredentialStatus.unavailable;
+    }
   }
 
   String _account(String id) {
@@ -328,6 +363,31 @@ class CredentialsNotifier extends Notifier<int> {
       throw StateError("provider '$id' takes no credential");
     }
     return account;
+  }
+}
+
+/// Open providers by build key. [sync] builds what is missing, closes
+/// what is no longer wanted, and keeps the rest untouched.
+final class _LlmCache {
+  final _open = <String, LlmProvider>{};
+
+  Map<String, LlmProvider> sync(Map<String, LlmProvider Function()> wanted) {
+    for (final key in _open.keys.toList()) {
+      if (!wanted.containsKey(key)) {
+        _open.remove(key)!.close();
+      }
+    }
+    for (final e in wanted.entries) {
+      _open.putIfAbsent(e.key, e.value);
+    }
+    return Map.unmodifiable(_open);
+  }
+
+  void closeAll() {
+    for (final provider in _open.values) {
+      provider.close();
+    }
+    _open.clear();
   }
 }
 

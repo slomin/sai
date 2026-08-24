@@ -72,6 +72,11 @@ void main() {
       store.write('provider:x', 'v');
       store.destroy();
       expect(file.existsSync(), isFalse);
+      // Never a silent fall-through to the login keychain.
+      expect(() => store.read('provider:x'), throwsStateError);
+      expect(() => store.write('provider:x', 'v'), throwsStateError);
+      expect(() => store.has('provider:x'), throwsStateError);
+      expect(() => store.delete('provider:x'), throwsStateError);
     },
   );
 

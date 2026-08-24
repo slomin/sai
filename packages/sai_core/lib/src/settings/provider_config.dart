@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:convert';
 
 import 'settings.dart';
 
@@ -17,6 +18,9 @@ final class ProviderConfig {
     if (!idForm.hasMatch(id)) {
       throw ArgumentError.value(id, 'id', 'must match ${idForm.pattern}');
     }
+    if (id == reservedNone) {
+      throw ArgumentError.value(id, 'id', 'is reserved for "no provider"');
+    }
     if (kind.isEmpty) throw ArgumentError('kind must not be empty');
     final e = endpoint;
     if (e != null) checkEndpoint(e);
@@ -31,7 +35,17 @@ final class ProviderConfig {
         'must match ${credentialForm.pattern}',
       );
     }
+    // The same guard the reader applies, so nothing written here is ever
+    // refused on the way back in (a value must not merely look like a key).
+    try {
+      rejectSecretLike(toJson(), where: 'provider $id');
+    } on SettingsFormatException catch (e) {
+      throw ArgumentError(e.reason);
+    }
   }
+
+  /// `none` is what `provider use none` means; no provider may take it.
+  static const reservedNone = 'none';
 
   /// Lowercase, starts alphanumeric: the id is a file-safe, shell-safe
   /// name that `settings.llm` and the archive's `model.provider` carry.
@@ -149,6 +163,16 @@ final class ProviderConfig {
     if (defaultModel != null) 'default_model': defaultModel,
     if (credential != null) 'credential': credential,
   });
+
+  /// Value equality over the stored form: two configs that would write
+  /// the same JSON are the same config.
+  @override
+  bool operator ==(Object other) =>
+      other is ProviderConfig &&
+      jsonEncode(toJson()) == jsonEncode(other.toJson());
+
+  @override
+  int get hashCode => jsonEncode(toJson()).hashCode;
 
   @override
   String toString() =>

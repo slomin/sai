@@ -324,6 +324,56 @@ void main() {
         expect(after.defaultModel, 'other');
       });
 
+      test('reconfiguring keeps the built-in and untouched providers open', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(lan);
+        final fake = container.read(llmRegistryProvider)['fake']!;
+        final lanBefore = container.read(llmRegistryProvider)['lan']!;
+        settings.upsertProvider(ProviderConfig(id: 'other', kind: 'fake'));
+        final registry = container.read(llmRegistryProvider);
+        expect(registry.keys, ['fake', 'lan', 'other']);
+        expect(identical(registry['fake'], fake), isTrue);
+        expect((fake as FakeLlmProvider).isClosed, isFalse);
+        expect(identical(registry['lan'], lanBefore), isTrue);
+        expect((lanBefore as FakeLlmProvider).isClosed, isFalse);
+        // An identical re-write is no change at all.
+        settings.upsertProvider(lan);
+        expect(
+          identical(container.read(llmRegistryProvider)['lan'], lanBefore),
+          isTrue,
+        );
+        // Removing one closes exactly that one.
+        final other = registry['other'] as FakeLlmProvider;
+        settings.removeProvider('other');
+        // Lazy, like everything riverpod: the rebuild happens on read.
+        expect(container.read(llmRegistryProvider).keys, ['fake', 'lan']);
+        expect(other.isClosed, isTrue);
+        expect(lanBefore.isClosed, isFalse);
+        expect(fake.isClosed, isFalse);
+        container.dispose();
+        expect(lanBefore.isClosed, isTrue, reason: 'disposal closes all');
+        expect(fake.isClosed, isTrue);
+      });
+
+      test(
+        'an in-flight call survives an unrelated configuration edit',
+        () async {
+          final container = make();
+          final settings = container.read(settingsProvider.notifier);
+          settings.upsertProvider(lan);
+          settings.upsertProvider(ProviderConfig(id: 'slow', kind: 'fake'));
+          final slow = container.read(llmRegistryProvider)['slow']!;
+          final call = slow.start(
+            LlmRequest(messages: [const LlmMessage(LlmRole.user, 'hi there')]),
+          );
+          settings.upsertProvider(lan.copyWith(defaultModel: () => 'edited'));
+          final result = await call.done;
+          expect(result.finish, LlmFinish.stop);
+          expect(result.text, 'hi there');
+        },
+      );
+
       test('a configured provider may take over a built-in id', () {
         final container = make();
         container
