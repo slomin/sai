@@ -100,4 +100,33 @@ void main() {
       expect(container.read(canUndoProvider), isFalse);
     });
   });
+
+  group('shell providers', () {
+    test('selectedSectionProvider opens on Today and moves on select', () {
+      final container = ProviderContainer.test();
+      expect(
+        container.read(selectedSectionProvider),
+        const ListSection(TaskList.today),
+      );
+      container
+          .read(selectedSectionProvider.notifier)
+          .select(const TrashSection());
+      expect(container.read(selectedSectionProvider), const TrashSection());
+    });
+
+    test('chatVisibleProvider starts shown and toggles', () {
+      final container = ProviderContainer.test();
+      expect(container.read(chatVisibleProvider), isTrue);
+      container.read(chatVisibleProvider.notifier).toggle();
+      expect(container.read(chatVisibleProvider), isFalse);
+      container.read(chatVisibleProvider.notifier).toggle();
+      expect(container.read(chatVisibleProvider), isTrue);
+    });
+
+    test('providerStatusProvider is the no-provider placeholder', () {
+      final container = ProviderContainer.test();
+      expect(container.read(providerStatusProvider), noProviderStatus);
+      expect(noProviderStatus, 'no provider — local only');
+    });
+  });
 }
