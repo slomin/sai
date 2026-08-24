@@ -8,9 +8,13 @@ import 'call.dart';
 import 'failure.dart';
 import 'provider.dart';
 
-/// The most text one recorded line carries. Half the archive's line cap,
-/// leaving room for the envelope and the rest of the payload.
+/// The most a recorded payload takes once JSON-encoded. Half the
+/// archive's line cap, leaving room for the envelope; text is cut to fit
+/// this, measured after encoding, so escapes cannot push a line over.
 const maxRecordedTextBytes = 512 << 10;
+
+/// The most of a failure message that is recorded.
+const maxRecordedMessageBytes = 4 << 10;
 
 /// The single write path for provider traffic: every call through here
 /// lands in the archive as a request line, a response or failure line,
@@ -107,63 +111,39 @@ final class LlmRecorder {
     }
     final ended = clock();
     final durationMs = ended.difference(started).inMilliseconds;
-    try {
-      if (result.finish == LlmFinish.failed) {
-        final failure = result.failure!;
-        final (text, truncated) = _clip(result.text);
-        final stored = await archive.append(
-          EventDraft(
-            type: EventTypes.providerFailure,
-            actor: Actor.system,
-            source: source,
-            payload: {
-              ...failure.toJson(),
-              if (text.isNotEmpty) 'text': text,
-              'truncated': ?truncated,
+    final failed = result.finish == LlmFinish.failed;
+    final failure = result.failure;
+    final payload = failed
+        ? _fitted(
+            {
+              ...failure!.toJson(),
+              'message': _clipBytes(failure.message, maxRecordedMessageBytes),
             },
-            model: result.model,
-            refs: [recorded.request],
-          ),
-        );
+            result.text,
+            omitEmpty: true,
+          )
+        : _fitted({'finish': result.finish.name}, result.text);
+    final outcome = EventDraft(
+      type: failed ? EventTypes.providerFailure : EventTypes.providerResponse,
+      actor: failed ? Actor.system : Actor.assistant,
+      source: source,
+      payload: payload,
+      model: result.model,
+      refs: [recorded.request],
+    );
+    // The archive is the product: a line it refuses is a failed call from
+    // the caller's point of view, reported on done like any other — never
+    // as an error on a future nobody is obliged to await.
+    try {
+      final stored = await archive.append(outcome);
+      if (failed) {
         recorded._failure = stored.id;
       } else {
-        final (text, truncated) = _clip(result.text);
-        final stored = await archive.append(
-          EventDraft(
-            type: EventTypes.providerResponse,
-            actor: Actor.assistant,
-            source: source,
-            payload: {
-              'text': text,
-              'finish': result.finish.name,
-              'truncated': ?truncated,
-            },
-            model: result.model,
-            refs: [recorded.request],
-          ),
-        );
         recorded._response = stored.id;
       }
-    } catch (error, stack) {
-      await _usage(recorded, result, durationMs, swallow: true);
-      recorded._finish(error: error, stack: stack);
-      return;
+    } catch (error) {
+      recorded._archiveError = error;
     }
-    try {
-      await _usage(recorded, result, durationMs);
-    } catch (error, stack) {
-      recorded._finish(error: error, stack: stack);
-      return;
-    }
-    recorded._finish(result: result);
-  }
-
-  Future<void> _usage(
-    RecordedCall recorded,
-    LlmResult result,
-    int durationMs, {
-    bool swallow = false,
-  }) async {
     try {
       final stored = await archive.append(
         EventDraft(
@@ -180,9 +160,24 @@ final class LlmRecorder {
         ),
       );
       recorded._usage = stored.id;
-    } catch (_) {
-      if (!swallow) rethrow;
+    } catch (error) {
+      recorded._archiveError ??= error;
     }
+    final archiveError = recorded._archiveError;
+    recorded._finish(
+      archiveError == null
+          ? result
+          : LlmResult(
+              text: result.text,
+              finish: LlmFinish.failed,
+              model: result.model,
+              usage: result.usage,
+              failure: LlmFailure(
+                LlmFailureKind.archive,
+                'the archive refused to record the call: $archiveError',
+              ),
+            ),
+    );
   }
 
   static Map<String, Object?> _requestPayload(LlmRequest request) => {
@@ -191,11 +186,36 @@ final class LlmRecorder {
     if (request.temperature != null) 'temperature': request.temperature,
   };
 
-  /// Cuts [text] to [maxRecordedTextBytes] of UTF-8 on a rune boundary.
-  /// Returns the text to record and, when cut, the original byte length.
-  static (String, int?) _clip(String text) {
-    final bytes = utf8.encode(text).length;
-    if (bytes <= maxRecordedTextBytes) return (text, null);
+  /// [base] plus `text`, cut on a rune boundary until the whole payload
+  /// encodes within [maxRecordedTextBytes]; a cut adds `truncated` with
+  /// the original byte length. With [omitEmpty], an empty text is left
+  /// out (a failure with no partial output). Measured after encoding, so
+  /// escape-heavy text cannot push the line past the archive's cap.
+  static Map<String, Object?> _fitted(
+    Map<String, Object?> base,
+    String text, {
+    bool omitEmpty = false,
+  }) {
+    final original = utf8.encode(text).length;
+    var candidate = text;
+    while (true) {
+      final payload = {
+        ...base,
+        if (candidate.isNotEmpty || !omitEmpty) 'text': candidate,
+        if (candidate.length != text.length) 'truncated': original,
+      };
+      final encoded = utf8.encode(jsonEncode(payload)).length;
+      if (encoded <= maxRecordedTextBytes || candidate.isEmpty) return payload;
+      // Shrink in proportion to the overshoot, and always by something.
+      final have = utf8.encode(candidate).length;
+      final target = (have * maxRecordedTextBytes / encoded).floor() - 64;
+      candidate = _clipBytes(candidate, target < have ? target : have - 1);
+    }
+  }
+
+  /// Cuts [text] to at most [bytes] of UTF-8 on a rune boundary.
+  static String _clipBytes(String text, int bytes) {
+    if (utf8.encode(text).length <= bytes) return text;
     final out = StringBuffer();
     var used = 0;
     for (final rune in text.runes) {
@@ -206,11 +226,11 @@ final class LlmRecorder {
           : rune < 0x10000
           ? 3
           : 4;
-      if (used + width > maxRecordedTextBytes) break;
+      if (used + width > bytes) break;
       out.writeCharCode(rune);
       used += width;
     }
-    return (out.toString(), bytes);
+    return out.toString();
   }
 }
 
@@ -250,9 +270,15 @@ final class RecordedCall {
   String get text => _text.toString();
 
   /// Completes after the archive writes, so a caller that awaits this can
-  /// read the log immediately. Completes with an error only when the
-  /// archive refused a line — always await it.
+  /// read the log immediately. Never completes with an error: an archive
+  /// that refuses a line makes the result a failure of kind
+  /// [LlmFailureKind.archive], with [archiveError] holding the cause.
   Future<LlmResult> get done => _done.future;
+
+  Object? _archiveError;
+
+  /// What the archive threw, when it refused to record this call.
+  Object? get archiveError => _archiveError;
 
   void cancel() => _call.cancel();
 
@@ -261,12 +287,8 @@ final class RecordedCall {
     _deltas.add(delta);
   }
 
-  void _finish({LlmResult? result, Object? error, StackTrace? stack}) {
-    if (error != null) {
-      _done.completeError(error, stack);
-    } else {
-      _done.complete(result);
-    }
+  void _finish(LlmResult result) {
+    _done.complete(result);
     _deltas.close();
   }
 }

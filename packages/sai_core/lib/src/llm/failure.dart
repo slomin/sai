@@ -16,6 +16,11 @@ enum LlmFailureKind {
   /// The provider adapter itself broke: a synchronous throw, an error on
   /// the deltas stream. A bug, recorded rather than swallowed.
   internal,
+
+  /// The answer arrived but the archive refused to record it (disk full,
+  /// a log pulled out from under the process). Never written to the log
+  /// — the log is what failed; `RecordedCall.archiveError` has the cause.
+  archive,
 }
 
 /// A call that did not produce an answer. Carried as data on

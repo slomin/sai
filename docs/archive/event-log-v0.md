@@ -200,9 +200,12 @@ names the response, when there is one).
 
 The 1 MiB line cap applies asymmetrically. A request that cannot be
 recorded is not sent (the writer refuses before the call). A response or
-failure whose `text` would not fit is recorded with the text cut to a
-rune boundary and `truncated` set to the original byte length — a marked
-cut beats a lost record, and it is the one place "raw" is qualified.
+failure whose payload would not fit **once encoded** is recorded with
+`text` cut to a rune boundary until it does and `truncated` set to the
+original byte length (a failure `message` is capped at 4 KiB) — a marked
+cut beats a lost record, and it is the one place "raw" is qualified. A
+call the archive itself refuses to record is reported to the caller as
+a failure and is, by definition, not in the log.
 
 ### Task domain (#17)
 

@@ -195,8 +195,14 @@ void main() {
     expect(result.text, long, reason: 'the caller still gets everything');
     final log = lines();
     final payload = log[1]['payload'] as Map;
-    expect((payload['text'] as String).length, maxRecordedTextBytes);
+    final text = payload['text'] as String;
+    expect(text.length, lessThan(long.length));
+    expect(text.length, greaterThan(maxRecordedTextBytes - 200));
     expect(payload['truncated'], long.length);
+    expect(
+      utf8.encode(jsonEncode(payload)).length,
+      lessThanOrEqualTo(maxRecordedTextBytes),
+    );
     expect(payload['finish'], 'stop');
   });
 
@@ -208,6 +214,53 @@ void main() {
     final text = (lines()[1]['payload'] as Map)['text'] as String;
     expect(utf8.encode(text).length, lessThanOrEqualTo(maxRecordedTextBytes));
     expect(text.runes.every((r) => r == 0x20AC), isTrue);
+  });
+
+  test(
+    'an archive that refuses the response fails the call, quietly',
+    () async {
+      final fake = FakeLlmProvider(delta: const Duration(milliseconds: 5));
+      final call = await recorder.start(fake, ask('one two'));
+      // Pull the log out from under the recorder mid-call.
+      Directory('${tmp.path}/events').deleteSync(recursive: true);
+      final result = await call.done;
+      expect(result.finish, LlmFinish.failed);
+      expect(result.failure?.kind, LlmFailureKind.archive);
+      expect(result.text, 'one two', reason: 'the answer itself is kept');
+      expect(call.archiveError, isA<FileSystemException>());
+      expect(call.response, isNull);
+      expect(await call.deltas.isEmpty, isTrue, reason: 'the stream closed');
+    },
+  );
+
+  test('escape-heavy text is cut to fit the encoded line', () async {
+    final long = '\\"' * (maxRecordedTextBytes ~/ 2);
+    final fake = FakeLlmProvider(script: (_) => long);
+    final call = await recorder.start(fake, ask('x'));
+    await call.done;
+    final log = lines();
+    expect(log, hasLength(3));
+    final payload = log[1]['payload'] as Map;
+    expect(payload['truncated'], utf8.encode(long).length);
+    final line = File(Directory('${tmp.path}/events').listSync().single.path)
+        .readAsLinesSync()[1];
+    expect(utf8.encode(line).length, lessThan(maxLineBytes));
+    expect((payload['text'] as String).length, greaterThan(1000));
+  });
+
+  test('a huge failure message is cut, never lost', () async {
+    final failure = LlmFailure(LlmFailureKind.rejected, 'm' * (700 << 10));
+    final fake = FakeLlmProvider(failWith: failure);
+    final call = await recorder.start(fake, ask('x'));
+    await call.done;
+    final log = lines();
+    expect(log.map((l) => l['type']), [
+      'provider.request',
+      'provider.failure',
+      'provider.usage',
+    ]);
+    final message = (log[1]['payload'] as Map)['message'] as String;
+    expect(message.length, maxRecordedMessageBytes);
   });
 
   test('a request that cannot be recorded is not sent', () async {
