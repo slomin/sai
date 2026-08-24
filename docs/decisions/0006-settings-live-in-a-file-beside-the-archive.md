@@ -17,10 +17,13 @@ file next to the archive.
 
 ## Decision
 
-Non-secret settings are one JSON file **beside** the archive:
-`SAI_SETTINGS_FILE` when set, else `settings.json` in the archive
-root's parent — with the archive at `<data>/archive`, settings are
-`<data>/settings.json` (macOS: `~/Library/Application Support/sai/`).
+Non-secret settings are one JSON file **beside** the default archive,
+in sai's data directory: `SAI_SETTINGS_FILE` when set, else
+`<data>/settings.json` next to `<data>/archive` (macOS:
+`~/Library/Application Support/sai/`; elsewhere `$XDG_DATA_HOME/sai` or
+`~/.local/share/sai`). The path does not follow `SAI_ARCHIVE_ROOT`: a
+scratch archive in `/tmp` must not drag the settings into `/tmp` with
+it — a scratch run that wants scratch settings sets both variables.
 `packages/sai_core/lib/src/settings/` is the one reader and writer.
 
 Format, v0:
@@ -67,5 +70,7 @@ Why not the alternatives:
 - The quarantine rule is the one place in sai where a malformed file is
   moved rather than reported and left alone. It is safe because settings
   hold no history; nothing here is ever the only copy of anything.
-- Test harnesses that override the archive root get isolated settings
-  for free, as long as the root has a private parent.
+- Test harnesses override the settings path explicitly, next to the
+  archive root they already override; both providers read the
+  environment through `environmentProvider`, so no exported variable
+  reaches a test.

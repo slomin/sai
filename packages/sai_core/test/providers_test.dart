@@ -161,16 +161,25 @@ void main() {
         ProviderContainer.test(
           overrides: [
             archiveRootProvider.overrideWithValue(root),
+            settingsFileProvider.overrideWithValue(
+              File('${tmp.path}/settings.json'),
+            ),
             eventSourceProvider.overrideWithValue('sai/test'),
             ...overrides,
           ],
         );
 
-    test('settings live beside the archive root', () {
-      final container = make();
+    test('the settings file is resolved from the environment', () {
+      final container = ProviderContainer.test(
+        overrides: [
+          environmentProvider.overrideWithValue({
+            'SAI_SETTINGS_FILE': '${tmp.path}/elsewhere.json',
+          }),
+        ],
+      );
       expect(
         container.read(settingsFileProvider).path,
-        '${tmp.path}/settings.json',
+        '${tmp.path}/elsewhere.json',
       );
     });
 

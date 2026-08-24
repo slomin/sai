@@ -29,11 +29,17 @@ final shellGreetingProvider = Provider<String>((ref) {
   return '$info — nothing here yet';
 });
 
+/// The process environment, for the providers that resolve paths from
+/// it. Tests override this instead of exporting variables.
+final environmentProvider = Provider<Map<String, String>>(
+  (ref) => Platform.environment,
+);
+
 /// The directory holding the event log. Tests and tools override this;
 /// everyone else gets the platform default, which lives outside any repo.
 final archiveRootProvider = Provider<Directory>(
   (ref) => resolveArchiveRoot(
-    environment: Platform.environment,
+    environment: ref.watch(environmentProvider),
     operatingSystem: Platform.operatingSystem,
   ),
 );
@@ -100,12 +106,14 @@ final chatVisibleProvider = NotifierProvider<ChatVisible, bool>(
   ChatVisible.new,
 );
 
-/// The settings file (ADR 0006), beside the archive root — so a test or
-/// tool that overrides [archiveRootProvider] gets its own settings too.
+/// The settings file (ADR 0006): `SAI_SETTINGS_FILE`, else
+/// `settings.json` in sai's data directory. Independent of the archive
+/// root, so a test that overrides [archiveRootProvider] must override
+/// this too — the harnesses do.
 final settingsFileProvider = Provider<File>(
   (ref) => resolveSettingsFile(
-    environment: Platform.environment,
-    archiveRoot: ref.watch(archiveRootProvider),
+    environment: ref.watch(environmentProvider),
+    operatingSystem: Platform.operatingSystem,
   ),
 );
 
@@ -172,19 +180,18 @@ final llmRecorderProvider = FutureProvider<LlmRecorder>(
   ),
 );
 
-/// Loads the settings file once and writes it on every change.
+/// Loads the settings file once and writes it on every change. One
+/// store per build: it remembers whether the file belongs to a newer sai.
 class SettingsNotifier extends Notifier<Settings> {
-  SettingsStore get _store => SettingsStore(
-    ref.read(settingsFileProvider),
-    clock: ref.read(clockProvider),
-  );
-
-  late SettingsStore _opened;
+  late SettingsStore _store;
 
   @override
   Settings build() {
-    _opened = _store;
-    return _opened.load();
+    _store = SettingsStore(
+      ref.watch(settingsFileProvider),
+      clock: ref.watch(clockProvider),
+    );
+    return _store.load();
   }
 
   /// Selects the provider with [id] (null for none), writing the file
@@ -192,7 +199,7 @@ class SettingsNotifier extends Notifier<Settings> {
   /// to a newer sai and must not be overwritten.
   void selectLlm(String? id) {
     final next = state.withLlm(id);
-    _opened.save(next);
+    _store.save(next);
     state = next;
   }
 }
