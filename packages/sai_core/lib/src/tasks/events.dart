@@ -81,9 +81,20 @@ final class Attribution {
   const Attribution.assistant(ModelRef this.model, {this.refs = const []})
     : actor = Actor.assistant;
 
+  const Attribution._(this.actor, this.model, this.refs);
+
   final Actor actor;
   final ModelRef? model;
   final List<BlobRef> refs;
+
+  /// This attribution with [more] appended to [refs], skipping ids
+  /// already there — how undo points an inverse at the event it
+  /// reverses.
+  Attribution withRefs(List<BlobRef> more) => Attribution._(actor, model, [
+    ...refs,
+    for (final ref in more)
+      if (!refs.contains(ref)) ref,
+  ]);
 }
 
 /// One task-domain mutation, decoupled from its place in the log: the same

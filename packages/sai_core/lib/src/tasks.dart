@@ -10,3 +10,4 @@ export 'tasks/lists.dart';
 export 'tasks/model.dart';
 export 'tasks/projection.dart';
 export 'tasks/store.dart';
+export 'tasks/undo.dart';

@@ -66,6 +66,16 @@ final tasksProvider = AsyncNotifierProvider<TasksNotifier, TaskProjection>(
   TasksNotifier.new,
 );
 
+/// Whether the task store has a mutation to undo — false until
+/// [tasksProvider] has settled. Recomputed on every commit: the
+/// projection state changes whenever the undo stack does.
+final canUndoProvider = Provider<bool>((ref) {
+  if (ref.watch(tasksProvider) case AsyncData()) {
+    return ref.read(tasksProvider.notifier).store.canUndo;
+  }
+  return false;
+});
+
 /// Holds the process's one [TaskStore] and mirrors its [TaskStore.changes]
 /// into provider state.
 class TasksNotifier extends AsyncNotifier<TaskProjection> {
