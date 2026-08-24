@@ -46,11 +46,11 @@ Hide and the rest.
   keep working — Flutter's `DefaultTextEditingShortcuts` handles them —
   so only the menu entries are gone. Recreating them as items is a
   known, contained job for when the Edit menu earns it.
-- Cmd+Z is the app's undo, not the text field's, while there is
-  something to undo: the Edit > Undo item is disabled and the in-app
-  binding absent with an empty undo stack, so the chord then falls
-  through to the focused field. This continues the tradeoff #19
-  documented.
+- Cmd+Z is always the app's undo, never the text field's. With an empty
+  undo stack the Edit > Undo item is disabled, so the chord reaches the
+  in-app binding, which swallows it: left to fall through, Flutter's own
+  text undo would bring the last captured line back into the field. This
+  continues the tradeoff #19 documented.
 - Platform menu items carry no checked state, so the Go menu cannot
   mark the selected list; the sidebar shows it.
 - Menu accelerators never fire in `flutter_test`; tests exercise the

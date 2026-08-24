@@ -11,6 +11,14 @@ import 'harness.dart';
 
 void main() {
   const inbox = ListSection(TaskList.inbox);
+  final macOS = TargetPlatformVariant.only(TargetPlatform.macOS);
+
+  Future<void> cmdZ(WidgetTester tester) async {
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+  }
 
   TextField captureField(WidgetTester tester) =>
       tester.widget<TextField>(find.byKey(captureFieldKey));
@@ -96,14 +104,23 @@ void main() {
   testWidgets('Cmd+Z undoes with the capture field focused', (tester) async {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Buy oat milk');
-    await settleUndo(tester, container, () async {
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyZ);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyZ);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
-    }, depth: 0);
+    await settleUndo(tester, container, () => cmdZ(tester), depth: 0);
     expect(container.read(tasksProvider).value!.trash(), hasLength(1));
-  });
+  }, variant: macOS);
+
+  testWidgets('Cmd+Z with nothing left to undo does not undo the typing', (
+    tester,
+  ) async {
+    final container = await pumpApp(tester);
+    await capture(tester, container, 'Buy oat milk');
+    await settleUndo(tester, container, () => cmdZ(tester), depth: 0);
+    // Without the app binding this chord would reach the field's own
+    // undo history and bring the captured line back.
+    await cmdZ(tester);
+    await tester.pump();
+    expect(captureField(tester).controller!.text, isEmpty);
+    expect(container.read(tasksProvider).value!.trash(), hasLength(1));
+  }, variant: macOS);
 
   testWidgets('a capture is an archive event with actor and timestamp', (
     tester,

@@ -5,6 +5,7 @@ import 'package:sai_app/chat_pane.dart';
 import 'package:sai_app/commands.dart';
 import 'package:sai_app/main_pane.dart';
 import 'package:sai_app/sidebar.dart';
+import 'package:sai_app/shell.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
@@ -20,9 +21,17 @@ Future<void> chord(WidgetTester tester, LogicalKeyboardKey key) async {
 }
 
 void main() {
+  // Chords are asserted under the platform the app ships on: the default
+  // test platform (android) binds a different key map.
+  final macOS = TargetPlatformVariant.only(TargetPlatform.macOS);
+
+  // Sizes the window the way the app sees it: `MediaQuery` reads the
+  // view, not the test surface, so the breakpoints must be driven there.
   Future<void> surface(WidgetTester tester, double width) async {
-    await tester.binding.setSurfaceSize(Size(width, 600));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = Size(width, 600);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
   }
 
   testWidgets('the chat pane shows by default with a placeholder', (
@@ -46,7 +55,31 @@ void main() {
     expect(find.byType(ChatPane), findsOneWidget);
     expect(container.read(chatFocusProvider).hasFocus, isTrue);
     expect(container.read(captureFocusProvider).hasFocus, isFalse);
-  });
+  }, variant: macOS);
+
+  testWidgets('Cmd+J in a window too narrow for the chat says so', (
+    tester,
+  ) async {
+    await surface(tester, 700);
+    final container = await pumpApp(tester);
+    expect(chatFits(tester.element(find.byKey(captureFieldKey))), isFalse);
+    await chord(tester, LogicalKeyboardKey.keyJ);
+    expect(container.read(chatVisibleProvider), isTrue);
+    expect(find.textContaining('widen the window'), findsOneWidget);
+    final item = menuItem(menuDelegate.menus, ['View', 'Show Chat']);
+    expect(item.onSelected, isNull);
+    // Nothing latched: widening shows the chat without stealing focus.
+    tester.view.physicalSize = const Size(900, 600);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(ChatPane), findsOneWidget);
+    expect(container.read(chatFocusProvider).hasFocus, isFalse);
+    expect(container.read(captureFocusProvider).hasFocus, isTrue);
+    expect(
+      menuItem(menuDelegate.menus, ['View', 'Hide Chat']).onSelected,
+      isNotNull,
+    );
+  }, variant: macOS);
 
   testWidgets('Cmd+N brings focus back to quick capture', (tester) async {
     final container = await pumpApp(tester);
@@ -60,7 +93,7 @@ void main() {
       tester.widget<TextField>(find.byKey(captureFieldKey)).focusNode,
       same(container.read(captureFocusProvider)),
     );
-  });
+  }, variant: macOS);
 
   testWidgets('a narrow window drops the chat pane, a narrower the sidebar', (
     tester,
@@ -72,12 +105,12 @@ void main() {
     expect(find.byType(SaiSidebar), findsOneWidget);
     expect(find.byKey(captureFieldKey), findsOneWidget);
 
-    await tester.binding.setSurfaceSize(const Size(500, 600));
+    tester.view.physicalSize = const Size(500, 600);
     await tester.pump();
     expect(find.byType(SaiSidebar), findsNothing);
     expect(find.byKey(captureFieldKey), findsOneWidget);
 
-    await tester.binding.setSurfaceSize(const Size(900, 600));
+    tester.view.physicalSize = const Size(900, 600);
     await tester.pump();
     expect(find.byType(SaiSidebar), findsOneWidget);
     expect(find.byType(ChatPane), findsOneWidget);
@@ -92,10 +125,10 @@ void main() {
     await tester.enterText(find.byKey(chatFieldKey), 'hi');
     await tester.pump();
 
-    await tester.binding.setSurfaceSize(const Size(500, 600));
+    tester.view.physicalSize = const Size(500, 600);
     await tester.pump();
     expect(find.byType(SaiSidebar), findsNothing);
-    await tester.binding.setSurfaceSize(const Size(900, 600));
+    tester.view.physicalSize = const Size(900, 600);
     await tester.pump();
     expect(
       tester.widget<TextField>(find.byKey(captureFieldKey)).controller!.text,

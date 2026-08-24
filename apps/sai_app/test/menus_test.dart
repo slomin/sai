@@ -23,8 +23,16 @@ void main() {
       showShortcuts: () => calls.add('shortcuts'),
       select: (section) => calls.add('select $section'),
     );
-    List<PlatformMenuItem> menus({bool canUndo = false, bool chat = true}) =>
-        saiMenus(commands: commands, canUndo: canUndo, chatVisible: chat);
+    List<PlatformMenuItem> menus({
+      bool canUndo = false,
+      bool chat = true,
+      bool fits = true,
+    }) => saiMenus(
+      commands: commands,
+      canUndo: canUndo,
+      chatShown: chat && fits,
+      chatFits: fits,
+    );
 
     setUp(calls.clear);
 
@@ -95,6 +103,12 @@ void main() {
       final show = menuItem(menus(chat: false), ['View', 'Show Chat']);
       show.onSelected!();
       expect(calls, ['chat', 'chat']);
+      // Too narrow for the pane: the item is honest and inert.
+      final narrow = menuItem(menus(chat: true, fits: false), [
+        'View',
+        'Show Chat',
+      ]);
+      expect(narrow.onSelected, isNull);
       final view = menuItem(menus(), ['View']) as PlatformMenu;
       expect(
         (view.menus.last as PlatformMenuItemGroup).members.single,

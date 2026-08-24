@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import 'shell.dart';
+
 /// Focus for the quick-capture field: Cmd+N and File > New Task land
 /// here. Flutter-typed, so app-side rather than in core.
 final captureFocusProvider = Provider<FocusNode>((ref) {
@@ -58,7 +60,7 @@ class AppCommands {
     return AppCommands(
       focusCapture: () => container.read(captureFocusProvider).requestFocus(),
       undo: () => _undo(container),
-      toggleChat: () => _toggleChat(container),
+      toggleChat: () => _toggleChat(container, context),
       showShortcuts: () => _showShortcuts(context),
       select: container.read(selectedSectionProvider.notifier).select,
     );
@@ -81,10 +83,19 @@ class AppCommands {
     }
   }
 
-  static void _toggleChat(ProviderContainer container) {
+  static void _toggleChat(ProviderContainer container, BuildContext context) {
+    // Toggling a pane the window cannot show would only desync the menu
+    // from the screen — and a focus request on the unmounted field would
+    // latch and steal focus when the pane finally mounts.
+    if (!chatFits(context)) {
+      container
+          .read(noticeProvider.notifier)
+          .show('widen the window to show the chat');
+      return;
+    }
     container.read(chatVisibleProvider.notifier).toggle();
     if (!container.read(chatVisibleProvider)) return;
-    // The pane mounts on the next frame; focusing before that no-ops.
+    // The pane mounts on the next frame; focus it once it is there.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       container.read(chatFocusProvider).requestFocus();
     });

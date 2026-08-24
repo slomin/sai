@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'commands.dart';
+import 'shell.dart';
 
 /// The native menu bar, built in Dart (ADR 0005). The standard items are
 /// the platform's own; everything else routes to [commands]. Built to
@@ -12,10 +13,15 @@ import 'commands.dart';
 /// The Go menu carries no accelerators yet — list switching by key is
 /// deferred until the lists are real (#38); the items keep every list
 /// reachable from the keyboard through the menu bar.
+///
+/// [chatShown] is whether the chat pane is on screen right now; [chatFits]
+/// whether the window could show it at all — narrower than that, the View
+/// item is disabled rather than promising a pane that cannot appear.
 List<PlatformMenuItem> saiMenus({
   required AppCommands commands,
   required bool canUndo,
-  required bool chatVisible,
+  required bool chatShown,
+  required bool chatFits,
 }) => [
   PlatformMenu(
     label: 'sai',
@@ -76,9 +82,9 @@ List<PlatformMenuItem> saiMenus({
     label: 'View',
     menus: [
       PlatformMenuItem(
-        label: chatVisible ? 'Hide Chat' : 'Show Chat',
+        label: chatShown ? 'Hide Chat' : 'Show Chat',
         shortcut: const SingleActivator(LogicalKeyboardKey.keyJ, meta: true),
-        onSelected: commands.toggleChat,
+        onSelected: chatFits ? commands.toggleChat : null,
       ),
       const PlatformMenuItemGroup(
         members: [
@@ -136,44 +142,58 @@ List<PlatformMenuItem> saiMenus({
 
 /// The chrome around the shell: the native menu bar and the key bindings,
 /// both driving one [AppCommands]. Sits above the shell so its rebuilds
-/// are only ever about undo availability and chat visibility, never about
-/// what the shell is drawing — each rebuild re-sends the menu.
+/// are only ever about the menu's own state; the menu tree is rebuilt —
+/// and re-sent to the platform — only when that state changes.
 ///
 /// A chord bound in both places fires once: on macOS the menu's key
 /// equivalent takes it before the Flutter view sees the key; under
 /// `flutter test` there is no native menu and the binding takes it.
 ///
-/// Cmd+Z is app undo, not text undo, while there is something to undo —
-/// #19's tradeoff, kept. With an empty undo stack the menu item is
-/// disabled and the chord is not bound, so it falls through to the
-/// focused text field.
-class SaiChrome extends ConsumerWidget {
+/// Cmd+Z is always app undo, never the text field's — #19's tradeoff,
+/// kept. With an empty undo stack the menu item is disabled, so the chord
+/// reaches the binding, which swallows it: otherwise Flutter's own text
+/// undo would bring the last captured line back into the field.
+class SaiChrome extends ConsumerStatefulWidget {
   const SaiChrome({super.key, required this.child});
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SaiChrome> createState() => _SaiChromeState();
+}
+
+class _SaiChromeState extends ConsumerState<SaiChrome> {
+  (bool, bool, bool)? _menuState;
+  List<PlatformMenuItem> _menus = const [];
+
+  @override
+  Widget build(BuildContext context) {
     final commands = AppCommands.of(context);
     final canUndo = ref.watch(canUndoProvider);
-    final chatVisible = ref.watch(chatVisibleProvider);
-    return PlatformMenuBar(
-      menus: saiMenus(
+    final fits = chatFits(context);
+    final shown = ref.watch(chatVisibleProvider) && fits;
+    final state = (canUndo, shown, fits);
+    if (state != _menuState) {
+      _menuState = state;
+      _menus = saiMenus(
         commands: commands,
         canUndo: canUndo,
-        chatVisible: chatVisible,
-      ),
+        chatShown: shown,
+        chatFits: fits,
+      );
+    }
+    return PlatformMenuBar(
+      menus: _menus,
       child: CallbackShortcuts(
         bindings: <ShortcutActivator, VoidCallback>{
           const SingleActivator(LogicalKeyboardKey.keyN, meta: true):
               commands.focusCapture,
           const SingleActivator(LogicalKeyboardKey.keyJ, meta: true):
               commands.toggleChat,
-          if (canUndo)
-            const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
-                commands.undo,
+          const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
+              commands.undo,
         },
-        child: child,
+        child: widget.child,
       ),
     );
   }
