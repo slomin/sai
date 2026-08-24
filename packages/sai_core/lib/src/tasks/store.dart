@@ -85,6 +85,10 @@ final class TaskStore {
   /// The projection after each command this store commits.
   Stream<TaskProjection> get changes => _changes.stream;
 
+  /// Whether the changes stream currently has a subscriber. Lifecycle tests
+  /// use this to prove an asynchronously opened store was never exposed.
+  bool get hasChangeListeners => _changes.hasListener;
+
   /// Rebuilds the projection from the log — how appends made by another
   /// process (or another store) become visible. Serialized with commands.
   Future<void> reload() => _serialized(() async {
@@ -185,14 +189,14 @@ final class TaskStore {
   }) async {
     final before = _projection;
     final draft = event.toDraft(source: source, by: by);
-    final tentative = Event.seal(
+    late final TaskProjection next;
+    final stored = await _archive.append(
       draft,
-      prev: before.lastEventId,
-      ts: DateTime.timestamp(),
+      validate: (stored) {
+        next = before.apply(stored);
+      },
     );
-    before.apply(StoredEvent(id: tentative.deriveId(), event: tentative));
-    final stored = await _archive.append(draft);
-    _projection = before.apply(stored);
+    _projection = next;
     try {
       if (record) {
         _undoStack.add((

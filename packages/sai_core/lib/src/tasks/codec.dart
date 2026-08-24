@@ -5,7 +5,10 @@ library;
 
 import '../archive/blobref.dart';
 import '../archive/event.dart' show parseTs;
+import '../json_codec.dart';
 import 'date.dart';
+
+export '../json_codec.dart';
 
 bool listEquals<T>(List<T> a, List<T> b) {
   if (a.length != b.length) return false;
@@ -13,53 +16,6 @@ bool listEquals<T>(List<T> a, List<T> b) {
     if (a[i] != b[i]) return false;
   }
   return true;
-}
-
-Map<String, Object?> requireObject(Object? value, String where) {
-  if (value is! Map<String, Object?>) {
-    throw FormatException('$where must be a JSON object');
-  }
-  return value;
-}
-
-void rejectUnknownKeys(
-  Map<String, Object?> map,
-  Set<String> allowed, {
-  required String where,
-}) {
-  for (final key in map.keys) {
-    if (!allowed.contains(key)) {
-      throw FormatException('unknown key in $where: "$key"');
-    }
-  }
-}
-
-String requireString(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  final value = map[key];
-  if (value is! String || value.isEmpty) {
-    throw FormatException('$where.$key must be a non-empty string');
-  }
-  return value;
-}
-
-String? optionalString(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-  bool emptyOk = false,
-}) {
-  final value = map[key];
-  if (value == null) return null;
-  if (value is! String || (!emptyOk && value.isEmpty)) {
-    throw FormatException(
-      '$where.$key must be a ${emptyOk ? '' : 'non-empty '}string',
-    );
-  }
-  return value;
 }
 
 BlobRef requireId(
@@ -81,14 +37,7 @@ BlobRef? optionalId(
 }) {
   final value = map[key];
   if (value == null) return null;
-  if (value is! String) {
-    throw FormatException('$where.$key must be a blobref string');
-  }
-  try {
-    return BlobRef.parse(value);
-  } on FormatException {
-    throw FormatException('$where.$key is not a blobref: "$value"');
-  }
+  return requireBlobRef(value, where: '$where.$key');
 }
 
 DateTime requireInstant(

@@ -189,6 +189,13 @@ void main() {
             'temperature': 1,
           },
         ),
+        'model with null optional string': mutate(
+          (m) => m['model'] = {
+            'provider': 'anthropic',
+            'id': 'claude-fable-5',
+            'version': null,
+          },
+        ),
         'refs not a list': mutate((m) => m['refs'] = 'sha256-00'),
         'refs with a bad ref': mutate((m) => m['refs'] = ['nope']),
         'refs empty': mutate((m) => m['refs'] = <String>[]),

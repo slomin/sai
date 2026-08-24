@@ -62,6 +62,9 @@ project id refuses the log loudly.
   model makes it unrepresentable.
 - **Instants** (all timestamps): the log's `ts` form,
   `2026-08-24T09:14:02.123456Z`.
+- An explicit creation `created_at` or completion/cancellation `at` must be
+  no later than its containing event's envelope `ts`. Equality and earlier
+  history are valid; a future instant stops decode and replay.
 - **`when`** is `null` (no plan), `"someday"`, or a date. A Things-style
   "this evening" or reminder time would arrive as an additive
   `when_time` key, not a change to `when`.
@@ -157,6 +160,10 @@ Payloads use the shared value forms:
 | when | `null` \| `"someday"` \| date |
 | checklist item | `{"title":"…","completed_at":instant\|null}` |
 | external | `{"system":"things3","id":"…","version":"…"?,"instance":"…"?}` |
+
+Strict optional strings distinguish absence from malformed values: an absent
+key uses its default, while a present JSON `null`, a non-string value, or an
+empty string where the field disallows emptiness is a `FormatException`.
 
 `*.create` payloads carry only non-default keys. `*.edit` payloads use
 **field-set semantics**: a key present sets the field, a JSON `null`
