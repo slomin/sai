@@ -63,8 +63,11 @@ Future<ProviderContainer> pumpApp(
   List<Override> overrides = const [],
   bool settled = true,
 }) async {
-  final root = Directory.systemTemp.createTempSync('sai_app_test');
-  addTearDown(() => root.deleteSync(recursive: true));
+  // The archive gets a private parent so the settings file that lives
+  // beside it (ADR 0006) lands in the temp dir too, never in the real one.
+  final tmp = Directory.systemTemp.createTempSync('sai_app_test');
+  addTearDown(() => tmp.deleteSync(recursive: true));
+  final root = Directory('${tmp.path}/archive');
   final container = ProviderContainer.test(
     overrides: [
       archiveRootProvider.overrideWithValue(root),

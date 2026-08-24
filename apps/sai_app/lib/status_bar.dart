@@ -4,8 +4,8 @@ import 'package:sai_core/sai_core.dart';
 
 import 'commands.dart';
 
-/// The active provider and its privacy tag on the left (a placeholder
-/// until #29/#27), the last notice on the right.
+/// The active LLM provider and its privacy tag on the left, the last
+/// notice on the right.
 class StatusBar extends ConsumerWidget {
   const StatusBar({super.key});
 

@@ -175,6 +175,14 @@ void main() {
     expect(find.text('no provider — local only'), findsOneWidget);
   });
 
+  testWidgets('the status bar follows the selected provider', (tester) async {
+    final container = await pumpApp(tester);
+    container.read(settingsProvider.notifier).selectLlm('fake');
+    await tester.pump();
+    expect(find.text('fake (fake-1) — local'), findsOneWidget);
+    expect(find.text(noProviderStatus), findsNothing);
+  });
+
   testWidgets('submitting in the chat field says it is not wired up', (
     tester,
   ) async {
