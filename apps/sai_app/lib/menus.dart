@@ -24,6 +24,10 @@ class SaiChrome extends ConsumerWidget {
     final canUndo = ref.watch(canUndoProvider);
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyN, meta: true):
+            commands.focusCapture,
+        const SingleActivator(LogicalKeyboardKey.keyJ, meta: true):
+            commands.toggleChat,
         if (canUndo)
           const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
               commands.undo,

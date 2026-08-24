@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import 'chat_pane.dart';
 import 'main_pane.dart';
 import 'sidebar.dart';
 import 'status_bar.dart';
@@ -48,6 +49,8 @@ class _Panes extends ConsumerWidget {
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         final showSidebar = width >= sidebarBreakpoint;
+        final showChat =
+            ref.watch(chatVisibleProvider) && width >= chatBreakpoint;
         return Column(
           children: [
             Expanded(
@@ -62,6 +65,10 @@ class _Panes extends ConsumerWidget {
                     const VerticalDivider(width: 1, thickness: 1),
                   ],
                   Expanded(child: MainPane(projection: projection)),
+                  if (showChat) ...[
+                    const VerticalDivider(width: 1, thickness: 1),
+                    const SizedBox(width: chatWidth, child: ChatPane()),
+                  ],
                 ],
               ),
             ),
