@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
-import 'capture_screen.dart';
+import 'menus.dart';
+import 'shell.dart';
 
-/// The macOS shell. Still minimal on purpose — #37 lays out the real
-/// one; until then the quick-capture screen (#19) is the whole app.
+/// The macOS app: the shell (#37) inside its chrome. Appearance follows
+/// the system; the palette is Material's default until a design pass.
 class SaiApp extends StatelessWidget {
   const SaiApp({super.key});
 
@@ -13,7 +14,8 @@ class SaiApp extends StatelessWidget {
       title: 'sai',
       theme: ThemeData.light(),
       darkTheme: ThemeData.dark(),
-      home: const CaptureScreen(),
+      themeMode: ThemeMode.system,
+      home: const SaiChrome(child: SaiShell()),
     );
   }
 }

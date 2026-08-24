@@ -7,6 +7,22 @@ import 'model.dart';
 /// the projection's queries, not here; see `docs/tasks/task-model-v0.md`.
 enum TaskList { inbox, today, upcoming, anytime, someday, logbook }
 
+/// The display name of a standard list — named once so the clients and
+/// the shared view models cannot drift apart.
+String listTitle(TaskList list) => switch (list) {
+  TaskList.inbox => 'Inbox',
+  TaskList.today => 'Today',
+  TaskList.upcoming => 'Upcoming',
+  TaskList.anytime => 'Anytime',
+  TaskList.someday => 'Someday',
+  TaskList.logbook => 'Logbook',
+};
+
+/// The Trash sits beside the standard lists in every client, but it is a
+/// projection query, not a [TaskList] — so its name lives beside, not in,
+/// [listTitle].
+const trashTitle = 'Trash';
+
 /// The normative partition: the one list a task belongs to, or null for a
 /// deleted task (the Trash is a projection query, not a list).
 ///

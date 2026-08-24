@@ -4,17 +4,31 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sai_app/main_pane.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
 
 void main() {
+  const inbox = ListSection(TaskList.inbox);
+  final macOS = TargetPlatformVariant.only(TargetPlatform.macOS);
+
+  Future<void> cmdZ(WidgetTester tester) async {
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+  }
+
+  TextField captureField(WidgetTester tester) =>
+      tester.widget<TextField>(find.byKey(captureFieldKey));
+
   testWidgets('an empty archive shows the greeting and an idle field', (
     tester,
   ) async {
     await pumpApp(tester);
     expect(find.text('sai 2.0.0-dev — nothing here yet'), findsOneWidget);
-    expect(find.byType(TextField), findsOneWidget);
+    expect(find.byKey(captureFieldKey), findsOneWidget);
     final undo = tester.widget<TextButton>(
       find.widgetWithText(TextButton, 'Undo'),
     );
@@ -26,12 +40,15 @@ void main() {
   ) async {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Buy oat milk');
+    // Counted in the sidebar straight away…
     expect(find.text('Inbox (1)'), findsOneWidget);
+    expect(captureField(tester).controller!.text, isEmpty);
+    // …and listed once the Inbox is the section on show; meanwhile the
+    // pane says which section is the empty one.
+    expect(find.text('Buy oat milk'), findsNothing);
+    expect(find.text('Nothing in Today'), findsOneWidget);
+    await selectSection(tester, container, inbox);
     expect(find.text('Buy oat milk'), findsOneWidget);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      isEmpty,
-    );
   });
 
   testWidgets('an @today capture surfaces under Today', (tester) async {
@@ -41,35 +58,44 @@ void main() {
     expect(find.text('Inbox (0)'), findsOneWidget);
     expect(find.text('Upcoming (0)'), findsOneWidget);
     expect(find.text('Someday (0)'), findsOneWidget);
+    // Today is the section the shell opens on.
     expect(find.text('Call mom @today'), findsOneWidget);
   });
 
-  testWidgets('a deadline token renders, in Inbox and in Upcoming', (
+  testWidgets('a deadline token counts in Inbox and in Upcoming', (
     tester,
   ) async {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Pay rent !2026-09-01');
     // The view union: a due-later Inbox task also surfaces in Upcoming.
-    expect(find.text('Pay rent !2026-09-01'), findsNWidgets(2));
     expect(find.text('Inbox (1)'), findsOneWidget);
     expect(find.text('Upcoming (1)'), findsOneWidget);
+    await selectSection(
+      tester,
+      container,
+      const ListSection(TaskList.upcoming),
+    );
+    expect(find.text('Pay rent !2026-09-01'), findsOneWidget);
   });
 
   testWidgets('a blank line captures nothing', (tester) async {
     final container = await pumpApp(tester);
     await capture(tester, container, '   ');
     expect(find.text('sai 2.0.0-dev — nothing here yet'), findsOneWidget);
+    expect(find.text('Inbox (0)'), findsOneWidget);
     expect(archiveLines(container.read(archiveRootProvider)), isEmpty);
   });
 
   testWidgets('the Undo button reverses the last capture', (tester) async {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Buy oat milk');
+    await selectSection(tester, container, inbox);
     final undo = find.widgetWithText(TextButton, 'Undo');
     expect(tester.widget<TextButton>(undo).onPressed, isNotNull);
 
     await settleUndo(tester, container, () => tester.tap(undo), depth: 0);
-    expect(find.text('sai 2.0.0-dev — nothing here yet'), findsOneWidget);
+    expect(find.text('Nothing in Inbox'), findsOneWidget);
+    expect(find.text('Trash (1)'), findsOneWidget);
     final projection = container.read(tasksProvider).value!;
     expect(projection.trash().single.title, 'Buy oat milk');
     expect(tester.widget<TextButton>(undo).onPressed, isNull);
@@ -78,14 +104,23 @@ void main() {
   testWidgets('Cmd+Z undoes with the capture field focused', (tester) async {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Buy oat milk');
-    await settleUndo(tester, container, () async {
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyZ);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyZ);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
-    }, depth: 0);
+    await settleUndo(tester, container, () => cmdZ(tester), depth: 0);
     expect(container.read(tasksProvider).value!.trash(), hasLength(1));
-  });
+  }, variant: macOS);
+
+  testWidgets('Cmd+Z with nothing left to undo does not undo the typing', (
+    tester,
+  ) async {
+    final container = await pumpApp(tester);
+    await capture(tester, container, 'Buy oat milk');
+    await settleUndo(tester, container, () => cmdZ(tester), depth: 0);
+    // Without the app binding this chord would reach the field's own
+    // undo history and bring the captured line back.
+    await cmdZ(tester);
+    await tester.pump();
+    expect(captureField(tester).controller!.text, isEmpty);
+    expect(container.read(tasksProvider).value!.trash(), hasLength(1));
+  }, variant: macOS);
 
   testWidgets('a capture is an archive event with actor and timestamp', (
     tester,
@@ -102,30 +137,35 @@ void main() {
     expect(() => parseTs(json['ts']! as String), returnsNormally);
   });
 
-  testWidgets('@tomorrow and @someday captures stay visible', (tester) async {
+  testWidgets('@tomorrow and @someday captures reach their lists', (
+    tester,
+  ) async {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Ring dentist @tomorrow');
     await capture(tester, container, 'Learn the violin @someday');
     expect(find.text('Upcoming (1)'), findsOneWidget);
-    expect(find.text('Ring dentist @tomorrow'), findsOneWidget);
     expect(find.text('Someday (1)'), findsOneWidget);
+    await selectSection(
+      tester,
+      container,
+      const ListSection(TaskList.upcoming),
+    );
+    expect(find.text('Ring dentist @tomorrow'), findsOneWidget);
+    await selectSection(tester, container, const ListSection(TaskList.someday));
     expect(find.text('Learn the violin @someday'), findsOneWidget);
   });
 
   testWidgets('a failed capture keeps the line and says so', (tester) async {
     final container = await pumpApp(tester);
     container.read(tasksProvider.notifier).store.dispose();
-    await tester.enterText(find.byType(TextField), 'Buy oat milk');
+    await tester.enterText(find.byKey(captureFieldKey), 'Buy oat milk');
     await tester.runAsync(() async {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await Future<void>.delayed(const Duration(milliseconds: 50));
     });
     await tester.pump();
     expect(find.textContaining('capture failed:'), findsOneWidget);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'Buy oat milk',
-    );
+    expect(captureField(tester).controller!.text, 'Buy oat milk');
   });
 
   testWidgets('a failed undo says so and keeps the button', (tester) async {
@@ -153,7 +193,7 @@ void main() {
       overrides: [tasksProvider.overrideWith(_StuckTasks.new)],
     );
     expect(find.text('opening the archive…'), findsOneWidget);
-    expect(find.byType(TextField), findsNothing);
+    expect(find.byKey(captureFieldKey), findsNothing);
   });
 
   testWidgets('a failed open shows the error', (tester) async {

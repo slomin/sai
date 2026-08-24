@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:yaml/yaml.dart';
@@ -19,6 +20,30 @@ void main() {
       ],
     );
     expect(find.text('override 0 — nothing here yet'), findsOneWidget);
+  });
+
+  testWidgets('the appearance follows the system', (tester) async {
+    await pumpApp(tester);
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.themeMode, ThemeMode.system);
+    expect(app.theme, isNotNull);
+    expect(app.darkTheme, isNotNull);
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold))).brightness,
+      Brightness.light,
+    );
+  });
+
+  testWidgets('a dark system appearance renders the shell dark', (
+    tester,
+  ) async {
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    await pumpApp(tester);
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold))).brightness,
+      Brightness.dark,
+    );
   });
 
   test('pubspec version matches saiVersion (build metadata aside)', () {

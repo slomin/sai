@@ -7,7 +7,9 @@ import 'archive/archive.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
 import 'tasks/date.dart';
+import 'tasks/lists.dart';
 import 'tasks/projection.dart';
+import 'tasks/sidebar.dart';
 import 'tasks/store.dart';
 
 /// The application identity every client shows.
@@ -75,6 +77,40 @@ final canUndoProvider = Provider<bool>((ref) {
   }
   return false;
 });
+
+/// The sidebar section a client is showing. Opens on Today — the list
+/// the day starts from; quick capture still lands in the Inbox. Shared
+/// so the clients (#37, #41) and their menus steer the same state.
+final selectedSectionProvider =
+    NotifierProvider<SelectedSection, SidebarSection>(SelectedSection.new);
+
+/// Whether the chat pane is shown. Shell chrome; the pane's content is
+/// #34/#39.
+final chatVisibleProvider = NotifierProvider<ChatVisible, bool>(
+  ChatVisible.new,
+);
+
+/// The status-bar line naming the active provider and its privacy tag.
+/// Until provider settings (#29) and the privacy policy (#27) exist there
+/// is no provider, and every client says so the same way.
+final providerStatusProvider = Provider<String>((ref) => noProviderStatus);
+
+/// What the status bar shows while no provider is configured.
+const noProviderStatus = 'no provider — local only';
+
+class SelectedSection extends Notifier<SidebarSection> {
+  @override
+  SidebarSection build() => const ListSection(TaskList.today);
+
+  void select(SidebarSection section) => state = section;
+}
+
+class ChatVisible extends Notifier<bool> {
+  @override
+  bool build() => true;
+
+  void toggle() => state = !state;
+}
 
 /// Holds the process's one [TaskStore] and mirrors its [TaskStore.changes]
 /// into provider state.
