@@ -261,6 +261,13 @@ abstract final class EventTypes {
   static const correction = 'archive.correction';
 }
 
+/// The `source` values sai's own clients write. The field is free-form in
+/// the spec; these are the two names this repository owns.
+abstract final class EventSources {
+  static const app = 'sai/app';
+  static const tui = 'sai/tui';
+}
+
 final _tsForm = RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$');
 
 /// Formats [time] as the spec's timestamp: RFC 3339 UTC, literal `Z`,
