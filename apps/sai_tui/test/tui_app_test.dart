@@ -83,6 +83,20 @@ void main() {
     }, size: size);
   });
 
+  test('a capture typed before the store settles still lands', () async {
+    await testNocterm('early capture', (tester) async {
+      // No pre-await: the field renders while the archive is opening.
+      final container = await pumpTui(tester, settled: false);
+      await tester.enterText('Buy oat milk');
+      await tester.sendEnter();
+      await pumpUntilText(tester, 'Inbox (1)');
+      expect(
+        container.read(tasksProvider).value!.tasks.values.single.title,
+        'Buy oat milk',
+      );
+    }, size: size);
+  });
+
   test('an @today capture surfaces under Today', () async {
     await testNocterm('today', (tester) async {
       await pumpTui(tester);

@@ -58,6 +58,9 @@ class _TuiAppState extends State<TuiApp> {
     setState(_controller.clear);
     final container = context.container;
     try {
+      // The field renders before the store settles; an early Enter waits
+      // for it instead of failing on the not-yet-open store.
+      await container.read(tasksProvider.future);
       final store = container.read(tasksProvider.notifier).store;
       await store.quickCapture(line, today: container.read(todayProvider));
       if (!mounted) return;
@@ -75,6 +78,7 @@ class _TuiAppState extends State<TuiApp> {
   Future<void> _undo() async {
     final container = context.container;
     try {
+      await container.read(tasksProvider.future);
       if (!container.read(canUndoProvider)) {
         _setNotice('nothing to undo');
         return;
