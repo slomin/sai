@@ -6,6 +6,12 @@ import 'app_info.dart';
 import 'archive/archive.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
+import 'llm/fake.dart';
+import 'llm/provider.dart';
+import 'llm/recorder.dart';
+import 'llm/status.dart';
+import 'settings/settings.dart';
+import 'settings/store.dart';
 import 'tasks/date.dart';
 import 'tasks/lists.dart';
 import 'tasks/projection.dart';
@@ -23,11 +29,17 @@ final shellGreetingProvider = Provider<String>((ref) {
   return '$info — nothing here yet';
 });
 
+/// The process environment, for the providers that resolve paths from
+/// it. Tests override this instead of exporting variables.
+final environmentProvider = Provider<Map<String, String>>(
+  (ref) => Platform.environment,
+);
+
 /// The directory holding the event log. Tests and tools override this;
 /// everyone else gets the platform default, which lives outside any repo.
 final archiveRootProvider = Provider<Directory>(
   (ref) => resolveArchiveRoot(
-    environment: Platform.environment,
+    environment: ref.watch(environmentProvider),
     operatingSystem: Platform.operatingSystem,
   ),
 );
@@ -35,8 +47,12 @@ final archiveRootProvider = Provider<Directory>(
 /// The opened archive. Every client appends and reads through this single
 /// instance; there is no other write path to the log. Disposal releases
 /// the archive's lock handle so rebuilt providers never leak descriptors.
+/// Event timestamps come from [clockProvider], so a test clock pins them.
 final archiveProvider = FutureProvider<Archive>((ref) async {
-  final archive = await Archive.open(ref.watch(archiveRootProvider));
+  final archive = await Archive.open(
+    ref.watch(archiveRootProvider),
+    clock: ref.watch(clockProvider),
+  );
   ref.onDispose(archive.close);
   return archive;
 });
@@ -90,13 +106,108 @@ final chatVisibleProvider = NotifierProvider<ChatVisible, bool>(
   ChatVisible.new,
 );
 
-/// The status-bar line naming the active provider and its privacy tag.
-/// Until provider settings (#29) and the privacy policy (#27) exist there
-/// is no provider, and every client says so the same way.
-final providerStatusProvider = Provider<String>((ref) => noProviderStatus);
+/// The settings file (ADR 0006): `SAI_SETTINGS_FILE`, else
+/// `settings.json` in sai's data directory. Independent of the archive
+/// root, so a test that overrides [archiveRootProvider] must override
+/// this too — the harnesses do.
+final settingsFileProvider = Provider<File>(
+  (ref) => resolveSettingsFile(
+    environment: ref.watch(environmentProvider),
+    operatingSystem: Platform.operatingSystem,
+  ),
+);
 
-/// What the status bar shows while no provider is configured.
-const noProviderStatus = 'no provider — local only';
+/// Non-secret settings, read at first use and written on every change.
+/// Use [SettingsNotifier.selectLlm] to switch the active provider.
+final settingsProvider = NotifierProvider<SettingsNotifier, Settings>(
+  SettingsNotifier.new,
+);
+
+/// Every [LlmProvider] this build can offer, before validation. The fake
+/// ships so offline development needs no credentials; #22 adds the
+/// configured OpenAI-compatible endpoints.
+final installedLlmsProvider = Provider<List<LlmProvider>>(
+  (ref) => [FakeLlmProvider()],
+);
+
+/// The installed providers by id. Throws [StateError] on a duplicate id
+/// at first read; closes the providers when disposed.
+final llmRegistryProvider = Provider<Map<String, LlmProvider>>((ref) {
+  final installed = ref.watch(installedLlmsProvider);
+  final registry = <String, LlmProvider>{};
+  for (final provider in installed) {
+    if (registry.containsKey(provider.id)) {
+      // Refusing the registry must not leak what was already built.
+      for (final built in installed) {
+        built.close();
+      }
+      throw StateError('two LLM providers share the id "${provider.id}"');
+    }
+    registry[provider.id] = provider;
+  }
+  ref.onDispose(() {
+    for (final provider in registry.values) {
+      provider.close();
+    }
+  });
+  return Map.unmodifiable(registry);
+});
+
+/// The selected provider, or null when nothing is selected or the
+/// selected id is not installed. Selection is an app-level setting, not
+/// per conversation.
+final activeLlmProvider = Provider<LlmProvider?>((ref) {
+  final id = ref.watch(settingsProvider).llm;
+  if (id == null) return null;
+  return ref.watch(llmRegistryProvider)[id];
+});
+
+/// The status-bar line naming the active LLM provider and its privacy
+/// tag — the same words in every client (`llm/status.dart`).
+final llmStatusProvider = Provider<String>((ref) {
+  final settings = ref.watch(settingsProvider);
+  if (settings.problem != null) return unreadableSettingsStatus;
+  final id = settings.llm;
+  if (id == null) return noProviderStatus;
+  final active = ref.watch(activeLlmProvider);
+  if (active == null) return missingProviderStatus(id);
+  return llmStatusLine(active);
+});
+
+/// A recorder bound to the archive and this client's source — how a
+/// caller obtains a call that records itself. Deliberately independent
+/// of [activeLlmProvider]: switching never disturbs a running call.
+final llmRecorderProvider = FutureProvider<LlmRecorder>(
+  (ref) async => LlmRecorder(
+    archive: await ref.watch(archiveProvider.future),
+    source: ref.watch(eventSourceProvider),
+    clock: ref.watch(clockProvider),
+  ),
+);
+
+/// Loads the settings file once and writes it on every change. One
+/// store per build: it remembers whether the file belongs to a newer sai.
+class SettingsNotifier extends Notifier<Settings> {
+  late SettingsStore _store;
+
+  @override
+  Settings build() {
+    _store = SettingsStore(
+      ref.watch(settingsFileProvider),
+      clock: ref.watch(clockProvider),
+    );
+    return _store.load();
+  }
+
+  /// Selects the provider with [id] (null for none), writing the file
+  /// before the state changes. Throws [StateError] when the file belongs
+  /// to a newer sai and must not be overwritten.
+  void selectLlm(String? id) {
+    final next = state.withLlm(id);
+    _store.save(next);
+    state = next;
+  }
+}
 
 class SelectedSection extends Notifier<SidebarSection> {
   @override

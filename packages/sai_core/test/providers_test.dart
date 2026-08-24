@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:riverpod/misc.dart' show Override, ProviderException;
 import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
@@ -50,6 +51,28 @@ void main() {
         ],
       );
       expect(container.read(todayProvider), const CalendarDate(2026, 8, 24));
+    });
+
+    test('archive events are stamped with clockProvider', () async {
+      final tmp = Directory.systemTemp.createTempSync('sai_providers_test');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final container = ProviderContainer.test(
+        overrides: [
+          archiveRootProvider.overrideWithValue(tmp),
+          eventSourceProvider.overrideWithValue('sai/test'),
+          clockProvider.overrideWithValue(
+            () => DateTime(2026, 8, 24, 12, 30, 15, 123, 456),
+          ),
+        ],
+      );
+      await container.read(tasksProvider.future);
+      await container.read(tasksProvider.notifier).store.createTask(title: 'x');
+      final archive = await container.read(archiveProvider.future);
+      final stored = await archive.events().single;
+      expect(
+        stored.event.ts,
+        DateTime(2026, 8, 24, 12, 30, 15, 123, 456).toUtc(),
+      );
     });
 
     test('tasksProvider opens the store and reflects its commands', () async {
@@ -122,11 +145,139 @@ void main() {
       container.read(chatVisibleProvider.notifier).toggle();
       expect(container.read(chatVisibleProvider), isTrue);
     });
+  });
 
-    test('providerStatusProvider is the no-provider placeholder', () {
-      final container = ProviderContainer.test();
-      expect(container.read(providerStatusProvider), noProviderStatus);
+  group('llm providers', () {
+    late Directory tmp;
+    late Directory root;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('sai_llm_providers_test');
+      root = Directory('${tmp.path}/archive');
+    });
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    ProviderContainer make({List<Override> overrides = const []}) =>
+        ProviderContainer.test(
+          overrides: [
+            archiveRootProvider.overrideWithValue(root),
+            settingsFileProvider.overrideWithValue(
+              File('${tmp.path}/settings.json'),
+            ),
+            eventSourceProvider.overrideWithValue('sai/test'),
+            ...overrides,
+          ],
+        );
+
+    test('the settings file is resolved from the environment', () {
+      final container = ProviderContainer.test(
+        overrides: [
+          environmentProvider.overrideWithValue({
+            'SAI_SETTINGS_FILE': '${tmp.path}/elsewhere.json',
+          }),
+        ],
+      );
+      expect(
+        container.read(settingsFileProvider).path,
+        '${tmp.path}/elsewhere.json',
+      );
+    });
+
+    test('the registry holds the fake and rejects duplicate ids', () {
+      final container = make();
+      expect(container.read(llmRegistryProvider).keys, ['fake']);
+      final first = FakeLlmProvider();
+      final second = FakeLlmProvider();
+      final dupes = make(
+        overrides: [
+          installedLlmsProvider.overrideWithValue([first, second]),
+        ],
+      );
+      expect(
+        () => dupes.read(llmRegistryProvider),
+        throwsA(
+          isA<ProviderException>().having(
+            (e) => e.exception,
+            'exception',
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('share the id "fake"'),
+            ),
+          ),
+        ),
+      );
+      expect(first.isClosed, isTrue, reason: 'nothing constructed leaks');
+      expect(second.isClosed, isTrue);
+    });
+
+    test('nothing is selected until someone selects', () {
+      final container = make();
+      expect(container.read(settingsProvider).llm, isNull);
+      expect(container.read(activeLlmProvider), isNull);
+      expect(container.read(llmStatusProvider), noProviderStatus);
       expect(noProviderStatus, 'no provider — local only');
+      expect(File('${tmp.path}/settings.json').existsSync(), isFalse);
+    });
+
+    test('selecting switches the active provider without a rebuild', () {
+      final container = make();
+      final seen = <String>[];
+      container.listen(llmStatusProvider, (_, next) => seen.add(next));
+      container.read(settingsProvider.notifier).selectLlm('fake');
+      expect(container.read(activeLlmProvider)?.id, 'fake');
+      expect(container.read(llmStatusProvider), 'fake (fake-1) — local');
+      expect(seen, ['fake (fake-1) — local']);
+      expect(
+        File('${tmp.path}/settings.json').readAsStringSync(),
+        '{"llm":"fake","version":0}',
+      );
+    });
+
+    test('the selection survives into a fresh container', () {
+      make().read(settingsProvider.notifier).selectLlm('fake');
+      final again = make();
+      expect(again.read(activeLlmProvider)?.id, 'fake');
+      expect(again.read(llmStatusProvider), 'fake (fake-1) — local');
+    });
+
+    test('an unknown selection is named, and null clears it', () {
+      final container = make();
+      final notifier = container.read(settingsProvider.notifier);
+      notifier.selectLlm('nope');
+      expect(container.read(activeLlmProvider), isNull);
+      expect(
+        container.read(llmStatusProvider),
+        "provider 'nope' is not available — local only",
+      );
+      notifier.selectLlm(null);
+      expect(container.read(llmStatusProvider), noProviderStatus);
+    });
+
+    test('unusable settings are said so in the status line', () {
+      File('${tmp.path}/settings.json').writeAsStringSync('nope');
+      final container = make();
+      expect(container.read(settingsProvider).problem, isNotNull);
+      expect(container.read(llmStatusProvider), unreadableSettingsStatus);
+      expect(unreadableSettingsStatus, 'settings unreadable — local only');
+    });
+
+    test('llmRecorderProvider records with the client source', () async {
+      final container = make();
+      final recorder = await container.read(llmRecorderProvider.future);
+      final call = await recorder.start(
+        FakeLlmProvider(),
+        LlmRequest(messages: [const LlmMessage(LlmRole.user, 'hi')]),
+      );
+      await call.done;
+      final archive = await container.read(archiveProvider.future);
+      final events = await archive.events().toList();
+      expect(events.map((e) => e.event.type), [
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+      ]);
+      expect(events.every((e) => e.event.source == 'sai/test'), isTrue);
     });
   });
 }

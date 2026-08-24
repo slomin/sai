@@ -53,7 +53,12 @@ Both clients read and write the same archive; a client picks up the
 other's writes when it opens (live cross-client updates are not in
 yet). To try one against a scratch archive instead of the real one,
 point `SAI_ARCHIVE_ROOT` at a throwaway directory, e.g.
-`SAI_ARCHIVE_ROOT=/tmp/sai-demo`.
+`SAI_ARCHIVE_ROOT=/tmp/sai-demo/archive`. Non-secret settings live in
+`settings.json` in the same data directory as the default archive;
+`SAI_SETTINGS_FILE` moves them, and a scratch run sets both. No LLM
+provider is selected out of the box; the
+built-in `fake` provider answers offline — `{"version":0,"llm":"fake"}`
+in the settings file selects it.
 
 Build a debug app bundle (what CI does): `cd apps/sai_app && flutter build
 macos --debug` → `apps/sai_app/build/macos/Build/Products/Debug/sai.app`.

@@ -63,11 +63,15 @@ Future<ProviderContainer> pumpApp(
   List<Override> overrides = const [],
   bool settled = true,
 }) async {
-  final root = Directory.systemTemp.createTempSync('sai_app_test');
-  addTearDown(() => root.deleteSync(recursive: true));
+  // Archive and settings both go under one temp dir: no test touches the
+  // real data directory, whatever the developer's environment says.
+  final tmp = Directory.systemTemp.createTempSync('sai_app_test');
+  addTearDown(() => tmp.deleteSync(recursive: true));
+  final root = Directory('${tmp.path}/archive');
   final container = ProviderContainer.test(
     overrides: [
       archiveRootProvider.overrideWithValue(root),
+      settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
       eventSourceProvider.overrideWithValue(EventSources.app),
       ...overrides,
     ],

@@ -147,7 +147,7 @@ void main() {
     final container = await pumpApp(
       tester,
       overrides: [
-        providerStatusProvider.overrideWithValue(
+        llmStatusProvider.overrideWithValue(
           'openai-compatible @ http://192.168.1.20:8080 (llama-3.3-70b) — cloud',
         ),
       ],
@@ -173,6 +173,14 @@ void main() {
     await pumpApp(tester);
     expect(find.text(noProviderStatus), findsOneWidget);
     expect(find.text('no provider — local only'), findsOneWidget);
+  });
+
+  testWidgets('the status bar follows the selected provider', (tester) async {
+    final container = await pumpApp(tester);
+    container.read(settingsProvider.notifier).selectLlm('fake');
+    await tester.pump();
+    expect(find.text('fake (fake-1) — local'), findsOneWidget);
+    expect(find.text(noProviderStatus), findsNothing);
   });
 
   testWidgets('submitting in the chat field says it is not wired up', (

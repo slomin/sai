@@ -38,6 +38,12 @@ final class ModelRef {
     if (requestId != null) 'request_id': requestId,
   };
 
+  @override
+  String toString() =>
+      'ModelRef($provider/$id'
+      '${version == null ? '' : ' v$version'}'
+      '${requestId == null ? '' : ' #$requestId'})';
+
   static ModelRef _fromJson(Object? json) {
     final map = _requireObject(json, 'model');
     _rejectUnknownKeys(map, const {
@@ -217,6 +223,18 @@ final class Event {
     if (actor == Actor.assistant && model == null) {
       throw throwing('an assistant event must carry a model block');
     }
+    // Readers require every model field they find to be non-empty; the
+    // writer refuses the same, so one empty id can never poison the log.
+    for (final (name, value) in [
+      ('provider', model?.provider),
+      ('id', model?.id),
+      ('version', model?.version),
+      ('request_id', model?.requestId),
+    ]) {
+      if (value != null && value.isEmpty) {
+        throw throwing('model.$name must not be empty');
+      }
+    }
     final String line;
     try {
       line = encode();
@@ -256,9 +274,19 @@ abstract final class EventTypes {
   static const chatMessage = 'chat.message';
   static const providerRequest = 'provider.request';
   static const providerResponse = 'provider.response';
+  static const providerFailure = 'provider.failure';
+  static const providerUsage = 'provider.usage';
   static const toolCall = 'tool.call';
   static const toolResult = 'tool.result';
   static const correction = 'archive.correction';
+
+  /// The provider-traffic rows (#21): what one model call may write.
+  static const provider = <String>[
+    providerRequest,
+    providerResponse,
+    providerFailure,
+    providerUsage,
+  ];
 }
 
 /// The `source` values sai's own clients write. The field is free-form in
