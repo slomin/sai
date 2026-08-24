@@ -186,12 +186,11 @@ void main() {
     test('the registry holds the fake and rejects duplicate ids', () {
       final container = make();
       expect(container.read(llmRegistryProvider).keys, ['fake']);
+      final first = FakeLlmProvider();
+      final second = FakeLlmProvider();
       final dupes = make(
         overrides: [
-          installedLlmsProvider.overrideWithValue([
-            FakeLlmProvider(),
-            FakeLlmProvider(),
-          ]),
+          installedLlmsProvider.overrideWithValue([first, second]),
         ],
       );
       expect(
@@ -208,6 +207,8 @@ void main() {
           ),
         ),
       );
+      expect(first.isClosed, isTrue, reason: 'nothing constructed leaks');
+      expect(second.isClosed, isTrue);
     });
 
     test('nothing is selected until someone selects', () {

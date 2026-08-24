@@ -133,9 +133,14 @@ final installedLlmsProvider = Provider<List<LlmProvider>>(
 /// The installed providers by id. Throws [StateError] on a duplicate id
 /// at first read; closes the providers when disposed.
 final llmRegistryProvider = Provider<Map<String, LlmProvider>>((ref) {
+  final installed = ref.watch(installedLlmsProvider);
   final registry = <String, LlmProvider>{};
-  for (final provider in ref.watch(installedLlmsProvider)) {
+  for (final provider in installed) {
     if (registry.containsKey(provider.id)) {
+      // Refusing the registry must not leak what was already built.
+      for (final built in installed) {
+        built.close();
+      }
       throw StateError('two LLM providers share the id "${provider.id}"');
     }
     registry[provider.id] = provider;

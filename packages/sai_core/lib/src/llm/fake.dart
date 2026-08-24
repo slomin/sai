@@ -110,8 +110,14 @@ final class FakeLlmProvider implements LlmProvider {
     );
   }
 
+  bool _closed = false;
+
+  /// Whether [close] has been called.
+  bool get isClosed => _closed;
+
   @override
   Future<void> close() async {
+    _closed = true;
     for (final controller in _running.toList()) {
       controller.cancel();
     }
