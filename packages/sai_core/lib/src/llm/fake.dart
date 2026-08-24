@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import '../archive/event.dart';
 import 'call.dart';
 import 'failure.dart';
@@ -64,7 +62,7 @@ final class FakeLlmProvider implements LlmProvider {
     final controller = LlmCallController(model: model);
     _running.add(controller);
     controller.call.done.whenComplete(() => _running.remove(controller));
-    unawaited(_run(controller, request));
+    controller.run(() => _run(controller, request));
     return controller.call;
   }
 

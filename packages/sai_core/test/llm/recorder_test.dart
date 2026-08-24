@@ -265,10 +265,10 @@ final class _ErroringCall implements LlmCall {
       _controller.addError(StateError('bad chunk'));
       await _controller.close();
       _done.complete(
-        const LlmResult(
+        LlmResult(
           text: 'partial',
           finish: LlmFinish.stop,
-          model: ModelRef(provider: 'erroring', id: 'm'),
+          model: const ModelRef(provider: 'erroring', id: 'm'),
         ),
       );
     });

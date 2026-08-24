@@ -66,6 +66,28 @@ void main() {
       expect(() => Event.seal(draft, prev: null, ts: ts), throwsArgumentError);
     });
 
+    test('a model block with an empty field is refused', () {
+      for (final model in const [
+        ModelRef(provider: '', id: 'm'),
+        ModelRef(provider: 'p', id: ''),
+        ModelRef(provider: 'p', id: 'm', version: ''),
+        ModelRef(provider: 'p', id: 'm', requestId: ''),
+      ]) {
+        final draft = EventDraft(
+          type: EventTypes.providerRequest,
+          actor: Actor.system,
+          source: 'sai/tui',
+          payload: const {},
+          model: model,
+        );
+        expect(
+          () => Event.seal(draft, prev: null, ts: ts),
+          throwsArgumentError,
+          reason: '$model',
+        );
+      }
+    });
+
     test('lines above 1 MiB are refused', () {
       final draft = EventDraft(
         type: EventTypes.toolResult,

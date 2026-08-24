@@ -38,6 +38,12 @@ final class ModelRef {
     if (requestId != null) 'request_id': requestId,
   };
 
+  @override
+  String toString() =>
+      'ModelRef($provider/$id'
+      '${version == null ? '' : ' v$version'}'
+      '${requestId == null ? '' : ' #$requestId'})';
+
   static ModelRef _fromJson(Object? json) {
     final map = _requireObject(json, 'model');
     _rejectUnknownKeys(map, const {
@@ -216,6 +222,18 @@ final class Event {
     }
     if (actor == Actor.assistant && model == null) {
       throw throwing('an assistant event must carry a model block');
+    }
+    // Readers require every model field they find to be non-empty; the
+    // writer refuses the same, so one empty id can never poison the log.
+    for (final (name, value) in [
+      ('provider', model?.provider),
+      ('id', model?.id),
+      ('version', model?.version),
+      ('request_id', model?.requestId),
+    ]) {
+      if (value != null && value.isEmpty) {
+        throw throwing('model.$name must not be empty');
+      }
     }
     final String line;
     try {

@@ -107,9 +107,116 @@ void main() {
     });
   });
 
+  group('LlmCallController.run', () {
+    test('a body that throws fails the call with the text so far', () async {
+      final controller = LlmCallController(model: model);
+      controller.run(() async {
+        controller.add('par');
+        throw StateError('adapter bug');
+      });
+      final result = await controller.call.done;
+      expect(result.finish, LlmFinish.failed);
+      expect(result.text, 'par');
+      expect(result.failure?.kind, LlmFailureKind.internal);
+      expect(result.failure?.message, contains('adapter bug'));
+    });
+
+    test('a body that finishes with the wrong text fails, not hangs', () async {
+      final controller = LlmCallController(model: model);
+      controller.run(() async {
+        controller.add('a');
+        controller.finish(stop('b'));
+      });
+      final result = await controller.call.done;
+      expect(result.finish, LlmFinish.failed);
+      expect(result.failure?.kind, LlmFailureKind.internal);
+      expect(result.text, 'a');
+    });
+
+    test('a body that returns without finishing fails the call', () async {
+      final controller = LlmCallController(model: model);
+      controller.run(() async {});
+      final result = await controller.call.done;
+      expect(result.finish, LlmFinish.failed);
+      expect(result.failure?.message, contains('without finishing'));
+    });
+
+    test('a body that finishes normally is left alone', () async {
+      final controller = LlmCallController(model: model);
+      controller.run(() async {
+        controller.add('ok');
+        controller.finish(stop('ok'));
+      });
+      expect((await controller.call.done).finish, LlmFinish.stop);
+    });
+  });
+
   group('LlmRequest', () {
     test('needs at least one message', () {
       expect(() => LlmRequest(messages: const []), throwsArgumentError);
+    });
+
+    test(
+      'rejects an empty model, a non-positive max_tokens, a bad temperature',
+      () {
+        final messages = [const LlmMessage(LlmRole.user, 'hi')];
+        expect(
+          () => LlmRequest(messages: messages, model: ''),
+          throwsArgumentError,
+        );
+        expect(
+          () => LlmRequest(messages: messages, maxTokens: 0),
+          throwsArgumentError,
+        );
+        expect(
+          () => LlmRequest(messages: messages, maxTokens: -1),
+          throwsArgumentError,
+        );
+        expect(
+          () => LlmRequest(messages: messages, temperature: -0.1),
+          throwsArgumentError,
+        );
+        expect(
+          () => LlmRequest(messages: messages, temperature: double.nan),
+          throwsArgumentError,
+        );
+        expect(
+          LlmRequest(
+            messages: messages,
+            maxTokens: 1,
+            temperature: 0,
+          ).maxTokens,
+          1,
+        );
+      },
+    );
+  });
+
+  group('LlmResult', () {
+    test('a failure is present exactly when the finish is failed', () {
+      const failure = LlmFailure(LlmFailureKind.timeout, 'x');
+      expect(
+        () => LlmResult(text: '', finish: LlmFinish.failed, model: model),
+        throwsArgumentError,
+      );
+      expect(
+        () => LlmResult(
+          text: '',
+          finish: LlmFinish.stop,
+          model: model,
+          failure: failure,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        LlmResult(
+          text: '',
+          finish: LlmFinish.failed,
+          model: model,
+          failure: failure,
+        ).failure,
+        same(failure),
+      );
     });
 
     test('messages are unmodifiable', () {

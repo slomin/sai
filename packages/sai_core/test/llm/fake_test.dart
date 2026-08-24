@@ -86,6 +86,14 @@ void main() {
       expect(result.text, isEmpty);
     });
 
+    test('a script that throws fails the call instead of hanging it', () async {
+      final fake = FakeLlmProvider(script: (_) => throw StateError('no reply'));
+      final result = await fake.start(ask('x')).done;
+      expect(result.finish, LlmFinish.failed);
+      expect(result.failure?.kind, LlmFailureKind.internal);
+      expect(result.failure?.message, contains('no reply'));
+    });
+
     test('a real delta interval paces the stream', () async {
       final fake = FakeLlmProvider(delta: const Duration(milliseconds: 5));
       final started = DateTime.now();

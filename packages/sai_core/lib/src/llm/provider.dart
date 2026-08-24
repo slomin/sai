@@ -22,7 +22,9 @@ abstract interface class LlmProvider {
 
   /// Starts a streamed completion. Synchronous, and never throws:
   /// transport, protocol and backend errors arrive as the failure on
-  /// [LlmCall.done]. Providers drive an [LlmCallController].
+  /// [LlmCall.done]. Providers drive an [LlmCallController] and put
+  /// their async work in [LlmCallController.run], which turns any
+  /// throw or forgotten finish into a recorded failure.
   LlmCall start(LlmRequest request);
 
   /// Releases what the provider holds (an HTTP client, say). Calls still

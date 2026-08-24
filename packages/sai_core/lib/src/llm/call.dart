@@ -27,6 +27,16 @@ final class LlmRequest {
     if (messages.isEmpty) {
       throw ArgumentError('a request needs at least one message');
     }
+    if (model != null && model!.isEmpty) {
+      throw ArgumentError('model, when given, must not be empty');
+    }
+    if (maxTokens != null && maxTokens! < 1) {
+      throw ArgumentError('maxTokens must be positive, got $maxTokens');
+    }
+    final t = temperature;
+    if (t != null && !(t >= 0 && t.isFinite)) {
+      throw ArgumentError('temperature must be a finite non-negative number');
+    }
   }
 
   final List<LlmMessage> messages;
@@ -73,15 +83,23 @@ final class LlmUsage {
 /// Why a call ended. Cancellation is an outcome, not a failure.
 enum LlmFinish { stop, length, cancelled, failed }
 
-/// The one terminal value of a call.
+/// The one terminal value of a call. [failure] is present exactly when
+/// [finish] is [LlmFinish.failed] — the constructor refuses anything else.
 final class LlmResult {
-  const LlmResult({
+  LlmResult({
     required this.text,
     required this.finish,
     required this.model,
     this.usage,
     this.failure,
-  });
+  }) {
+    if ((finish == LlmFinish.failed) != (failure != null)) {
+      throw ArgumentError(
+        'a result carries a failure exactly when its finish is failed '
+        '(finish: ${finish.name}, failure: $failure)',
+      );
+    }
+  }
 
   /// Exactly the concatenation of the deltas the call emitted.
   final String text;
@@ -94,6 +112,11 @@ final class LlmResult {
 
   /// Non-null iff [finish] is [LlmFinish.failed].
   final LlmFailure? failure;
+
+  @override
+  String toString() =>
+      'LlmResult(${finish.name}, ${text.length} chars, $model'
+      '${failure == null ? '' : ', $failure'})';
 }
 
 /// A running or finished call.
@@ -163,6 +186,39 @@ final class LlmCallController {
       );
     }
     _complete(result);
+  }
+
+  /// Runs the provider's body under the contract: whatever [body] does —
+  /// throw, return without finishing, finish with the wrong text — the
+  /// call ends with exactly one result. A throw becomes an internal
+  /// failure carrying the text so far; a body that returns while the
+  /// call is still open is one too. Providers put their whole async
+  /// work here instead of firing it unawaited.
+  void run(Future<void> Function() body) {
+    unawaited(
+      Future<void>.sync(body).then(
+        (_) {
+          if (isDone) return;
+          _fail('provider returned without finishing the call');
+        },
+        onError: (Object error) {
+          if (isDone) return;
+          _fail('provider threw: $error');
+        },
+      ),
+    );
+  }
+
+  void _fail(String message) {
+    _complete(
+      LlmResult(
+        text: text,
+        finish: LlmFinish.failed,
+        model: model,
+        usage: usage,
+        failure: LlmFailure(LlmFailureKind.internal, message),
+      ),
+    );
   }
 
   void cancel() {

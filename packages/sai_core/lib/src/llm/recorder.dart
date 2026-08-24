@@ -108,8 +108,8 @@ final class LlmRecorder {
     final ended = clock();
     final durationMs = ended.difference(started).inMilliseconds;
     try {
-      final failure = result.failure;
-      if (result.finish == LlmFinish.failed && failure != null) {
+      if (result.finish == LlmFinish.failed) {
+        final failure = result.failure!;
         final (text, truncated) = _clip(result.text);
         final stored = await archive.append(
           EventDraft(
