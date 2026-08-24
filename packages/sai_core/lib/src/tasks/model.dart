@@ -1,5 +1,6 @@
 import '../archive/blobref.dart';
-import '../archive/event.dart' show formatTs, parseTs;
+import '../archive/event.dart' show formatTs;
+import 'codec.dart';
 import 'date.dart';
 
 /// Entity ids are the blobref of the event that created the entity — see
@@ -87,14 +88,14 @@ final class ChecklistItem {
   };
 
   factory ChecklistItem.fromJson(Object? json) {
-    final map = _requireObject(json, 'checklist item');
-    _rejectUnknownKeys(map, const {
+    final map = requireObject(json, 'checklist item');
+    rejectUnknownKeys(map, const {
       'title',
       'completed_at',
     }, where: 'checklist item');
     return ChecklistItem(
-      title: _requireString(map, 'title', where: 'checklist item'),
-      completedAt: _optionalInstant(
+      title: requireString(map, 'title', where: 'checklist item'),
+      completedAt: optionalInstant(
         map,
         'completed_at',
         where: 'checklist item',
@@ -147,18 +148,18 @@ final class ExternalRef {
   };
 
   factory ExternalRef.fromJson(Object? json) {
-    final map = _requireObject(json, 'external');
-    _rejectUnknownKeys(map, const {
+    final map = requireObject(json, 'external');
+    rejectUnknownKeys(map, const {
       'system',
       'id',
       'version',
       'instance',
     }, where: 'external');
     return ExternalRef(
-      system: _requireString(map, 'system', where: 'external'),
-      id: _requireString(map, 'id', where: 'external'),
-      version: _optionalString(map, 'version', where: 'external'),
-      instance: _optionalString(map, 'instance', where: 'external'),
+      system: requireString(map, 'system', where: 'external'),
+      id: requireString(map, 'id', where: 'external'),
+      version: optionalString(map, 'version', where: 'external'),
+      instance: optionalString(map, 'instance', where: 'external'),
     );
   }
 
@@ -280,8 +281,8 @@ final class Task {
   };
 
   factory Task.fromJson(Object? json) {
-    final map = _requireObject(json, 'task');
-    _rejectUnknownKeys(map, const {
+    final map = requireObject(json, 'task');
+    rejectUnknownKeys(map, const {
       'id',
       'title',
       'notes',
@@ -300,24 +301,24 @@ final class Task {
       'external',
     }, where: 'task');
     return Task(
-      id: _requireId(map, 'id', where: 'task'),
-      title: _requireString(map, 'title', where: 'task'),
-      notes: _optionalString(map, 'notes', where: 'task', emptyOk: true) ?? '',
+      id: requireId(map, 'id', where: 'task'),
+      title: requireString(map, 'title', where: 'task'),
+      notes: optionalString(map, 'notes', where: 'task', emptyOk: true) ?? '',
       when: TaskWhen.fromJson(map['when']),
-      deadline: _optionalDate(map, 'deadline', where: 'task'),
-      project: _optionalId(map, 'project', where: 'task'),
-      area: _optionalId(map, 'area', where: 'task'),
-      heading: _optionalId(map, 'heading', where: 'task'),
-      tags: _idList(map, 'tags', where: 'task'),
+      deadline: optionalDate(map, 'deadline', where: 'task'),
+      project: optionalId(map, 'project', where: 'task'),
+      area: optionalId(map, 'area', where: 'task'),
+      heading: optionalId(map, 'heading', where: 'task'),
+      tags: idList(map, 'tags', where: 'task'),
       checklist: [
-        for (final item in _list(map, 'checklist', where: 'task'))
+        for (final item in jsonList(map, 'checklist', where: 'task'))
           ChecklistItem.fromJson(item),
       ],
-      createdAt: _requireInstant(map, 'created_at', where: 'task'),
-      modifiedAt: _requireInstant(map, 'modified_at', where: 'task'),
-      completedAt: _optionalInstant(map, 'completed_at', where: 'task'),
-      cancelledAt: _optionalInstant(map, 'cancelled_at', where: 'task'),
-      deletedAt: _optionalInstant(map, 'deleted_at', where: 'task'),
+      createdAt: requireInstant(map, 'created_at', where: 'task'),
+      modifiedAt: requireInstant(map, 'modified_at', where: 'task'),
+      completedAt: optionalInstant(map, 'completed_at', where: 'task'),
+      cancelledAt: optionalInstant(map, 'cancelled_at', where: 'task'),
+      deletedAt: optionalInstant(map, 'deleted_at', where: 'task'),
       external: map['external'] == null
           ? null
           : ExternalRef.fromJson(map['external']),
@@ -335,8 +336,8 @@ final class Task {
       other.project == project &&
       other.area == area &&
       other.heading == heading &&
-      _listEquals(other.tags, tags) &&
-      _listEquals(other.checklist, checklist) &&
+      listEquals(other.tags, tags) &&
+      listEquals(other.checklist, checklist) &&
       other.createdAt == createdAt &&
       other.modifiedAt == modifiedAt &&
       other.completedAt == completedAt &&
@@ -432,8 +433,8 @@ final class Project {
   };
 
   factory Project.fromJson(Object? json) {
-    final map = _requireObject(json, 'project');
-    _rejectUnknownKeys(map, const {
+    final map = requireObject(json, 'project');
+    rejectUnknownKeys(map, const {
       'id',
       'title',
       'notes',
@@ -447,17 +448,17 @@ final class Project {
       'external',
     }, where: 'project');
     return Project(
-      id: _requireId(map, 'id', where: 'project'),
-      title: _requireString(map, 'title', where: 'project'),
+      id: requireId(map, 'id', where: 'project'),
+      title: requireString(map, 'title', where: 'project'),
       notes:
-          _optionalString(map, 'notes', where: 'project', emptyOk: true) ?? '',
-      area: _optionalId(map, 'area', where: 'project'),
+          optionalString(map, 'notes', where: 'project', emptyOk: true) ?? '',
+      area: optionalId(map, 'area', where: 'project'),
       when: TaskWhen.fromJson(map['when']),
-      deadline: _optionalDate(map, 'deadline', where: 'project'),
-      tags: _idList(map, 'tags', where: 'project'),
-      createdAt: _requireInstant(map, 'created_at', where: 'project'),
-      modifiedAt: _requireInstant(map, 'modified_at', where: 'project'),
-      deletedAt: _optionalInstant(map, 'deleted_at', where: 'project'),
+      deadline: optionalDate(map, 'deadline', where: 'project'),
+      tags: idList(map, 'tags', where: 'project'),
+      createdAt: requireInstant(map, 'created_at', where: 'project'),
+      modifiedAt: requireInstant(map, 'modified_at', where: 'project'),
+      deletedAt: optionalInstant(map, 'deleted_at', where: 'project'),
       external: map['external'] == null
           ? null
           : ExternalRef.fromJson(map['external']),
@@ -473,7 +474,7 @@ final class Project {
       other.area == area &&
       other.when == when &&
       other.deadline == deadline &&
-      _listEquals(other.tags, tags) &&
+      listEquals(other.tags, tags) &&
       other.createdAt == createdAt &&
       other.modifiedAt == modifiedAt &&
       other.deletedAt == deletedAt &&
@@ -536,8 +537,8 @@ final class Heading {
   };
 
   factory Heading.fromJson(Object? json) {
-    final map = _requireObject(json, 'heading');
-    _rejectUnknownKeys(map, const {
+    final map = requireObject(json, 'heading');
+    rejectUnknownKeys(map, const {
       'id',
       'project',
       'title',
@@ -546,12 +547,12 @@ final class Heading {
       'deleted_at',
     }, where: 'heading');
     return Heading(
-      id: _requireId(map, 'id', where: 'heading'),
-      project: _requireId(map, 'project', where: 'heading'),
-      title: _requireString(map, 'title', where: 'heading'),
-      createdAt: _requireInstant(map, 'created_at', where: 'heading'),
-      modifiedAt: _requireInstant(map, 'modified_at', where: 'heading'),
-      deletedAt: _optionalInstant(map, 'deleted_at', where: 'heading'),
+      id: requireId(map, 'id', where: 'heading'),
+      project: requireId(map, 'project', where: 'heading'),
+      title: requireString(map, 'title', where: 'heading'),
+      createdAt: requireInstant(map, 'created_at', where: 'heading'),
+      modifiedAt: requireInstant(map, 'modified_at', where: 'heading'),
+      deletedAt: optionalInstant(map, 'deleted_at', where: 'heading'),
     );
   }
 
@@ -611,8 +612,8 @@ final class Area {
   };
 
   factory Area.fromJson(Object? json) {
-    final map = _requireObject(json, 'area');
-    _rejectUnknownKeys(map, const {
+    final map = requireObject(json, 'area');
+    rejectUnknownKeys(map, const {
       'id',
       'title',
       'created_at',
@@ -621,11 +622,11 @@ final class Area {
       'external',
     }, where: 'area');
     return Area(
-      id: _requireId(map, 'id', where: 'area'),
-      title: _requireString(map, 'title', where: 'area'),
-      createdAt: _requireInstant(map, 'created_at', where: 'area'),
-      modifiedAt: _requireInstant(map, 'modified_at', where: 'area'),
-      deletedAt: _optionalInstant(map, 'deleted_at', where: 'area'),
+      id: requireId(map, 'id', where: 'area'),
+      title: requireString(map, 'title', where: 'area'),
+      createdAt: requireInstant(map, 'created_at', where: 'area'),
+      modifiedAt: requireInstant(map, 'modified_at', where: 'area'),
+      deletedAt: optionalInstant(map, 'deleted_at', where: 'area'),
       external: map['external'] == null
           ? null
           : ExternalRef.fromJson(map['external']),
@@ -689,8 +690,8 @@ final class Tag {
   };
 
   factory Tag.fromJson(Object? json) {
-    final map = _requireObject(json, 'tag');
-    _rejectUnknownKeys(map, const {
+    final map = requireObject(json, 'tag');
+    rejectUnknownKeys(map, const {
       'id',
       'title',
       'parent',
@@ -699,12 +700,12 @@ final class Tag {
       'deleted_at',
     }, where: 'tag');
     return Tag(
-      id: _requireId(map, 'id', where: 'tag'),
-      title: _requireString(map, 'title', where: 'tag'),
-      parent: _optionalId(map, 'parent', where: 'tag'),
-      createdAt: _requireInstant(map, 'created_at', where: 'tag'),
-      modifiedAt: _requireInstant(map, 'modified_at', where: 'tag'),
-      deletedAt: _optionalInstant(map, 'deleted_at', where: 'tag'),
+      id: requireId(map, 'id', where: 'tag'),
+      title: requireString(map, 'title', where: 'tag'),
+      parent: optionalId(map, 'parent', where: 'tag'),
+      createdAt: requireInstant(map, 'created_at', where: 'tag'),
+      modifiedAt: requireInstant(map, 'modified_at', where: 'tag'),
+      deletedAt: optionalInstant(map, 'deleted_at', where: 'tag'),
     );
   }
 
@@ -722,166 +723,3 @@ final class Tag {
   int get hashCode =>
       Object.hash(id, title, parent, createdAt, modifiedAt, deletedAt);
 }
-
-// --- strict decode helpers, shared by the model and the event payloads ---
-
-bool _listEquals<T>(List<T> a, List<T> b) {
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
-}
-
-Map<String, Object?> _requireObject(Object? value, String where) {
-  if (value is! Map<String, Object?>) {
-    throw FormatException('$where must be a JSON object');
-  }
-  return value;
-}
-
-void _rejectUnknownKeys(
-  Map<String, Object?> map,
-  Set<String> allowed, {
-  required String where,
-}) {
-  for (final key in map.keys) {
-    if (!allowed.contains(key)) {
-      throw FormatException('unknown key in $where: "$key"');
-    }
-  }
-}
-
-String _requireString(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  final value = map[key];
-  if (value is! String || value.isEmpty) {
-    throw FormatException('$where.$key must be a non-empty string');
-  }
-  return value;
-}
-
-String? _optionalString(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-  bool emptyOk = false,
-}) {
-  final value = map[key];
-  if (value == null) return null;
-  if (value is! String || (!emptyOk && value.isEmpty)) {
-    throw FormatException(
-      '$where.$key must be a ${emptyOk ? '' : 'non-empty '}string',
-    );
-  }
-  return value;
-}
-
-BlobRef _requireId(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  final id = _optionalId(map, key, where: where);
-  if (id == null) {
-    throw FormatException('$where.$key must be a blobref');
-  }
-  return id;
-}
-
-BlobRef? _optionalId(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  final value = map[key];
-  if (value == null) return null;
-  if (value is! String) {
-    throw FormatException('$where.$key must be a blobref string');
-  }
-  try {
-    return BlobRef.parse(value);
-  } on FormatException {
-    throw FormatException('$where.$key is not a blobref: "$value"');
-  }
-}
-
-DateTime _requireInstant(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  final instant = _optionalInstant(map, key, where: where);
-  if (instant == null) {
-    throw FormatException('$where.$key must be a timestamp');
-  }
-  return instant;
-}
-
-DateTime? _optionalInstant(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  final value = map[key];
-  if (value == null) return null;
-  if (value is! String) {
-    throw FormatException('$where.$key must be a timestamp string');
-  }
-  try {
-    return parseTs(value);
-  } on FormatException catch (e) {
-    throw FormatException('$where.$key: ${e.message}');
-  }
-}
-
-CalendarDate? _optionalDate(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  final value = map[key];
-  if (value == null) return null;
-  if (value is! String) {
-    throw FormatException('$where.$key must be a date string');
-  }
-  try {
-    return CalendarDate.parse(value);
-  } on FormatException catch (e) {
-    throw FormatException('$where.$key: ${e.message}');
-  }
-}
-
-List<Object?> _list(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  final value = map[key];
-  if (value == null) return const [];
-  if (value is! List) {
-    throw FormatException('$where.$key must be a list');
-  }
-  return value;
-}
-
-List<BlobRef> _idList(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) => [
-  for (final entry in _list(map, key, where: where))
-    () {
-      if (entry is! String) {
-        throw FormatException('$where.$key entries must be blobref strings');
-      }
-      try {
-        return BlobRef.parse(entry);
-      } on FormatException {
-        throw FormatException('$where.$key entry is not a blobref: "$entry"');
-      }
-    }(),
-];

@@ -176,6 +176,48 @@ type. A breaking payload change is a new type name, never a rewrite.
 paraphrased — the log is an audit record, and secrets must never enter
 it (#29 keeps keys in the Keychain).
 
+### Task domain (#17)
+
+Task mutations are archive events first (ADR
+[0004](../decisions/0004-the-task-store-is-event-sourced.md)); the store
+is a projection replayed from these lines. Every event below names its
+subject in `payload` (the key the reducer reads) and repeats it in
+`refs` for provenance tooling. **The id of a `*.create` event is the id
+of the entity it creates.** Payload schemas:
+[task model v0](../tasks/task-model-v0.md).
+
+| type | actor | notes |
+| --- | --- | --- |
+| `task.create` | user / system / assistant | `payload.title`; optional `notes`, `when`, `deadline`, `project`/`area`/`heading`, `tags`, `checklist`, `created_at` (import-only, requires `external`), `external` |
+| `task.edit` | user / system / assistant | `payload.task` plus changed content fields; a JSON `null` clears, an absent key leaves the field alone; placement keys are rejected — that is `task.move` |
+| `task.move` | user / system / assistant | `payload.task` plus `project`, `area`, `heading` — every placement key written on every move |
+| `task.complete` | user / system / assistant | `payload.task`; optional `at` for imported history |
+| `task.cancel` | user / system / assistant | `payload.task`; optional `at` |
+| `task.reopen` | user / system / assistant | `payload.task`; clears completion and cancellation |
+| `task.delete` | user / system / assistant | `payload.task`; soft — the log keeps the history, the projection stops showing it |
+| `task.restore` | user / system / assistant | `payload.task`; undoes `task.delete` |
+| `task.checklist` | user / system / assistant | `payload.task`, `payload.items` — the whole checklist, in order |
+| `area.create` | user / system | `payload.title`; optional `created_at`, `external` |
+| `area.edit` | user / system | `payload.area` plus changed fields |
+| `area.delete` | user / system | `payload.area`; soft |
+| `area.restore` | user / system | `payload.area` |
+| `project.create` | user / system | `payload.title`; optional `notes`, `area`, `when`, `deadline`, `tags`, `created_at`, `external` |
+| `project.edit` | user / system | `payload.project` plus changed fields |
+| `project.delete` | user / system | `payload.project`; soft |
+| `project.restore` | user / system | `payload.project` |
+| `heading.create` | user / system | `payload.project`, `payload.title`; optional `created_at`, `external` |
+| `heading.edit` | user / system | `payload.heading` plus changed fields |
+| `heading.delete` | user / system | `payload.heading`; soft |
+| `heading.restore` | user / system | `payload.heading` |
+| `tag.create` | user / system | `payload.title`; optional `parent`, `created_at`, `external` |
+| `tag.edit` | user / system | `payload.tag` plus changed fields |
+| `tag.delete` | user / system | `payload.tag`; soft |
+| `tag.restore` | user / system | `payload.tag` |
+
+None of these names collides with the reserved Perkeep vocabulary below:
+that list reserves bare type names, and the v0.2 migration maps these
+mutation events onto claims against the `*.create` permanodes directly.
+
 ## Reserved for v0.2 (the Perkeep-shaped substrate, #16)
 
 Fixed now so the migration never rewrites a byte:
