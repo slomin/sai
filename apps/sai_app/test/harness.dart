@@ -1,9 +1,9 @@
 import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sai_app/main_pane.dart';
 import 'package:sai_app/sai_app.dart';
 import 'package:sai_core/sai_core.dart';
 
@@ -52,13 +52,23 @@ Future<void> capture(
       (parseQuickCapture(line, today: container.read(todayProvider)) == null
           ? 0
           : 1);
-  await tester.enterText(find.byType(TextField), line);
+  await tester.enterText(find.byKey(captureFieldKey), line);
   await tester.runAsync(() async {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     while (store.projection.eventCount < expected) {
       await Future<void>.delayed(const Duration(milliseconds: 2));
     }
   });
+  await tester.pump();
+}
+
+/// Points the shell at [section] and renders it.
+Future<void> selectSection(
+  WidgetTester tester,
+  ProviderContainer container,
+  SidebarSection section,
+) async {
+  container.read(selectedSectionProvider.notifier).select(section);
   await tester.pump();
 }
 
