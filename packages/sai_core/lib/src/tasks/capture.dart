@@ -125,13 +125,13 @@ List<CaptureSection> captureSections(
   TaskProjection projection,
   CalendarDate today,
 ) => [
-  for (final (name, list) in [
-    ('Inbox', TaskList.inbox),
-    ('Today', TaskList.today),
-    ('Upcoming', TaskList.upcoming),
-    ('Someday', TaskList.someday),
+  for (final list in [
+    TaskList.inbox,
+    TaskList.today,
+    TaskList.upcoming,
+    TaskList.someday,
   ])
-    CaptureSection(name, projection.list(list, today: today)),
+    CaptureSection(listTitle(list), projection.list(list, today: today)),
 ];
 
 final _whitespace = RegExp(r'\s');

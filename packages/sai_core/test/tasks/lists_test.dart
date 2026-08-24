@@ -137,4 +137,19 @@ void main() {
       expect(listsOf(task(deleted: true), today), isEmpty);
     });
   });
+
+  group('listTitle — the display names', () {
+    test('covers every list', () {
+      expect(listTitle(TaskList.inbox), 'Inbox');
+      expect(listTitle(TaskList.today), 'Today');
+      expect(listTitle(TaskList.upcoming), 'Upcoming');
+      expect(listTitle(TaskList.anytime), 'Anytime');
+      expect(listTitle(TaskList.someday), 'Someday');
+      expect(listTitle(TaskList.logbook), 'Logbook');
+    });
+
+    test('the Trash keeps its name beside the lists', () {
+      expect(trashTitle, 'Trash');
+    });
+  });
 }
