@@ -61,3 +61,12 @@ What decided it:
   away and rebuilt instead.
 - Deleting a task deletes nothing: the log keeps the full history, and
   the projection simply stops showing it.
+
+### Amendment (2026-08-24, #17)
+
+The v0.1 projection is **in memory** — full replay at open, apply on
+append — not SQLite. The event-sourcing decision, the single write path
+and the disposable-projection consequence are unchanged; only the
+projection's medium is deferred, tracked in #49, until replay cost or
+query needs earn it. The task model and payload contract live in
+[task-model-v0](../tasks/task-model-v0.md).
