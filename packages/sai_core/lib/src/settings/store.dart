@@ -2,28 +2,38 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../archive/archive_root.dart';
 import 'settings.dart';
 
 /// Where the settings file lives: `SAI_SETTINGS_FILE` when set, else
-/// `settings.json` beside the archive directory — with the archive at
-/// `<data>/archive`, settings are `<data>/settings.json` (ADR 0006).
+/// `settings.json` in sai's data directory (ADR 0006). Independent of
+/// `SAI_ARCHIVE_ROOT`: pointing the archive at a scratch directory does
+/// not move the settings into whatever is next to it.
 File resolveSettingsFile({
   required Map<String, String> environment,
-  required Directory archiveRoot,
+  required String operatingSystem,
 }) {
   final override = environment['SAI_SETTINGS_FILE'];
   if (override != null && override.isNotEmpty) return File(override);
-  return File(p.join(archiveRoot.parent.path, 'settings.json'));
+  final data = resolveDataDir(
+    environment: environment,
+    operatingSystem: operatingSystem,
+    what: 'the settings file: no SAI_SETTINGS_FILE',
+  );
+  return File(p.join(data.path, 'settings.json'));
 }
 
 /// Reads and writes the settings file. Synchronous: the file is a few
 /// hundred bytes, and the callers are notifiers that must not flicker.
 final class SettingsStore {
-  SettingsStore(this.file, {DateTime Function()? clock})
+  SettingsStore(this.file, {DateTime Function()? clock, this.beforeQuarantine})
     : _clock = clock ?? DateTime.timestamp;
 
   final File file;
   final DateTime Function() _clock;
+
+  /// Test seam: runs between deciding to quarantine and the rename.
+  final void Function()? beforeQuarantine;
   bool _readOnly = false;
 
   /// The per-process temp file a write goes through. No lock guards the
@@ -38,23 +48,43 @@ final class SettingsStore {
   /// refuse to [save] — a newer sai's settings are never overwritten.
   Settings load() {
     if (!file.existsSync()) return Settings.empty;
+    final name = p.basename(file.path);
+    final String text;
     try {
-      return Settings.decode(file.readAsStringSync());
+      text = file.readAsStringSync();
+    } on FileSystemException catch (e) {
+      // Not UTF-8 is content, and gets quarantined; anything else (a
+      // permission, a race with a delete) is reported and left alone.
+      if (e.osError == null) return _quarantined(name, e.message);
+      return Settings(problem: '$name could not be read: ${e.message}');
+    }
+    try {
+      return Settings.decode(text);
     } on NewerSettingsVersion catch (e) {
       _readOnly = true;
       return Settings(
         problem:
-            '${p.basename(file.path)} is version ${e.version}, newer than '
-            'this sai understands; it is left as it is',
+            '$name is version ${e.version}, newer than this sai '
+            'understands; it is left as it is',
       );
     } on SettingsFormatException catch (e) {
-      final aside = _quarantine();
-      return Settings(
-        problem:
-            '${p.basename(file.path)} was not readable (${e.reason}) and '
-            'was moved aside as ${p.basename(aside.path)}',
-      );
+      return _quarantined(name, e.reason);
     }
+  }
+
+  Settings _quarantined(String name, String reason) {
+    final File aside;
+    try {
+      aside = _quarantine();
+    } on FileSystemException {
+      // Another client moved it first, or it vanished: nothing to keep.
+      return Settings(problem: '$name was not readable ($reason) and is gone');
+    }
+    return Settings(
+      problem:
+          '$name was not readable ($reason) and was moved aside as '
+          '${p.basename(aside.path)}',
+    );
   }
 
   /// Writes [settings] atomically: temp file, fsync, rename.
@@ -78,12 +108,21 @@ final class SettingsStore {
     temp.renameSync(file.path);
   }
 
+  /// Moves the file aside under a microsecond stamp; a name already
+  /// taken (a pinned clock, two edits in one tick) gets a counter, so a
+  /// quarantine never overwrites an earlier one.
   File _quarantine() {
+    beforeQuarantine?.call();
     final ts = _clock().toUtc();
-    String pad(int n) => n.toString().padLeft(2, '0');
+    String pad(int n, [int width = 2]) => n.toString().padLeft(width, '0');
     final stamp =
         '${ts.year}${pad(ts.month)}${pad(ts.day)}'
-        'T${pad(ts.hour)}${pad(ts.minute)}${pad(ts.second)}Z';
-    return file.renameSync('${file.path}.bad-$stamp');
+        'T${pad(ts.hour)}${pad(ts.minute)}${pad(ts.second)}'
+        '${pad(ts.millisecond * 1000 + ts.microsecond, 6)}Z';
+    var target = '${file.path}.bad-$stamp';
+    for (var n = 1; File(target).existsSync(); n++) {
+      target = '${file.path}.bad-$stamp-$n';
+    }
+    return file.renameSync(target);
   }
 }
