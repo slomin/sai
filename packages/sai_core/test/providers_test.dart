@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:riverpod/misc.dart' show Override, ProviderException;
@@ -151,23 +152,29 @@ void main() {
     late Directory tmp;
     late Directory root;
 
+    late InMemorySecretStore secrets;
+
     setUp(() {
       tmp = Directory.systemTemp.createTempSync('sai_llm_providers_test');
       root = Directory('${tmp.path}/archive');
+      secrets = InMemorySecretStore();
     });
     tearDown(() => tmp.deleteSync(recursive: true));
 
-    ProviderContainer make({List<Override> overrides = const []}) =>
-        ProviderContainer.test(
-          overrides: [
-            archiveRootProvider.overrideWithValue(root),
-            settingsFileProvider.overrideWithValue(
-              File('${tmp.path}/settings.json'),
-            ),
-            eventSourceProvider.overrideWithValue('sai/test'),
-            ...overrides,
-          ],
-        );
+    ProviderContainer make({
+      List<Override> overrides = const [],
+      SecretStore? store,
+    }) => ProviderContainer.test(
+      overrides: [
+        archiveRootProvider.overrideWithValue(root),
+        settingsFileProvider.overrideWithValue(
+          File('${tmp.path}/settings.json'),
+        ),
+        eventSourceProvider.overrideWithValue('sai/test'),
+        secretStoreProvider.overrideWithValue(store ?? secrets),
+        ...overrides,
+      ],
+    );
 
     test('the settings file is resolved from the environment', () {
       final container = ProviderContainer.test(
@@ -262,6 +269,185 @@ void main() {
       expect(unreadableSettingsStatus, 'settings unreadable — local only');
     });
 
+    group('configured providers', () {
+      final lan = ProviderConfig(
+        id: 'lan',
+        kind: 'fake',
+        defaultModel: 'qwen',
+        credential: 'provider:lan',
+      );
+
+      test('a configured provider joins the registry and can be selected', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(lan);
+        expect(container.read(llmRegistryProvider).keys, ['fake', 'lan']);
+        settings.selectLlm('lan');
+        expect(container.read(activeLlmProvider)?.defaultModel, 'qwen');
+        expect(
+          container.read(llmStatusProvider),
+          'lan (qwen) — local · no key',
+        );
+        expect(
+          jsonDecode(File('${tmp.path}/settings.json').readAsStringSync()),
+          {
+            'version': 0,
+            'llm': 'lan',
+            'providers': [
+              {
+                'id': 'lan',
+                'kind': 'fake',
+                'default_model': 'qwen',
+                'credential': 'provider:lan',
+              },
+            ],
+          },
+        );
+      });
+
+      test('selecting does not rebuild the providers; configuring does', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(lan);
+        final before = container.read(llmRegistryProvider)['lan']!;
+        settings.selectLlm('lan');
+        settings.selectLlm('fake');
+        expect(
+          identical(container.read(llmRegistryProvider)['lan'], before),
+          isTrue,
+        );
+        expect((before as FakeLlmProvider).isClosed, isFalse);
+        settings.upsertProvider(lan.copyWith(defaultModel: () => 'other'));
+        final after = container.read(llmRegistryProvider)['lan']!;
+        expect(identical(after, before), isFalse);
+        expect(before.isClosed, isTrue, reason: 'the old one is released');
+        expect(after.defaultModel, 'other');
+      });
+
+      test('a configured provider may take over a built-in id', () {
+        final container = make();
+        container
+            .read(settingsProvider.notifier)
+            .upsertProvider(
+              ProviderConfig(id: 'fake', kind: 'fake', defaultModel: 'mine'),
+            );
+        expect(container.read(llmRegistryProvider).keys, ['fake']);
+        expect(
+          container.read(llmRegistryProvider)['fake']!.defaultModel,
+          'mine',
+        );
+      });
+
+      test('an unknown kind is kept, named, and not built', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(ProviderConfig(id: 'cloud', kind: 'future'));
+        settings.selectLlm('cloud');
+        expect(container.read(llmRegistryProvider).keys, ['fake']);
+        expect(container.read(activeLlmProvider), isNull);
+        expect(
+          container.read(llmStatusProvider),
+          "provider 'cloud' has kind 'future', which this sai cannot build — "
+          'local only',
+        );
+        expect(make().read(settingsProvider).provider('cloud')?.kind, 'future');
+      });
+
+      test('removing a provider clears its selection', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(lan);
+        settings.selectLlm('lan');
+        settings.removeProvider('lan');
+        expect(container.read(settingsProvider).llm, isNull);
+        expect(container.read(llmRegistryProvider).keys, ['fake']);
+        expect(container.read(llmStatusProvider), noProviderStatus);
+      });
+
+      test('credential status follows the store and the configuration', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        expect(
+          container.read(credentialStatusProvider('fake')),
+          CredentialStatus.none,
+        );
+        expect(
+          container.read(credentialStatusProvider('nope')),
+          CredentialStatus.none,
+        );
+        settings.upsertProvider(lan);
+        settings.selectLlm('lan');
+        final seen = <String>[];
+        container.listen(llmStatusProvider, (_, next) => seen.add(next));
+        expect(
+          container.read(credentialStatusProvider('lan')),
+          CredentialStatus.missing,
+        );
+
+        container
+            .read(credentialsProvider.notifier)
+            .set('lan', 'sk-test-value');
+        expect(
+          container.read(credentialStatusProvider('lan')),
+          CredentialStatus.set,
+        );
+        expect(secrets.read('provider:lan'), 'sk-test-value');
+        expect(container.read(llmStatusProvider), 'lan (qwen) — local');
+
+        expect(
+          container.read(credentialsProvider.notifier).clear('lan'),
+          isTrue,
+        );
+        expect(
+          container.read(llmStatusProvider),
+          'lan (qwen) — local · no key',
+        );
+        expect(
+          container.read(credentialsProvider.notifier).clear('lan'),
+          isFalse,
+        );
+        expect(
+          container.read(credentialStatusProvider('lan')),
+          CredentialStatus.missing,
+        );
+        expect(seen, ['lan (qwen) — local', 'lan (qwen) — local · no key']);
+
+        settings.upsertProvider(lan.copyWith(credential: () => null));
+        expect(
+          container.read(credentialStatusProvider('lan')),
+          CredentialStatus.none,
+        );
+        expect(container.read(settingsProvider).llm, 'lan');
+      });
+
+      test('a keyless or unknown provider refuses a credential', () {
+        final container = make();
+        final credentials = container.read(credentialsProvider.notifier);
+        expect(() => credentials.set('nope', 'v'), throwsStateError);
+        container
+            .read(settingsProvider.notifier)
+            .upsertProvider(ProviderConfig(id: 'local', kind: 'fake'));
+        expect(() => credentials.set('local', 'v'), throwsStateError);
+        expect(() => credentials.clear('local'), throwsStateError);
+        expect(secrets.accounts, isEmpty);
+      });
+
+      test('a store that fails reads as unavailable', () {
+        final container = make(store: _BrokenStore());
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(lan);
+        settings.selectLlm('lan');
+        expect(
+          container.read(credentialStatusProvider('lan')),
+          CredentialStatus.unavailable,
+        );
+        expect(
+          container.read(llmStatusProvider),
+          'lan (qwen) — local · keychain unavailable',
+        );
+      });
+    });
+
     test('llmRecorderProvider records with the client source', () async {
       final container = make();
       final recorder = await container.read(llmRecorderProvider.future);
@@ -280,4 +466,19 @@ void main() {
       expect(events.every((e) => e.event.source == 'sai/test'), isTrue);
     });
   });
+}
+
+final class _BrokenStore implements SecretStore {
+  @override
+  String? read(String account) =>
+      throw const SecretStoreException('broken', status: -25293);
+
+  @override
+  bool has(String account) => read(account) != null;
+
+  @override
+  void write(String account, String value) => read(account);
+
+  @override
+  bool delete(String account) => read(account) != null;
 }

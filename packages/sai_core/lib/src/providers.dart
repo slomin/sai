@@ -6,10 +6,14 @@ import 'app_info.dart';
 import 'archive/archive.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
+import 'llm/factory.dart';
 import 'llm/fake.dart';
 import 'llm/provider.dart';
 import 'llm/recorder.dart';
 import 'llm/status.dart';
+import 'secrets/keychain.dart';
+import 'secrets/secret_store.dart';
+import 'settings/provider_config.dart';
 import 'settings/settings.dart';
 import 'settings/store.dart';
 import 'tasks/date.dart';
@@ -123,12 +127,76 @@ final settingsProvider = NotifierProvider<SettingsNotifier, Settings>(
   SettingsNotifier.new,
 );
 
-/// Every [LlmProvider] this build can offer, before validation. The fake
-/// ships so offline development needs no credentials; #22 adds the
-/// configured OpenAI-compatible endpoints.
-final installedLlmsProvider = Provider<List<LlmProvider>>(
+/// Where secrets live (ADR 0008): the Keychain on macOS, memory anywhere
+/// else. Every test harness overrides this with an [InMemorySecretStore]
+/// — nothing under `test/` may reach the login keychain.
+final secretStoreProvider = Provider<SecretStore>(
+  (ref) => Platform.isMacOS ? KeychainSecretStore() : InMemorySecretStore(),
+);
+
+/// Whether a provider's credential is there. [CredentialStatus.none] is a
+/// provider that takes no key; the others say what the store answered.
+enum CredentialStatus { none, set, missing, unavailable }
+
+/// Writes credentials through [secretStoreProvider] and bumps a revision
+/// so [credentialStatusProvider] re-reads. Values never enter state.
+final credentialsProvider = NotifierProvider<CredentialsNotifier, int>(
+  CredentialsNotifier.new,
+);
+
+/// The credential status of the configured provider [id] — the built-in
+/// fake and unknown ids take no key. Re-evaluated whenever
+/// [credentialsProvider] writes or the configuration changes.
+final credentialStatusProvider = Provider.family<CredentialStatus, String>((
+  ref,
+  id,
+) {
+  ref.watch(credentialsProvider);
+  final account = ref.watch(
+    settingsProvider.select((s) => s.provider(id)?.credential),
+  );
+  if (account == null) return CredentialStatus.none;
+  try {
+    return ref.watch(secretStoreProvider).has(account)
+        ? CredentialStatus.set
+        : CredentialStatus.missing;
+  } on SecretStoreException {
+    return CredentialStatus.unavailable;
+  }
+});
+
+/// The factories this build can turn a [ProviderConfig] into, by kind.
+/// #22 adds `openai_compatible`.
+final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>(
+  (ref) => const {'fake': fakeProviderFactory},
+);
+
+/// The providers that ship with every build, needing no configuration.
+/// A configured provider with the same id replaces the built-in one.
+final builtinLlmsProvider = Provider<List<LlmProvider>>(
   (ref) => [FakeLlmProvider()],
 );
+
+/// Every [LlmProvider] this build can offer: the built-ins plus one per
+/// configured provider whose kind has a factory. Watches only the
+/// configured list, not the selection — selecting must never rebuild
+/// (and so close) the providers, or a running call would be cut.
+final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
+  final configs = ref.watch(settingsProvider.select((s) => s.providers));
+  final factories = ref.watch(llmFactoriesProvider);
+  final secrets = ref.watch(secretStoreProvider);
+  final configured = <LlmProvider>[];
+  for (final config in configs) {
+    final factory = factories[config.kind];
+    if (factory != null) configured.add(factory(config, secrets));
+  }
+  final taken = {for (final p in configured) p.id};
+  return [
+    for (final builtin in ref.watch(builtinLlmsProvider))
+      if (!taken.contains(builtin.id)) builtin,
+    ...configured,
+  ];
+});
 
 /// The installed providers by id. Throws [StateError] on a duplicate id
 /// at first read; closes the providers when disposed.
@@ -170,8 +238,17 @@ final llmStatusProvider = Provider<String>((ref) {
   final id = settings.llm;
   if (id == null) return noProviderStatus;
   final active = ref.watch(activeLlmProvider);
-  if (active == null) return missingProviderStatus(id);
-  return llmStatusLine(active);
+  if (active == null) {
+    final config = settings.provider(id);
+    if (config == null) return missingProviderStatus(id);
+    return unavailableKindStatus(id, config.kind);
+  }
+  return llmStatusLine(active) +
+      switch (ref.watch(credentialStatusProvider(id))) {
+        CredentialStatus.missing => missingCredentialSuffix,
+        CredentialStatus.unavailable => unavailableSecretsSuffix,
+        CredentialStatus.none || CredentialStatus.set => '',
+      };
 });
 
 /// A recorder bound to the archive and this client's source — how a
@@ -202,10 +279,55 @@ class SettingsNotifier extends Notifier<Settings> {
   /// Selects the provider with [id] (null for none), writing the file
   /// before the state changes. Throws [StateError] when the file belongs
   /// to a newer sai and must not be overwritten.
-  void selectLlm(String? id) {
-    final next = state.withLlm(id);
+  void selectLlm(String? id) => _commit(state.withLlm(id));
+
+  /// Adds [config], or replaces the provider with its id in place.
+  void upsertProvider(ProviderConfig config) =>
+      _commit(state.withProvider(config));
+
+  /// Removes the provider [id], clearing its selection if it was active.
+  /// The credential, if any, stays in the secret store — removing a
+  /// configuration is not revoking a key; [CredentialsNotifier.clear]
+  /// is.
+  void removeProvider(String id) => _commit(state.withoutProvider(id));
+
+  void _commit(Settings next) {
     _store.save(next);
     state = next;
+  }
+}
+
+/// Write path for credentials. Reads stay on [credentialStatusProvider].
+class CredentialsNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  /// Stores [value] under the account of the configured provider [id]
+  /// (`provider:<id>` unless its configuration names another). Throws
+  /// [StateError] for an unconfigured id or one that takes no key, and
+  /// [SecretStoreException] when the store refuses.
+  void set(String id, String value) {
+    ref.read(secretStoreProvider).write(_account(id), value);
+    state++;
+  }
+
+  /// Removes the credential of [id]; returns whether there was one.
+  bool clear(String id) {
+    final gone = ref.read(secretStoreProvider).delete(_account(id));
+    state++;
+    return gone;
+  }
+
+  String _account(String id) {
+    final config = ref.read(settingsProvider).provider(id);
+    if (config == null) {
+      throw StateError("provider '$id' is not configured");
+    }
+    final account = config.credential;
+    if (account == null) {
+      throw StateError("provider '$id' takes no credential");
+    }
+    return account;
   }
 }
 

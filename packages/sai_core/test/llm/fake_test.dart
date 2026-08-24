@@ -91,7 +91,7 @@ void main() {
       final result = await fake.start(ask('x')).done;
       expect(result.finish, LlmFinish.failed);
       expect(result.failure?.kind, LlmFailureKind.internal);
-      expect(result.failure?.message, contains('no reply'));
+      expect(result.failure?.message, 'provider threw: StateError');
     });
 
     test('a real delta interval paces the stream', () async {

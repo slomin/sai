@@ -64,9 +64,10 @@ Why not the alternatives:
 
 ## Consequences
 
-- `settings.json` holds exactly one key today; #29 grows it (endpoints,
-  default models, Keychain references) and promotes this table to
-  `docs/settings/settings-v0.md` when it becomes a real schema.
+- #29 grew the file with configured providers (endpoints, default
+  models, Keychain account names); the schema now lives in
+  [docs/settings/settings-v0.md](../settings/settings-v0.md) and the
+  table above is its first version.
 - The quarantine rule is the one place in sai where a malformed file is
   moved rather than reported and left alone. It is safe because settings
   hold no history; nothing here is ever the only copy of anything.
