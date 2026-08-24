@@ -26,7 +26,7 @@ class StatusBar extends ConsumerWidget {
             ConstrainedBox(
               constraints: BoxConstraints(maxWidth: constraints.maxWidth / 2),
               child: Text(
-                ref.watch(providerStatusProvider),
+                ref.watch(llmStatusProvider),
                 style: style,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

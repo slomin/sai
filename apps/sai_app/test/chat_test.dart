@@ -147,7 +147,7 @@ void main() {
     final container = await pumpApp(
       tester,
       overrides: [
-        providerStatusProvider.overrideWithValue(
+        llmStatusProvider.overrideWithValue(
           'openai-compatible @ http://192.168.1.20:8080 (llama-3.3-70b) — cloud',
         ),
       ],

@@ -90,10 +90,10 @@ final chatVisibleProvider = NotifierProvider<ChatVisible, bool>(
   ChatVisible.new,
 );
 
-/// The status-bar line naming the active provider and its privacy tag.
-/// Until provider settings (#29) and the privacy policy (#27) exist there
-/// is no provider, and every client says so the same way.
-final providerStatusProvider = Provider<String>((ref) => noProviderStatus);
+/// The status-bar line naming the active LLM provider and its privacy
+/// tag. Until provider settings (#29) and the privacy policy (#27) exist
+/// there is no provider, and every client says so the same way.
+final llmStatusProvider = Provider<String>((ref) => noProviderStatus);
 
 /// What the status bar shows while no provider is configured.
 const noProviderStatus = 'no provider — local only';

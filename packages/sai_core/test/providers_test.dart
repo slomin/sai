@@ -123,9 +123,9 @@ void main() {
       expect(container.read(chatVisibleProvider), isTrue);
     });
 
-    test('providerStatusProvider is the no-provider placeholder', () {
+    test('llmStatusProvider is the no-provider placeholder', () {
       final container = ProviderContainer.test();
-      expect(container.read(providerStatusProvider), noProviderStatus);
+      expect(container.read(llmStatusProvider), noProviderStatus);
       expect(noProviderStatus, 'no provider — local only');
     });
   });
