@@ -1,11 +1,55 @@
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/main_pane.dart';
 import 'package:sai_app/sai_app.dart';
 import 'package:sai_core/sai_core.dart';
+
+/// Stands in for the platform's menu: records what the app would have
+/// sent over the `flutter/menu` channel. Required under `flutter test`,
+/// where the default delegate has no plugin to talk to and the provided
+/// items assert a macOS target — both would fail every pump.
+class TestMenuDelegate extends PlatformMenuDelegate {
+  List<PlatformMenuItem> menus = const [];
+
+  @override
+  void setMenus(List<PlatformMenuItem> topLevelMenus) => menus = topLevelMenus;
+
+  @override
+  void clearMenus() => menus = const [];
+
+  @override
+  bool debugLockDelegate(BuildContext context) => true;
+
+  @override
+  bool debugUnlockDelegate(BuildContext context) => true;
+}
+
+/// The delegate installed by the latest [pumpApp].
+late TestMenuDelegate menuDelegate;
+
+/// The item at [path] (top-level label, then submenu labels) in [menus],
+/// looking through groups.
+PlatformMenuItem menuItem(List<PlatformMenuItem> menus, List<String> path) {
+  Iterable<PlatformMenuItem> flatten(Iterable<PlatformMenuItem> items) =>
+      items.expand(
+        (item) =>
+            item is PlatformMenuItemGroup ? flatten(item.members) : [item],
+      );
+  var level = menus;
+  PlatformMenuItem? found;
+  for (final label in path) {
+    found = flatten(level).firstWhere(
+      (item) => item.label == label,
+      orElse: () => throw StateError('no menu item "$label" in $path'),
+    );
+    if (found is PlatformMenu) level = found.menus;
+  }
+  return found!;
+}
 
 /// Pumps [SaiApp] over a per-test temp archive root. Client tests must
 /// never touch the real archive under Application Support, so every
@@ -31,6 +75,10 @@ Future<ProviderContainer> pumpApp(
   if (settled) {
     await tester.runAsync(() => container.read(tasksProvider.future));
   }
+  final binding = WidgetsBinding.instance;
+  final platformMenus = binding.platformMenuDelegate;
+  addTearDown(() => binding.platformMenuDelegate = platformMenus);
+  binding.platformMenuDelegate = menuDelegate = TestMenuDelegate();
   await tester.pumpWidget(
     UncontrolledProviderScope(container: container, child: const SaiApp()),
   );
