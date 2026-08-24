@@ -45,20 +45,25 @@ void main() {
       PlatformProvidedMenuItemType typeOf(PlatformMenuItem item) =>
           (item as PlatformProvidedMenuItem).type;
       final app = menuItem(menus(), ['sai']) as PlatformMenu;
+      final appItems = app.menus
+          .expand((m) => m is PlatformMenuItemGroup ? m.members : [m])
+          .toList();
       expect(
-        app.menus
-            .expand((m) => m is PlatformMenuItemGroup ? m.members : [m])
-            .whereType<PlatformProvidedMenuItem>()
-            .map(typeOf),
-        [
-          PlatformProvidedMenuItemType.about,
-          PlatformProvidedMenuItemType.servicesSubmenu,
-          PlatformProvidedMenuItemType.hide,
-          PlatformProvidedMenuItemType.hideOtherApplications,
-          PlatformProvidedMenuItemType.showAllApplications,
-          PlatformProvidedMenuItemType.quit,
-        ],
+        appItems
+            .where((i) => i is! PlatformProvidedMenuItem)
+            .map((i) => i.label),
+        ['Provider API Key…'],
+        reason: 'the one custom item',
       );
+      expect(appItems[1].label, 'Provider API Key…', reason: 'after About');
+      expect(appItems.whereType<PlatformProvidedMenuItem>().map(typeOf), [
+        PlatformProvidedMenuItemType.about,
+        PlatformProvidedMenuItemType.servicesSubmenu,
+        PlatformProvidedMenuItemType.hide,
+        PlatformProvidedMenuItemType.hideOtherApplications,
+        PlatformProvidedMenuItemType.showAllApplications,
+        PlatformProvidedMenuItemType.quit,
+      ]);
       final window = menuItem(menus(), ['Window']) as PlatformMenu;
       expect(
         window.menus

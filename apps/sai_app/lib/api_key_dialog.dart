@@ -128,12 +128,13 @@ class _ApiKeyDialogState extends ConsumerState<ApiKeyDialog> {
   void _save(String id) {
     final value = _controller.text.trim();
     if (value.isEmpty) return;
-    _commit(
+    if (_commit(
       id,
       (credentials) => credentials.set(id, value),
       'key for $id saved',
-    );
-    _controller.clear();
+    )) {
+      _controller.clear();
+    }
   }
 
   void _remove(String id) => _commit(
@@ -142,9 +143,11 @@ class _ApiKeyDialogState extends ConsumerState<ApiKeyDialog> {
     'key for $id removed',
   );
 
-  /// Runs [change] and closes; a refusal from the store goes to the
-  /// status bar, without the value.
-  void _commit(
+  /// Runs [change] and closes on success. A refusal goes to the status
+  /// bar, without the value, and the dialog stays open with what was
+  /// typed so the user can retry rather than retype. Returns whether
+  /// the change went through.
+  bool _commit(
     String id,
     void Function(CredentialsNotifier) change,
     String done,
@@ -152,12 +155,15 @@ class _ApiKeyDialogState extends ConsumerState<ApiKeyDialog> {
     final notice = ref.read(noticeProvider.notifier);
     try {
       change(ref.read(credentialsProvider.notifier));
-      notice.show(done);
     } on SecretStoreException catch (e) {
       notice.show('the Keychain refused: ${e.message}');
+      return false;
     } on StateError catch (e) {
       notice.show(e.message);
+      return false;
     }
+    notice.show(done);
     Navigator.of(context).pop();
+    return true;
   }
 }
