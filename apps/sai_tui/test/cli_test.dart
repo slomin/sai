@@ -18,10 +18,8 @@ void main() {
   final prompts = <String>[];
 
   setUp(() {
-    secrets = InMemorySecretStore();
-    container = testContainer(
-      overrides: [secretStoreProvider.overrideWithValue(secrets)],
-    );
+    container = testContainer();
+    secrets = container.read(secretStoreProvider) as InMemorySecretStore;
     out = StringBuffer();
     err = StringBuffer();
     secretToGive = canary;
@@ -89,8 +87,14 @@ void main() {
     );
     out.clear();
 
-    expect(await run('provider add lan --kind fake --model other'), cliOk);
+    expect(await run('provider add lan --model other'), cliOk);
     expect(out.toString(), contains('updated provider lan'));
+    final edited = container.read(settingsProvider).provider('lan')!;
+    expect(edited.kind, 'fake', reason: 'unchanged options are kept');
+    expect(edited.endpoint, 'https://lan.example/v1');
+    expect(edited.defaultModel, 'other');
+    expect(edited.credential, 'provider:lan', reason: 'the key reference too');
+    expect(await run('provider add lan --no-key'), cliOk);
     expect(container.read(settingsProvider).provider('lan')?.credential, null);
     out.clear();
 
@@ -167,30 +171,66 @@ void main() {
     expect(secrets.accounts, isEmpty);
   });
 
+  test('secret set needs a configured provider with a credential', () async {
+    expect(await run('secret set nope'), cliFailed);
+    expect(err.toString(), contains("no configured provider 'nope'"));
+    err.clear();
+    await run('provider add local --kind fake');
+    expect(await run('secret set local'), cliFailed);
+    expect(err.toString(), contains('takes no key'));
+    expect(await run('secret set Bad'), cliUsageError);
+    expect(secrets.accounts, isEmpty);
+  });
+
+  test('secret status and clear work for an unconfigured id', () async {
+    out.clear();
+    expect(await run('secret status fake'), cliOk);
+    expect(out.toString().trim(), 'missing');
+    expect(await run('secret clear nope'), cliOk);
+    expect(out.toString(), contains('no key for nope'));
+  });
+
   test(
-    'secret commands need a configured provider with a credential',
+    'a key left behind by a removed provider can still be revoked',
     () async {
-      expect(await run('secret set nope'), cliFailed);
-      expect(err.toString(), contains("no configured provider 'nope'"));
-      err.clear();
-      await run('provider add local --kind fake');
-      expect(await run('secret set local'), cliFailed);
-      expect(err.toString(), contains('takes no key'));
-      expect(await run('secret status fake'), cliFailed);
+      await run('provider add lan --kind fake --key');
+      out.clear();
+      expect(await run('provider remove lan'), cliOk);
+      expect(out.toString(), isNot(contains('Keychain')));
+      await run('provider add lan --kind fake --key');
+      await run('secret set lan');
+      out.clear();
+      expect(await run('provider remove lan'), cliOk);
+      expect(out.toString(), contains('sai_tui secret clear lan'));
+      expect(secrets.read('provider:lan'), canary);
+      out.clear();
+      // The advised command works, and so does asking first.
+      expect(await run('secret status lan'), cliOk);
+      expect(out.toString().trim(), 'set');
+      expect(await run('secret clear lan'), cliOk);
+      expect(out.toString(), contains('key for lan removed'));
       expect(secrets.accounts, isEmpty);
     },
   );
 
-  test('removing a provider leaves its key, and says so', () async {
-    await run('provider add lan --kind fake --key');
-    out.clear();
-    expect(await run('provider remove lan'), cliOk);
-    expect(out.toString(), isNot(contains('Keychain')));
+  test('re-keying with --no-key warns about the key left behind', () async {
     await run('provider add lan --kind fake --key');
     await run('secret set lan');
     out.clear();
-    expect(await run('provider remove lan'), cliOk);
-    expect(out.toString(), contains('still in the Keychain'));
-    expect(secrets.read('provider:lan'), canary);
+    expect(await run('provider add lan --no-key'), cliOk);
+    expect(out.toString(), contains('sai_tui secret clear lan'));
+    expect(await run('secret clear lan'), cliOk);
+    expect(secrets.accounts, isEmpty);
   });
+
+  test(
+    'none and key-looking ids are refused before anything is written',
+    () async {
+      expect(await run('provider add none --kind fake'), cliUsageError);
+      expect(err.toString(), contains('reserved'));
+      expect(await run('provider add sk-lan --kind fake'), cliUsageError);
+      expect(err.toString(), contains('Keychain'));
+      expect(settingsFile().existsSync(), isFalse);
+    },
+  );
 }

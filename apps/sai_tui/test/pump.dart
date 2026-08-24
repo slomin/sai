@@ -19,6 +19,8 @@ ProviderContainer testContainer({List<Override> overrides = const []}) {
       archiveRootProvider.overrideWithValue(root),
       settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
       eventSourceProvider.overrideWithValue(EventSources.tui),
+      // Never the login keychain from a test.
+      secretStoreProvider.overrideWithValue(InMemorySecretStore()),
       ...overrides,
     ],
   );

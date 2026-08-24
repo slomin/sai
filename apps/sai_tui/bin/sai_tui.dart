@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:nocterm/nocterm.dart';
@@ -39,15 +40,33 @@ Future<void> main(List<String> args) async {
 
 /// One line from the terminal with echo off, so the key never shows or
 /// lands in the scrollback; a piped stdin is read as it is.
-String? _readSecret(String prompt) {
-  if (!stdin.hasTerminal) return stdin.readLineSync()?.trim();
+///
+/// Read asynchronously on purpose: a blocking `readLineSync` would keep
+/// the SIGINT handler below from ever running, and a `finally` does not
+/// run on the default signal exit — either way Ctrl-C at the prompt
+/// would leave the shell with echo off.
+Future<String?> _readSecret(String prompt) async {
+  if (!stdin.hasTerminal) return (await _line())?.trim();
   stdout.write(prompt);
   final echo = stdin.echoMode;
   stdin.echoMode = false;
+  final interrupt = ProcessSignal.sigint.watch().listen((_) {
+    stdin.echoMode = echo;
+    stdout.writeln();
+    exit(130);
+  });
   try {
-    return stdin.readLineSync()?.trim();
+    return (await _line())?.trim();
   } finally {
+    await interrupt.cancel();
     stdin.echoMode = echo;
     stdout.writeln();
   }
 }
+
+/// The first line of stdin, or null when it ends without one.
+Future<String?> _line() => stdin
+    .transform(utf8.decoder)
+    .transform(const LineSplitter())
+    .cast<String?>()
+    .firstWhere((_) => true, orElse: () => null);

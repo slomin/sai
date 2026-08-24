@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
@@ -6,7 +8,7 @@ const cliUsage = '''
 usage: sai_tui                       open the terminal client
        sai_tui provider list
        sai_tui provider add <id> --kind <kind> [--endpoint <url>]
-                                    [--model <name>] [--key]
+                                    [--model <name>] [--key | --no-key]
        sai_tui provider remove <id>
        sai_tui provider use <id|none>
        sai_tui secret set <id>       read the key from a hidden prompt
@@ -17,7 +19,9 @@ usage: sai_tui                       open the terminal client
 
 Provider settings go to settings.json; keys go to the Keychain and are
 never written to a file or printed. --key files the key under
-provider:<id> (docs/settings/settings-v0.md).''';
+provider:<id>; adding an existing id changes only the options given
+(docs/settings/settings-v0.md). secret clear and status also work for a
+provider that is no longer configured.''';
 
 /// Exit codes, as a shell expects them.
 const cliOk = 0;
@@ -33,7 +37,7 @@ Future<int> runCli(
   required ProviderContainer container,
   required StringSink out,
   required StringSink err,
-  required String? Function(String prompt) readSecret,
+  required FutureOr<String?> Function(String prompt) readSecret,
 }) async {
   if (args.isEmpty || args.first == 'help' || args.first == '--help') {
     out.writeln(cliUsage);
@@ -83,10 +87,14 @@ Future<int> runCli(
         return cliOk;
 
       case ['provider', 'add', final id, ...final rest]:
-        String? kind;
-        String? endpoint;
-        String? model;
-        var key = false;
+        // An existing id is edited in place: only the options given
+        // change, so a model tweak never drops the credential or what a
+        // newer sai stored in the entry.
+        final existing = container.read(settingsProvider).provider(id);
+        String? kind = existing?.kind;
+        String? endpoint = existing?.endpoint;
+        String? model = existing?.defaultModel;
+        var key = existing?.credential != null;
         for (var i = 0; i < rest.length; i++) {
           String value() {
             if (i + 1 >= rest.length) {
@@ -104,6 +112,8 @@ Future<int> runCli(
               model = value();
             case '--key':
               key = true;
+            case '--no-key':
+              key = false;
             default:
               throw _Usage('unknown option ${rest[i]}');
           }
@@ -116,15 +126,27 @@ Future<int> runCli(
             kind: kind,
             endpoint: endpoint,
             defaultModel: model,
-            credential: key ? ProviderConfig.credentialFor(id) : null,
+            credential: key
+                ? (existing?.credential ?? ProviderConfig.credentialFor(id))
+                : null,
+            extra: existing?.extra ?? const {},
           );
         } on ArgumentError catch (e) {
           throw _Usage('${e.message}');
         }
         final notifier = container.read(settingsProvider.notifier);
-        final replaced = container.read(settingsProvider).provider(id) != null;
+        final hadKey =
+            existing != null &&
+            container.read(credentialStatusProvider(id)) ==
+                CredentialStatus.set;
         notifier.upsertProvider(config);
-        out.writeln('${replaced ? 'updated' : 'added'} provider $id');
+        out.writeln('${existing != null ? 'updated' : 'added'} provider $id');
+        if (hadKey && !key) {
+          out.writeln(
+            'its key is still in the Keychain; sai_tui secret clear $id '
+            'removes it',
+          );
+        }
         if (!container.read(llmFactoriesProvider).containsKey(kind)) {
           err.writeln(
             "sai_tui: kind '$kind' is not available in this build; the "
@@ -172,32 +194,41 @@ Future<int> runCli(
 
       case ['secret', final verb, final id]
           when const {'set', 'clear', 'status'}.contains(verb):
+        if (!ProviderConfig.idForm.hasMatch(id)) {
+          throw _Usage("'$id' is not a provider id");
+        }
         final config = container.read(settingsProvider).provider(id);
-        if (config == null) {
-          err.writeln("sai_tui: no configured provider '$id'");
-          return cliFailed;
-        }
-        if (config.credential == null) {
-          err.writeln(
-            "sai_tui: provider '$id' takes no key (add it with --key)",
-          );
-          return cliFailed;
-        }
         final credentials = container.read(credentialsProvider.notifier);
+        if (verb == 'set') {
+          // Storing needs a provider that will use the key.
+          if (config == null) {
+            err.writeln("sai_tui: no configured provider '$id'");
+            return cliFailed;
+          }
+          if (config.credential == null) {
+            err.writeln(
+              "sai_tui: provider '$id' takes no key (add it with --key)",
+            );
+            return cliFailed;
+          }
+          final value = await readSecret('API key for $id: ');
+          if (value == null || value.isEmpty) {
+            err.writeln('sai_tui: no key given; nothing changed');
+            return cliFailed;
+          }
+          credentials.set(id, value);
+          out.writeln('key for $id stored in the Keychain');
+          return cliOk;
+        }
+        // Clearing and asking work on the account alone, so a key left
+        // behind by a removed or re-keyed provider can still be revoked.
+        final account = config?.credential ?? ProviderConfig.credentialFor(id);
         switch (verb) {
-          case 'set':
-            final value = readSecret('API key for $id: ');
-            if (value == null || value.isEmpty) {
-              err.writeln('sai_tui: no key given; nothing changed');
-              return cliFailed;
-            }
-            credentials.set(id, value);
-            out.writeln('key for $id stored in the Keychain');
           case 'clear':
-            final gone = credentials.clear(id);
+            final gone = credentials.clearAccount(account);
             out.writeln(gone ? 'key for $id removed' : 'no key for $id');
           case 'status':
-            out.writeln(switch (container.read(credentialStatusProvider(id))) {
+            out.writeln(switch (credentials.statusOf(account)) {
               CredentialStatus.set => 'set',
               CredentialStatus.missing => 'missing',
               CredentialStatus.unavailable => 'keychain unavailable',
