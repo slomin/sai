@@ -65,6 +65,9 @@ jobs:
           cache: true
       - name: Resolve the workspace
         run: dart pub get
+      - name: Test sai_core against the Keychain (macOS only)
+        working-directory: packages/sai_core
+        run: dart test test/secrets
       - name: Test sai_app
         working-directory: apps/sai_app
         run: flutter test
