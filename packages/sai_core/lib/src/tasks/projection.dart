@@ -413,7 +413,7 @@ final class _Builder {
           event.area,
         ).copyWith(deletedAt: const Patch(null), modifiedAt: Patch(ts));
       case ProjectCreated():
-        if (event.area != null) _area(stored, event.area!);
+        if (event.area != null) _livingArea(stored, event.area!);
         _checkTags(stored, event.tags);
         _projects[stored.id] = Project(
           id: stored.id,
@@ -430,7 +430,7 @@ final class _Builder {
         _index(stored, event.external);
       case ProjectEdited():
         if (event.area case Patch(value: final AreaId area)) {
-          _area(stored, area);
+          _livingArea(stored, area);
         }
         if (event.tags != null) _checkTags(stored, event.tags!.value);
         _projects[event.project] = _project(stored, event.project).copyWith(
@@ -453,7 +453,7 @@ final class _Builder {
           event.project,
         ).copyWith(deletedAt: const Patch(null), modifiedAt: Patch(ts));
       case HeadingCreated():
-        _project(stored, event.project);
+        _livingProject(stored, event.project);
         _headings[stored.id] = Heading(
           id: stored.id,
           project: event.project,
@@ -478,7 +478,7 @@ final class _Builder {
           event.heading,
         ).copyWith(deletedAt: const Patch(null), modifiedAt: Patch(ts));
       case TagCreated():
-        if (event.parent != null) _tag(stored, event.parent!);
+        if (event.parent != null) _livingTag(stored, event.parent!);
         _tags[stored.id] = Tag(
           id: stored.id,
           title: event.title,
@@ -489,7 +489,8 @@ final class _Builder {
         _index(stored, event.external);
       case TagEdited():
         if (event.parent case Patch(value: final TagId parent)) {
-          _tag(stored, parent);
+          _livingTag(stored, parent);
+          _checkTagParent(stored, event.tag, parent);
         }
         _tags[event.tag] = _tag(stored, event.tag).copyWith(
           title: event.title,
@@ -530,6 +531,52 @@ final class _Builder {
   Tag _tag(StoredEvent stored, TagId id) =>
       _tags[id] ?? _refuse(stored, _describeMiss(id, 'tag'));
 
+  /// [_project] plus a liveness check: a soft-deleted container refuses
+  /// new members — anything placed into it would vanish from every view.
+  Project _livingProject(StoredEvent stored, ProjectId id) {
+    final project = _project(stored, id);
+    if (project.deletedAt != null) {
+      _refuse(stored, 'project $id is deleted');
+    }
+    return project;
+  }
+
+  Area _livingArea(StoredEvent stored, AreaId id) {
+    final area = _area(stored, id);
+    if (area.deletedAt != null) {
+      _refuse(stored, 'area $id is deleted');
+    }
+    return area;
+  }
+
+  Heading _livingHeading(StoredEvent stored, HeadingId id) {
+    final heading = _heading(stored, id);
+    if (heading.deletedAt != null) {
+      _refuse(stored, 'heading $id is deleted');
+    }
+    return heading;
+  }
+
+  Tag _livingTag(StoredEvent stored, TagId id) {
+    final tag = _tag(stored, id);
+    if (tag.deletedAt != null) {
+      _refuse(stored, 'tag $id is deleted');
+    }
+    return tag;
+  }
+
+  /// Refuses a parent that is, or descends from, [tag] — the log is
+  /// append-only, so a committed cycle could never be removed.
+  void _checkTagParent(StoredEvent stored, TagId tag, TagId parent) {
+    TagId? cursor = parent;
+    while (cursor != null) {
+      if (cursor == tag) {
+        _refuse(stored, 'tag $parent would make $tag its own ancestor');
+      }
+      cursor = _tags[cursor]?.parent;
+    }
+  }
+
   String _describeMiss(BlobRef id, String wanted) {
     final actual = _tasks.containsKey(id)
         ? 'task'
@@ -553,10 +600,10 @@ final class _Builder {
     required AreaId? area,
     required HeadingId? heading,
   }) {
-    if (project != null) _project(stored, project);
-    if (area != null) _area(stored, area);
+    if (project != null) _livingProject(stored, project);
+    if (area != null) _livingArea(stored, area);
     if (heading != null) {
-      final owner = _heading(stored, heading).project;
+      final owner = _livingHeading(stored, heading).project;
       if (owner != project) {
         _refuse(stored, 'heading $heading belongs to project $owner');
       }
@@ -565,7 +612,7 @@ final class _Builder {
 
   void _checkTags(StoredEvent stored, List<TagId> tags) {
     for (final tag in tags) {
-      _tag(stored, tag);
+      _livingTag(stored, tag);
     }
   }
 }

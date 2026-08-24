@@ -334,6 +334,105 @@ void main() {
     });
   });
 
+  group('deleted containers refuse new members', () {
+    test('creating or moving into a deleted project is refused', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final gone = emit(ProjectDeleted(project.id));
+      final intoDeleted = emit(TaskCreated(title: 'x', project: project.id));
+      expect(
+        () => applyAll([project, gone, intoDeleted]),
+        throwsA(isA<TaskProjectionError>()),
+      );
+
+      final task = emit(TaskCreated(title: 'x'));
+      final moveIn = emit(TaskMoved(task.id, project: project.id));
+      expect(
+        () => applyAll([project, gone, task, moveIn]),
+        throwsA(isA<TaskProjectionError>()),
+      );
+    });
+
+    test('a heading cannot be created in a deleted project', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final gone = emit(ProjectDeleted(project.id));
+      final heading = emit(HeadingCreated(project: project.id, title: 'H'));
+      expect(
+        () => applyAll([project, gone, heading]),
+        throwsA(isA<TaskProjectionError>()),
+      );
+    });
+
+    test('a deleted tag cannot be attached', () {
+      final tag = emit(TagCreated(title: 't'));
+      final gone = emit(TagDeleted(tag.id));
+      final tagged = emit(TaskCreated(title: 'x', tags: [tag.id]));
+      expect(
+        () => applyAll([tag, gone, tagged]),
+        throwsA(isA<TaskProjectionError>()),
+      );
+    });
+
+    test(
+      'a deleted area refuses projects and a deleted parent refuses tags',
+      () {
+        final area = emit(AreaCreated(title: 'A'));
+        final areaGone = emit(AreaDeleted(area.id));
+        final project = emit(ProjectCreated(title: 'P', area: area.id));
+        expect(
+          () => applyAll([area, areaGone, project]),
+          throwsA(isA<TaskProjectionError>()),
+        );
+
+        final parent = emit(TagCreated(title: 'p'));
+        final parentGone = emit(TagDeleted(parent.id));
+        final child = emit(TagCreated(title: 'c', parent: parent.id));
+        expect(
+          () => applyAll([parent, parentGone, child]),
+          throwsA(isA<TaskProjectionError>()),
+        );
+      },
+    );
+
+    test('restoring the container makes it a valid target again', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final gone = emit(ProjectDeleted(project.id));
+      final back = emit(ProjectRestored(project.id));
+      final task = emit(TaskCreated(title: 'x', project: project.id));
+      final p = applyAll([project, gone, back, task]);
+      expect(p.task(task.id)!.project, project.id);
+    });
+  });
+
+  group('tag parent cycles', () {
+    test('a tag cannot be its own parent', () {
+      final tag = emit(TagCreated(title: 't'));
+      final selfParent = emit(TagEdited(tag.id, parent: Patch(tag.id)));
+      expect(
+        () => applyAll([tag, selfParent]),
+        throwsA(isA<TaskProjectionError>()),
+      );
+    });
+
+    test('a two-tag cycle is refused', () {
+      final a = emit(TagCreated(title: 'a'));
+      final b = emit(TagCreated(title: 'b', parent: a.id));
+      final cycle = emit(TagEdited(a.id, parent: Patch(b.id)));
+      expect(
+        () => applyAll([a, b, cycle]),
+        throwsA(isA<TaskProjectionError>()),
+      );
+    });
+
+    test('reparenting within a chain stays legal', () {
+      final a = emit(TagCreated(title: 'a'));
+      final b = emit(TagCreated(title: 'b', parent: a.id));
+      final c = emit(TagCreated(title: 'c', parent: b.id));
+      final flatten = emit(TagEdited(c.id, parent: Patch(a.id)));
+      final p = applyAll([a, b, c, flatten]);
+      expect(p.tags[c.id]!.parent, a.id);
+    });
+  });
+
   group('strictness', () {
     test('an unknown subject names the event id', () {
       final ghost = BlobRef.sha256OfBytes(utf8.encode('ghost'));
