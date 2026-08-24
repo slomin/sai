@@ -119,10 +119,16 @@ class _TuiAppState extends State<TuiApp> {
             ),
             if (_notice.isNotEmpty)
               Text(_notice, style: TextStyle(color: Colors.yellow)),
+            // One row, whatever the provider is called: a wrapped status
+            // would take its extra rows from the list above.
             RiverpodConsumer<String>(
               provider: llmStatusProvider,
-              builder: (context, status) =>
-                  Text(status, style: TextStyle(color: Colors.gray)),
+              builder: (context, status) => Text(
+                status,
+                style: TextStyle(color: Colors.gray),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
             Text(
               '^C quit · ^U undo · Enter capture',
