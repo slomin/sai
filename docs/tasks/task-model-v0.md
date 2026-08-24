@@ -166,6 +166,42 @@ editing a deleted task applies). The store keeps cases 2 and 3
 unreachable through the sanctioned path by validating every command
 against the projection before appending.
 
+## Quick capture (#19)
+
+One text line becomes one `task.create`. The grammar is fixed and
+total — no line is ever refused:
+
+1. Trim the line; empty captures nothing.
+2. Scan trailing whitespace-separated words right to left. Consume a
+   recognized token whose kind is not already taken; stop at the first
+   word that is no token, or repeats a kind.
+3. If consuming would leave an empty title, nothing was a token: the
+   trimmed line is the title verbatim.
+
+| token | sets |
+| --- | --- |
+| `@today` | when = today's date |
+| `@tomorrow` | when = tomorrow's date |
+| `@someday` | when = someday |
+| `@YYYY-MM-DD` | when = that date (strict; a date that does not exist is not a token) |
+| `!today` / `!tomorrow` / `!YYYY-MM-DD` | deadline (there is no `!someday`) |
+
+Keywords are case-insensitive; a token must be its own word
+(`milk@today` is title text); tokens mid-line stay in the title
+(`call @today mom` is a title). There is no escaping in v0.1 — a title
+that must *end* in a token form is not expressible; quoting is a later
+problem. Worked examples:
+
+- `Buy oat milk` → Inbox.
+- `Call mom @today` → when set, so the task surfaces in Today, not
+  Inbox (list rule 3 outranks rule 6).
+- `x @nope @today` → title `x @nope`, when today (the scan stopped).
+- `@today` → a task titled `@today` (rule 3 above).
+
+Capture never files and never tags — an Inbox-shaped task is the
+point. The raw line is not recorded; only the parse result is (adding
+a payload key for it would be a spec change).
+
 ## The projection is in memory (ADR 0004 amendment)
 
 ADR 0004 says "SQLite projection"; v0.1 ships the projection **in
