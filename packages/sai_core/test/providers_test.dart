@@ -77,5 +77,27 @@ void main() {
       expect(projection.task(id)!.title, 'from the provider');
       expect(projection.eventCount, 1);
     });
+
+    test('canUndoProvider follows the store, false until it settles', () async {
+      final tmp = Directory.systemTemp.createTempSync('sai_providers_test');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final container = ProviderContainer.test(
+        overrides: [
+          archiveRootProvider.overrideWithValue(tmp),
+          eventSourceProvider.overrideWithValue('sai/test'),
+        ],
+      );
+      expect(container.read(canUndoProvider), isFalse);
+
+      await container.read(tasksProvider.future);
+      expect(container.read(canUndoProvider), isFalse);
+
+      final store = container.read(tasksProvider.notifier).store;
+      await store.createTask(title: 'x');
+      expect(container.read(canUndoProvider), isTrue);
+
+      await store.undo();
+      expect(container.read(canUndoProvider), isFalse);
+    });
   });
 }

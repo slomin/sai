@@ -183,7 +183,9 @@ Task mutations are archive events first (ADR
 is a projection replayed from these lines. Every event below names its
 subject in `payload` (the key the reducer reads) and repeats it in
 `refs` for provenance tooling. **The id of a `*.create` event is the id
-of the entity it creates.** Payload schemas:
+of the entity it creates.** Undo (#19) appends the mutation's inverse
+event and carries the reversed event's id in `refs` — no dedicated
+types. Payload schemas:
 [task model v0](../tasks/task-model-v0.md).
 
 | type | actor | notes |

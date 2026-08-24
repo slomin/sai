@@ -125,9 +125,8 @@ and always writes every placement key. `task.checklist` replaces the
 whole ordered list — items have no identity in v0.1; per-item events
 would arrive as a new `checklist.*` family.
 
-Every event's inverse is expressible, which is what undo (#19) needs:
-create↔delete, edit↔edit with the prior values, move↔move,
-complete/cancel↔reopen, delete↔restore, checklist↔checklist.
+Every event's inverse is expressible, which is what undo needs —
+see [Undo](#undo-19).
 
 Golden vector — this exact line (144 bytes):
 
@@ -165,6 +164,74 @@ subjects the reducer is total (completing twice overwrites the stamp,
 editing a deleted task applies). The store keeps cases 2 and 3
 unreachable through the sanctioned path by validating every command
 against the projection before appending.
+
+## Quick capture (#19)
+
+One text line becomes one `task.create`. The grammar is fixed and
+total — no line is ever refused:
+
+1. Trim the line; empty captures nothing.
+2. Scan trailing whitespace-separated words right to left. Consume a
+   recognized token whose kind is not already taken; stop at the first
+   word that is no token, or repeats a kind.
+3. If consuming would leave an empty title, nothing was a token: the
+   trimmed line is the title verbatim.
+
+| token | sets |
+| --- | --- |
+| `@today` | when = today's date |
+| `@tomorrow` | when = tomorrow's date |
+| `@someday` | when = someday |
+| `@YYYY-MM-DD` | when = that date (strict; a date that does not exist is not a token) |
+| `!today` / `!tomorrow` / `!YYYY-MM-DD` | deadline (there is no `!someday`) |
+
+Keywords are case-insensitive; a token must be its own word
+(`milk@today` is title text); tokens mid-line stay in the title
+(`call @today mom` is a title). There is no escaping in v0.1 — a title
+that must *end* in a token form is not expressible; quoting is a later
+problem. Worked examples:
+
+- `Buy oat milk` → Inbox.
+- `Call mom @today` → when set, so the task surfaces in Today, not
+  Inbox (list rule 3 outranks rule 6).
+- `x @nope @today` → title `x @nope`, when today (the scan stopped).
+- `@today` → a task titled `@today` (rule 3 above).
+
+Capture never files and never tags — an Inbox-shaped task is the
+point. The raw line is not recorded; only the parse result is (adding
+a payload key for it would be a spec change).
+
+## Undo (#19)
+
+Undo is a new event, never a rewrite: reversing a mutation appends its
+**inverse** — an event of the same 25-type vocabulary, computed against
+the projection the mutation was validated on — with the reversed
+event's id in the envelope `refs`. No new types, no new payload keys.
+
+| event | inverse |
+| --- | --- |
+| `*.create` | `*.delete` of the minted id — a **soft** delete; an undone create sits in the Trash, the log keeps it forever |
+| `*.edit` | an edit writing the prior values of exactly the fields the event set |
+| `task.move` | a move back to the prior placement |
+| `task.complete` / `task.cancel` / `task.reopen` | whichever of complete-with-prior-`at` / cancel-with-prior-`at` / reopen restores the prior pair |
+| `*.delete` / `*.restore` | whichever of restore / delete restores the prior state |
+| `task.checklist` | the prior items |
+
+The table is total: a degenerate mutation (deleting the deleted,
+reopening the open) inverts to the state-preserving event of its kind,
+so a session's N mutations take exactly N undos, unwound newest first.
+
+The stack is session-local — one entry per command this process
+committed, no redo, gone when the process ends — and survives a
+`reload()`: entries name entities by id, and an inverse a concurrent
+writer has invalidated is refused by the same validation every command
+passes, keeping its entry for a retry. Undo against concurrent writers
+is last-write-wins behind that validation.
+
+Restored exactly: field values, placement, checklist, and the
+completion/cancellation instants (they ride in `at`). Not restored:
+`modifiedAt` (it bumps to the inverse's own ts) and an older
+`deletedAt` overwritten by a delete-again.
 
 ## The projection is in memory (ADR 0004 amendment)
 

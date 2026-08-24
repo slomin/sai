@@ -143,6 +143,19 @@ void main() {
       expect(import.actor, Actor.system);
     });
 
+    test('withRefs appends without duplicating', () {
+      final a = BlobRef.sha256OfBytes(utf8.encode('a'));
+      final b = BlobRef.sha256OfBytes(utf8.encode('b'));
+      final by = Attribution.user(refs: [a]).withRefs([a, b]);
+      expect(by.actor, Actor.user);
+      expect(by.refs, [a, b]);
+
+      const model = ModelRef(provider: 'anthropic', id: 'claude-fable-5');
+      final assistant = const Attribution.assistant(model).withRefs([b]);
+      expect(assistant.model, model);
+      expect(assistant.refs, [b]);
+    });
+
     test('container events refuse an assistant attribution', () {
       const model = ModelRef(provider: 'anthropic', id: 'claude-fable-5');
       const by = Attribution.assistant(model);

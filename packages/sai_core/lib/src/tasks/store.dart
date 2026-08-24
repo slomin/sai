@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import '../archive/archive.dart';
+import '../archive/blobref.dart';
 import '../archive/event.dart';
+import 'capture.dart';
 import 'date.dart';
 import 'events.dart';
 import 'model.dart';
 import 'projection.dart';
+import 'undo.dart';
 
 /// The event-sourced task store (ADR 0004): every command is an archive
 /// event first — sealed, appended, fsynced — and only then applied to the
@@ -109,6 +112,47 @@ final class TaskStore {
     }
   }
 
+  /// One entry per committed command: the event that reverses it, and
+  /// the id of the line it would reverse. Session-local — the stack dies
+  /// with the process and survives [reload] (entries name entities by id;
+  /// a stale inverse is refused by validation, not by forgetting it).
+  final _undoStack = <({TaskEvent inverse, BlobRef undone})>[];
+
+  /// Whether [undo] has a mutation to reverse.
+  bool get canUndo => _undoStack.isNotEmpty;
+
+  /// How many mutations this session can unwind, newest first.
+  int get undoDepth => _undoStack.length;
+
+  /// Reverses the most recent not-yet-undone mutation of this session by
+  /// appending its inverse event — undo is a new event, never a rewrite.
+  /// Returns the appended event, or null when there is nothing to undo.
+  /// Undo records no inverse of its own: there is no redo, and repeated
+  /// calls unwind the session in reverse order.
+  ///
+  /// The inverse carries [by] with the reversed event's id added to its
+  /// refs. A refused inverse (the reducer no longer accepts it after a
+  /// concurrent change) throws and keeps its stack entry, so a [reload]
+  /// and retry stay possible.
+  Future<StoredEvent?> undo({Attribution by = const Attribution.user()}) =>
+      _serialized(() async {
+        _checkOpen();
+        if (_undoStack.isEmpty) return null;
+        // Pop first, so the commit's own notification already shows the
+        // shrunk stack to synchronous listeners; a refused inverse never
+        // notifies, so pushing the entry back is invisible.
+        final entry = _undoStack.removeLast();
+        final attribution = entry.inverse.refs.contains(entry.undone)
+            ? by
+            : by.withRefs([entry.undone]);
+        try {
+          return await _apply(entry.inverse, attribution, record: false);
+        } catch (_) {
+          _undoStack.add(entry);
+          rethrow;
+        }
+      });
+
   /// Validate → append → apply → notify, serialized with [reload].
   /// Validation applies the event to the current projection under a
   /// tentative seal, so a command the reducer would refuse — and a command
@@ -116,20 +160,42 @@ final class TaskStore {
   Future<StoredEvent> _commit(TaskEvent event, Attribution by) =>
       _serialized(() async {
         _checkOpen();
-        final draft = event.toDraft(source: source, by: by);
-        final tentative = Event.seal(
-          draft,
-          prev: _projection.lastEventId,
-          ts: DateTime.timestamp(),
-        );
-        _projection.apply(
-          StoredEvent(id: tentative.deriveId(), event: tentative),
-        );
-        final stored = await _archive.append(draft);
-        _projection = _projection.apply(stored);
-        _notify();
-        return stored;
+        return _apply(event, by, record: true);
       });
+
+  /// The unserialized commit body; [undo] and [_commit] wrap it in
+  /// [_serialized] themselves (nesting would deadlock on [_queue]).
+  /// With [record], pushes the committed event's inverse — computed
+  /// against the projection it was validated on — onto the undo stack.
+  Future<StoredEvent> _apply(
+    TaskEvent event,
+    Attribution by, {
+    required bool record,
+  }) async {
+    final before = _projection;
+    final draft = event.toDraft(source: source, by: by);
+    final tentative = Event.seal(
+      draft,
+      prev: before.lastEventId,
+      ts: DateTime.timestamp(),
+    );
+    before.apply(StoredEvent(id: tentative.deriveId(), event: tentative));
+    final stored = await _archive.append(draft);
+    _projection = before.apply(stored);
+    try {
+      if (record) {
+        _undoStack.add((
+          inverse: invertEvent(event, before, created: stored.id),
+          undone: stored.id,
+        ));
+      }
+    } finally {
+      // The append is durable and applied; listeners are told even if
+      // recording the inverse ever throws.
+      _notify();
+    }
+    return stored;
+  }
 
   // --- tasks ---
 
@@ -226,6 +292,26 @@ final class TaskStore {
     List<ChecklistItem> items, {
     Attribution by = const Attribution.user(),
   }) => _commit(TaskChecklistSet(task, items), by);
+
+  /// Creates the Inbox task [line] describes — see [parseQuickCapture]
+  /// for the grammar — and returns its id, or null when [line] is blank,
+  /// in which case nothing is appended. One line, one `task.create`
+  /// event. [today] anchors the `@today`/`@tomorrow` tokens; the store
+  /// has no clock of its own.
+  Future<TaskId?> quickCapture(
+    String line, {
+    required CalendarDate today,
+    Attribution by = const Attribution.user(),
+  }) async {
+    final capture = parseQuickCapture(line, today: today);
+    if (capture == null) return null;
+    return createTask(
+      title: capture.title,
+      when: capture.when,
+      deadline: capture.deadline,
+      by: by,
+    );
+  }
 
   // --- areas ---
 

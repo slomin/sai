@@ -3,9 +3,11 @@
 /// 0004). Contract: `docs/tasks/task-model-v0.md`.
 library;
 
+export 'tasks/capture.dart';
 export 'tasks/date.dart';
 export 'tasks/events.dart';
 export 'tasks/lists.dart';
 export 'tasks/model.dart';
 export 'tasks/projection.dart';
 export 'tasks/store.dart';
+export 'tasks/undo.dart';
