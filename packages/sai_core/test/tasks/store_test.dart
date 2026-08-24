@@ -185,8 +185,10 @@ void main() {
     final seen = <int>[];
     final sub = store.changes.listen((p) => seen.add(p.eventCount));
     final task = await store.createTask(title: 'x');
+    // Delivery is synchronous: by the time a command's future completes,
+    // every listener has seen the new projection.
+    expect(seen, [1]);
     await store.completeTask(task);
-    await Future<void>.delayed(Duration.zero);
     expect(seen, [1, 2]);
     await sub.cancel();
   });
@@ -213,5 +215,44 @@ void main() {
     expect(store.projection.tasks, isEmpty);
     await store.reload();
     expect(store.projection.tasks.values.single.title, 'from the app');
+  });
+
+  test('a command after dispose throws and appends nothing', () async {
+    store.dispose();
+    await expectLater(store.createTask(title: 'x'), throwsA(isA<StateError>()));
+    expect(logLines(), isEmpty);
+  });
+
+  test('a torn tail does not take the store down', () async {
+    final task = await store.createTask(title: 'survives');
+    final day = Directory('${tmp.path}/events')
+        .listSync()
+        .whereType<File>()
+        .single;
+    day.writeAsStringSync('{"torn', mode: FileMode.append, flush: true);
+
+    final second = await TaskStore.open(archive, source: 'sai/tui');
+    expect(second.projection.task(task)!.title, 'survives');
+    expect(second.projection.eventCount, 1);
+    second.dispose();
+
+    await store.reload();
+    expect(store.projection.eventCount, 1);
+  });
+
+  test('commands and reloads interleave without losing events', () async {
+    await Future.wait([
+      store.createTask(title: 'a'),
+      store.createTask(title: 'b'),
+      store.reload(),
+      store.createTask(title: 'c'),
+    ]);
+    expect(logLines(), hasLength(3));
+    expect(store.projection.eventCount, 3);
+    expect(store.projection.tasks.values.map((t) => t.title).toSet(), {
+      'a',
+      'b',
+      'c',
+    });
   });
 }

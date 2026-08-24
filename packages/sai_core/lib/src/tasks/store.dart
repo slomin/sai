@@ -20,12 +20,35 @@ final class TaskStore {
   ///
   /// [source] names the writing client on every line, e.g.
   /// [EventSources.tui].
+  ///
+  /// A torn tail — bytes a crashed write left after the last newline —
+  /// never became an event, so it is read past, not failed on: the store
+  /// opens on every event before it (appends will still refuse until the
+  /// documented repair).
   static Future<TaskStore> open(
     Archive archive, {
     required String source,
   }) async {
-    final events = await archive.events().toList();
+    final events = await _readEvents(archive);
     return TaskStore._(archive, source, TaskProjection.replay(events));
+  }
+
+  /// Reads the whole log, tolerating a torn tail. A tear can also be the
+  /// transient shadow of an in-flight append (reads are lock-free), so one
+  /// re-read separates the two; a tear that persists is a crash trace and
+  /// the events before it are the whole log.
+  static Future<List<StoredEvent>> _readEvents(Archive archive) async {
+    for (var attempt = 0; ; attempt++) {
+      final events = <StoredEvent>[];
+      try {
+        await for (final stored in archive.events()) {
+          events.add(stored);
+        }
+        return events;
+      } on TornTailError {
+        if (attempt > 0) return events;
+      }
+    }
   }
 
   final Archive _archive;
@@ -35,7 +58,22 @@ final class TaskStore {
 
   TaskProjection _projection;
 
-  final _changes = StreamController<TaskProjection>.broadcast();
+  /// Synchronous on purpose: by the time a command's future completes,
+  /// every listener — the riverpod layer included — has the new projection.
+  final _changes = StreamController<TaskProjection>.broadcast(sync: true);
+
+  /// Serializes commands and reloads: both replace [_projection] across
+  /// awaits, and an interleaving could silently drop a durably appended
+  /// event from the in-memory state.
+  Future<void> _queue = Future<void>.value();
+
+  var _disposed = false;
+
+  Future<T> _serialized<T>(Future<T> Function() action) {
+    final result = _queue.then((_) => action());
+    _queue = result.then((_) {}, onError: (_) {});
+    return result;
+  }
 
   /// The current state. Replaced (never mutated) as commands apply.
   TaskProjection get projection => _projection;
@@ -44,35 +82,54 @@ final class TaskStore {
   Stream<TaskProjection> get changes => _changes.stream;
 
   /// Rebuilds the projection from the log — how appends made by another
-  /// process (or another store) become visible.
-  Future<void> reload() async {
-    final events = await _archive.events().toList();
+  /// process (or another store) become visible. Serialized with commands.
+  Future<void> reload() => _serialized(() async {
+    _checkOpen();
+    final events = await _readEvents(_archive);
     _projection = TaskProjection.replay(events);
-    _changes.add(_projection);
-  }
+    _notify();
+  });
 
-  /// Closes the [changes] stream. The archive is not touched — its owner
-  /// closes it.
+  /// Closes the [changes] stream and refuses further commands. The archive
+  /// is not touched — its owner closes it.
   void dispose() {
+    _disposed = true;
     _changes.close();
   }
 
-  /// Validate → append → apply → notify. Validation applies the event to
-  /// the current projection under a tentative seal, so a command the
-  /// reducer would refuse never reaches the log.
-  Future<StoredEvent> _commit(TaskEvent event, Attribution by) async {
-    final draft = event.toDraft(source: source, by: by);
-    final tentative = Event.seal(
-      draft,
-      prev: _projection.lastEventId,
-      ts: DateTime.timestamp(),
-    );
-    _projection.apply(StoredEvent(id: tentative.deriveId(), event: tentative));
-    final stored = await _archive.append(draft);
-    _projection = _projection.apply(stored);
-    _changes.add(_projection);
-    return stored;
+  void _checkOpen() {
+    if (_disposed) {
+      throw StateError('this TaskStore is disposed; open a new one');
+    }
   }
+
+  void _notify() {
+    if (!_disposed) {
+      _changes.add(_projection);
+    }
+  }
+
+  /// Validate → append → apply → notify, serialized with [reload].
+  /// Validation applies the event to the current projection under a
+  /// tentative seal, so a command the reducer would refuse — and a command
+  /// against a disposed store — never reaches the log.
+  Future<StoredEvent> _commit(TaskEvent event, Attribution by) =>
+      _serialized(() async {
+        _checkOpen();
+        final draft = event.toDraft(source: source, by: by);
+        final tentative = Event.seal(
+          draft,
+          prev: _projection.lastEventId,
+          ts: DateTime.timestamp(),
+        );
+        _projection.apply(
+          StoredEvent(id: tentative.deriveId(), event: tentative),
+        );
+        final stored = await _archive.append(draft);
+        _projection = _projection.apply(stored);
+        _notify();
+        return stored;
+      });
 
   // --- tasks ---
 

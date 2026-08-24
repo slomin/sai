@@ -69,26 +69,39 @@ final tasksProvider = AsyncNotifierProvider<TasksNotifier, TaskProjection>(
 /// Holds the process's one [TaskStore] and mirrors its [TaskStore.changes]
 /// into provider state.
 class TasksNotifier extends AsyncNotifier<TaskProjection> {
-  late TaskStore _store;
+  TaskStore? _store;
 
   /// The store, for commands. Mutations made here show up in the provider
   /// state as they commit.
-  TaskStore get store => _store;
+  ///
+  /// Throws [StateError] until [build] has settled — and again during a
+  /// rebuild, whose disposal clears the previous store rather than handing
+  /// out a disposed one. Await the provider's future first.
+  TaskStore get store =>
+      _store ??
+      (throw StateError(
+        'tasksProvider has no open store yet — await the provider future '
+        'before using it',
+      ));
 
   @override
   Future<TaskProjection> build() async {
     final archive = await ref.watch(archiveProvider.future);
-    _store = await TaskStore.open(
+    final store = await TaskStore.open(
       archive,
       source: ref.watch(eventSourceProvider),
     );
-    final subscription = _store.changes.listen(
+    _store = store;
+    final subscription = store.changes.listen(
       (projection) => state = AsyncData(projection),
     );
     ref.onDispose(() {
       subscription.cancel();
-      _store.dispose();
+      store.dispose();
+      if (identical(_store, store)) {
+        _store = null;
+      }
     });
-    return _store.projection;
+    return store.projection;
   }
 }

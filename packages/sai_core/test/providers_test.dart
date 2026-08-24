@@ -61,12 +61,18 @@ void main() {
           eventSourceProvider.overrideWithValue('sai/test'),
         ],
       );
+      final notifier = container.read(tasksProvider.notifier);
+      expect(
+        () => notifier.store,
+        throwsStateError,
+        reason: 'the store is not open until the provider future resolves',
+      );
+
       final initial = await container.read(tasksProvider.future);
       expect(initial.tasks, isEmpty);
 
-      final store = container.read(tasksProvider.notifier).store;
-      final id = await store.createTask(title: 'from the provider');
-      await Future<void>.delayed(Duration.zero);
+      final id = await notifier.store.createTask(title: 'from the provider');
+      // No microtask gap: an awaited command is already visible in state.
       final projection = container.read(tasksProvider).value!;
       expect(projection.task(id)!.title, 'from the provider');
       expect(projection.eventCount, 1);
