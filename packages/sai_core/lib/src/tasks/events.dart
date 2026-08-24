@@ -109,11 +109,24 @@ sealed class TaskEvent {
   /// The payload exactly as written to the line.
   Map<String, Object?> toPayload();
 
+  /// Whether the registry's actor column admits an assistant for this
+  /// type: only `task.*` mutations may be assistant-made (#35); container
+  /// events are user / system. Widening a row later is additive.
+  bool get _assistantAllowed => type.startsWith('task.');
+
   /// Wraps this mutation for [Archive.append].
+  ///
+  /// Throws [ArgumentError] when [by] is an assistant attribution on a
+  /// type whose registry row admits only user / system.
   EventDraft toDraft({
     required String source,
     Attribution by = const Attribution.user(),
   }) {
+    if (by.actor == Actor.assistant && !_assistantAllowed) {
+      throw ArgumentError(
+        'the registry admits only user/system actors for $type',
+      );
+    }
     final allRefs = [...refs, ...by.refs];
     return EventDraft(
       type: type,
@@ -1271,5 +1284,11 @@ final _decoders = <String, TaskEvent Function(Map<String, Object?>)>{
 TaskEvent? decodeTaskEvent(Event event) {
   final decoder = _decoders[event.type];
   if (decoder == null) return null;
-  return decoder(event.payload);
+  final decoded = decoder(event.payload);
+  if (event.actor == Actor.assistant && !decoded._assistantAllowed) {
+    throw FormatException(
+      'the registry admits only user/system actors for ${event.type}',
+    );
+  }
+  return decoded;
 }

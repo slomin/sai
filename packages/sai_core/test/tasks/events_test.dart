@@ -142,6 +142,44 @@ void main() {
       );
       expect(import.actor, Actor.system);
     });
+
+    test('container events refuse an assistant attribution', () {
+      const model = ModelRef(provider: 'anthropic', id: 'claude-fable-5');
+      const by = Attribution.assistant(model);
+      // The registry's actor column for area/project/heading/tag rows is
+      // user / system; only task.* mutations may be assistant-made (#35).
+      for (final event in <TaskEvent>[
+        AreaCreated(title: 'A'),
+        AreaDeleted(areaId),
+        ProjectEdited(projectId, title: const Patch('P')),
+        HeadingCreated(project: projectId, title: 'H'),
+        TagRestored(tagId),
+      ]) {
+        expect(
+          () => event.toDraft(source: 'sai/tui', by: by),
+          throwsArgumentError,
+          reason: event.type,
+        );
+      }
+      // Every task.* mutation still may be.
+      expect(seal(TaskDeleted(taskId), by: by).actor, Actor.assistant);
+    });
+
+    test('a decoded container event with an assistant actor is refused', () {
+      const model = ModelRef(provider: 'anthropic', id: 'claude-fable-5');
+      final sealed = Event.seal(
+        EventDraft(
+          type: TaskEventTypes.areaCreate,
+          actor: Actor.assistant,
+          source: 'sai/tui',
+          payload: {'title': 'A'},
+          model: model,
+        ),
+        prev: prev,
+        ts: ts,
+      );
+      expect(() => decodeTaskEvent(sealed), throwsFormatException);
+    });
   });
 
   group('field-set semantics', () {
