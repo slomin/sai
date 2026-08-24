@@ -432,22 +432,23 @@ class TodayNotifier extends Notifier<CalendarDate> {
     _timer?.cancel();
     _clock = ref.watch(clockProvider);
     ref.onDispose(() => _timer?.cancel());
-    final today = CalendarDate.fromLocal(_clock());
-    _schedule();
-    return today;
+    final now = _clock();
+    _schedule(now);
+    return CalendarDate.fromLocal(now);
   }
 
-  void _schedule() {
+  void _schedule(DateTime now) {
     _timer?.cancel();
-    final local = _clock().toLocal();
+    final local = now.toLocal();
     final midnight = DateTime(local.year, local.month, local.day + 1);
     final delay = midnight.difference(local);
     _timer = Timer(delay.isNegative ? Duration.zero : delay, _rollOver);
   }
 
   void _rollOver() {
-    state = CalendarDate.fromLocal(_clock());
-    _schedule();
+    final now = _clock();
+    state = CalendarDate.fromLocal(now);
+    _schedule(now);
   }
 }
 

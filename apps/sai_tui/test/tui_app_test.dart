@@ -136,6 +136,34 @@ void main() {
     }, size: size);
   });
 
+  test('the visible lists react when the local day rolls over', () async {
+    await testNocterm('midnight', (tester) async {
+      final container = testContainer(
+        overrides: [todayProvider.overrideWith(_TestToday.new)],
+      );
+      await container.read(tasksProvider.future);
+      await container
+          .read(tasksProvider.notifier)
+          .store
+          .createTask(
+            title: 'Tomorrow task',
+            when: const TaskWhen.date(CalendarDate(2026, 8, 25)),
+          );
+      await tester.pumpComponent(
+        RiverpodScope(
+          container: container,
+          child: TuiApp(onQuit: () {}),
+        ),
+      );
+      expect(tester.terminalState, containsText('Upcoming (1)'));
+      expect(tester.terminalState, containsText('Today (0)'));
+
+      (container.read(todayProvider.notifier) as _TestToday).advance();
+      await pumpUntilText(tester, 'Today (1)');
+      expect(tester.terminalState, containsText('Tomorrow task @today'));
+    }, size: size);
+  });
+
   test('a deadline token renders, in Inbox and in Upcoming', () async {
     await testNocterm('deadline', (tester) async {
       await pumpTui(tester);
@@ -301,4 +329,11 @@ class _FailingTasks extends TasksNotifier {
   Future<TaskProjection> build() async {
     throw StateError('no archive today');
   }
+}
+
+class _TestToday extends TodayNotifier {
+  @override
+  CalendarDate build() => const CalendarDate(2026, 8, 24);
+
+  void advance() => state = const CalendarDate(2026, 8, 25);
 }

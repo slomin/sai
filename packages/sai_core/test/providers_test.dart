@@ -82,6 +82,26 @@ void main() {
       },
     );
 
+    test('todayProvider samples state and its deadline from one instant', () {
+      fakeAsync((async) {
+        var calls = 0;
+        final container = ProviderContainer.test(
+          overrides: [
+            clockProvider.overrideWithValue(() {
+              calls++;
+              return calls == 1
+                  ? DateTime(2026, 8, 24, 23, 59, 59, 999)
+                  : DateTime(2026, 8, 25);
+            }),
+          ],
+        );
+        expect(container.read(todayProvider), const CalendarDate(2026, 8, 24));
+        async.elapse(const Duration(milliseconds: 1));
+        expect(container.read(todayProvider), const CalendarDate(2026, 8, 25));
+        container.dispose();
+      });
+    });
+
     test('archive events are stamped with clockProvider', () async {
       final tmp = Directory.systemTemp.createTempSync('sai_providers_test');
       addTearDown(() => tmp.deleteSync(recursive: true));

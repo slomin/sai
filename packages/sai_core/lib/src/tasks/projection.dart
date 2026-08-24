@@ -738,10 +738,6 @@ final class _Builder {
     required AreaId? area,
     required HeadingId? heading,
   }) {
-    final target = _tasks[task]!;
-    if (!_isLive(target)) {
-      _refuse(stored, 'the structurally ordered task $task is not live');
-    }
     if (after == null) return;
     if (after == task) {
       _refuse(stored, 'a task cannot be ordered after itself');
