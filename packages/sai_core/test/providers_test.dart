@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:riverpod/misc.dart' show Override, ProviderException;
 import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
@@ -54,6 +55,53 @@ void main() {
       expect(container.read(todayProvider), const CalendarDate(2026, 8, 24));
     });
 
+    test(
+      'todayProvider rolls over at local midnight and cancels its timer',
+      () {
+        fakeAsync((async) {
+          final start = DateTime(2026, 8, 24, 23, 59);
+          final container = ProviderContainer.test(
+            overrides: [
+              clockProvider.overrideWithValue(() => start.add(async.elapsed)),
+            ],
+          );
+          expect(
+            container.read(todayProvider),
+            const CalendarDate(2026, 8, 24),
+          );
+          expect(async.nonPeriodicTimerCount, 1);
+          async.elapse(const Duration(minutes: 1));
+          expect(
+            container.read(todayProvider),
+            const CalendarDate(2026, 8, 25),
+          );
+          expect(async.nonPeriodicTimerCount, 1);
+          container.dispose();
+          expect(async.pendingTimers, isEmpty);
+        });
+      },
+    );
+
+    test('todayProvider samples state and its deadline from one instant', () {
+      fakeAsync((async) {
+        var calls = 0;
+        final container = ProviderContainer.test(
+          overrides: [
+            clockProvider.overrideWithValue(() {
+              calls++;
+              return calls == 1
+                  ? DateTime(2026, 8, 24, 23, 59, 59, 999)
+                  : DateTime(2026, 8, 25);
+            }),
+          ],
+        );
+        expect(container.read(todayProvider), const CalendarDate(2026, 8, 24));
+        async.elapse(const Duration(milliseconds: 1));
+        expect(container.read(todayProvider), const CalendarDate(2026, 8, 25));
+        container.dispose();
+      });
+    });
+
     test('archive events are stamped with clockProvider', () async {
       final tmp = Directory.systemTemp.createTempSync('sai_providers_test');
       addTearDown(() => tmp.deleteSync(recursive: true));
@@ -100,6 +148,72 @@ void main() {
       final projection = container.read(tasksProvider).value!;
       expect(projection.task(id)!.title, 'from the provider');
       expect(projection.eventCount, 1);
+    });
+
+    test(
+      'taskViewProvider updates synchronously after a committed command',
+      () async {
+        final tmp = Directory.systemTemp.createTempSync(
+          'sai_view_provider_test',
+        );
+        addTearDown(() => tmp.deleteSync(recursive: true));
+        final container = ProviderContainer.test(
+          overrides: [
+            archiveRootProvider.overrideWithValue(tmp),
+            eventSourceProvider.overrideWithValue('sai/test'),
+            clockProvider.overrideWithValue(() => DateTime(2026, 8, 24, 12)),
+          ],
+        );
+        await container.read(tasksProvider.future);
+        final provider = taskViewProvider(const ListSection(TaskList.inbox));
+        expect(container.read(provider).requireValue.tasks, isEmpty);
+        await container
+            .read(tasksProvider.notifier)
+            .store
+            .createTask(title: 'x');
+        expect(container.read(provider).requireValue.tasks.single.title, 'x');
+      },
+    );
+
+    test('taskViewProvider changes at midnight without a task mutation', () {
+      final event = Event.seal(
+        TaskCreated(
+          title: 'tomorrow',
+          when: const TaskWhen.date(CalendarDate(2026, 8, 25)),
+        ).toDraft(source: 'sai/test'),
+        prev: null,
+        ts: DateTime.utc(2026, 8, 24, 12),
+      );
+      final projection = TaskProjection.empty.apply(
+        StoredEvent(id: event.deriveId(), event: event),
+      );
+      fakeAsync((async) {
+        final start = DateTime(2026, 8, 24, 23, 59);
+        final container = ProviderContainer.test(
+          overrides: [
+            tasksProvider.overrideWithBuild((ref, notifier) => projection),
+            clockProvider.overrideWithValue(() => start.add(async.elapsed)),
+          ],
+        );
+        final section = const ListSection(TaskList.today);
+        container.listen(taskViewProvider(section), (_, _) {});
+        async.flushMicrotasks();
+        expect(
+          container.read(taskViewProvider(section)).requireValue.tasks,
+          isEmpty,
+        );
+        async.elapse(const Duration(minutes: 1));
+        expect(
+          container
+              .read(taskViewProvider(section))
+              .requireValue
+              .tasks
+              .single
+              .title,
+          'tomorrow',
+        );
+        container.dispose();
+      });
     });
 
     test('canUndoProvider follows the store, false until it settles', () async {

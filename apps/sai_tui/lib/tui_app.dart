@@ -3,6 +3,10 @@ import 'package:nocterm_riverpod/nocterm_riverpod.dart';
 import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+final _listStateProvider = Provider(
+  (ref) => (tasks: ref.watch(tasksProvider), today: ref.watch(todayProvider)),
+);
+
 /// Quick capture and the two lists it feeds (#19). Still a placeholder
 /// shell — #41 puts the real Today list and chat in.
 ///
@@ -106,10 +110,10 @@ class _TuiAppState extends State<TuiApp> {
               onSubmitted: _capture,
             ),
             Expanded(
-              child: RiverpodConsumer<AsyncValue<TaskProjection>>(
-                provider: tasksProvider,
-                builder: (context, value) => switch (value) {
-                  AsyncData(:final value) => _lists(context, value),
+              child: RiverpodConsumer(
+                provider: _listStateProvider,
+                builder: (context, state) => switch (state.tasks) {
+                  AsyncData(:final value) => _lists(value, state.today),
                   AsyncError(:final error) => Center(
                     child: Text('archive error: $error'),
                   ),
@@ -140,8 +144,7 @@ class _TuiAppState extends State<TuiApp> {
     );
   }
 
-  Component _lists(BuildContext context, TaskProjection projection) {
-    final today = context.read(todayProvider);
+  Component _lists(TaskProjection projection, CalendarDate today) {
     final sections = captureSections(projection, today);
     if (sections.every((section) => section.tasks.isEmpty)) {
       return Center(child: Text(context.read(shellGreetingProvider)));

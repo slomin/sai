@@ -45,6 +45,10 @@ void main() {
       TaskMoved(taskId, project: projectId, heading: headingId),
       TaskMoved(taskId, area: areaId),
       TaskMoved(taskId),
+      TaskMoved(taskId, after: const Patch(null)),
+      TaskMoved(taskId, after: Patch(areaId)),
+      TaskReordered(taskId, list: TaskList.today, after: null),
+      TaskReordered(taskId, list: TaskList.today, after: areaId),
       TaskCompleted(taskId),
       TaskCompleted(taskId, at: DateTime.utc(2026, 8, 24, 12)),
       TaskCancelled(taskId, at: DateTime.utc(2026, 8, 24, 12)),
@@ -103,9 +107,9 @@ void main() {
       }
     });
 
-    test('all 25 registry types are covered by the samples', () {
+    test('all 26 registry types are covered by the samples', () {
       expect(samples.map((s) => s.type).toSet(), TaskEventTypes.all.toSet());
-      expect(TaskEventTypes.all, hasLength(25));
+      expect(TaskEventTypes.all, hasLength(26));
     });
   });
 
@@ -196,6 +200,18 @@ void main() {
   });
 
   group('field-set semantics', () {
+    test('move distinguishes append, first, and an explicit predecessor', () {
+      expect(TaskMoved(taskId).toPayload().containsKey('after'), isFalse);
+      expect(
+        TaskMoved(taskId, after: const Patch(null)).toPayload()['after'],
+        isNull,
+      );
+      expect(
+        TaskMoved(taskId, after: Patch(projectId)).toPayload()['after'],
+        projectId.toString(),
+      );
+    });
+
     test('absent, null and value survive the wire distinctly', () {
       final cleared = seal(TaskEdited(taskId, deadline: const Patch(null)));
       expect(cleared.encode(), contains('"deadline":null'));
@@ -320,6 +336,28 @@ void main() {
       );
     });
 
+    test('Today reorder requires its fixed list and nullable after key', () {
+      expect(
+        () => decodeTaskEvent(
+          rawEvent(TaskEventTypes.taskReorder, {
+            'task': taskId.toString(),
+            'list': 'today',
+          }),
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => decodeTaskEvent(
+          rawEvent(TaskEventTypes.taskReorder, {
+            'task': taskId.toString(),
+            'list': 'inbox',
+            'after': null,
+          }),
+        ),
+        throwsFormatException,
+      );
+    });
+
     test('rejects contradictory placements', () {
       expect(
         () => decodeTaskEvent(
@@ -376,6 +414,10 @@ void main() {
         throwsArgumentError,
       );
       expect(() => TaskMoved(taskId, heading: headingId), throwsArgumentError);
+      expect(
+        () => TaskReordered(taskId, list: TaskList.inbox, after: null),
+        throwsArgumentError,
+      );
       expect(() => AreaEdited(areaId), throwsArgumentError);
     });
   });

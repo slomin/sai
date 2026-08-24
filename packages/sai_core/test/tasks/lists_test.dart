@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
 
@@ -151,5 +153,190 @@ void main() {
     test('the Trash keeps its name beside the lists', () {
       expect(trashTitle, 'Trash');
     });
+  });
+
+  group('TaskView', () {
+    late Directory tmp;
+    late Archive archive;
+    late TaskStore store;
+
+    setUp(() async {
+      tmp = Directory.systemTemp.createTempSync('sai_task_view_test');
+      archive = await Archive.open(tmp);
+      store = await TaskStore.open(archive, source: 'sai/tui');
+    });
+
+    tearDown(() async {
+      store.dispose();
+      await archive.close();
+      tmp.deleteSync(recursive: true);
+    });
+
+    TaskView view(SidebarSection section) =>
+        taskView(store.projection, section, today: today);
+
+    test(
+      'Inbox and Today are flat and keep their independent orders',
+      () async {
+        final inboxA = await store.createTask(title: 'inbox a');
+        final inboxB = await store.createTask(title: 'inbox b');
+        final todayA = await store.createTask(
+          title: 'today a',
+          when: const TaskWhen.date(today),
+        );
+        final todayB = await store.createTask(
+          title: 'today b',
+          when: const TaskWhen.date(today),
+        );
+        await store.reorderTask(inboxB, after: null);
+        await store.reorderToday(todayB, after: null);
+
+        final inbox = view(const ListSection(TaskList.inbox));
+        expect(inbox.sections, hasLength(1));
+        expect(inbox.sections.single.tasks.map((t) => t.id), [inboxB, inboxA]);
+        final todayView = view(const ListSection(TaskList.today));
+        expect(todayView.sections, hasLength(1));
+        expect(todayView.sections.single.tasks.map((t) => t.id), [
+          todayB,
+          todayA,
+        ]);
+      },
+    );
+
+    test('Upcoming groups by future start first, otherwise deadline', () async {
+      final deadlineOnly = await store.createTask(
+        title: 'deadline only',
+        deadline: const CalendarDate(2026, 8, 26),
+      );
+      final startWins = await store.createTask(
+        title: 'start wins',
+        when: const TaskWhen.date(CalendarDate(2026, 8, 25)),
+        deadline: const CalendarDate(2026, 8, 27),
+      );
+      final upcoming = view(const ListSection(TaskList.upcoming));
+      expect(upcoming.sections.map((s) => s.day), [
+        const CalendarDate(2026, 8, 25),
+        const CalendarDate(2026, 8, 26),
+      ]);
+      expect(upcoming.sections[0].tasks.single.id, startWins);
+      expect(upcoming.sections[1].tasks.single.id, deadlineOnly);
+    });
+
+    test(
+      'Anytime and area/project views expose the full live hierarchy',
+      () async {
+        final area = await store.createArea(title: 'Home');
+        final project = await store.createProject(title: 'Garden', area: area);
+        final emptyProject = await store.createProject(
+          title: 'Kitchen',
+          area: area,
+        );
+        final headingB = await store.createHeading(
+          project: project,
+          title: 'Z last title',
+        );
+        final headingA = await store.createHeading(
+          project: project,
+          title: 'A first title',
+        );
+        final direct = await store.createTask(title: 'direct', area: area);
+        final unheaded = await store.createTask(
+          title: 'unheaded',
+          project: project,
+        );
+        final underB = await store.createTask(
+          title: 'under b',
+          project: project,
+          heading: headingB,
+        );
+        final underA = await store.createTask(
+          title: 'under a',
+          project: project,
+          heading: headingA,
+        );
+
+        final anytime = view(const ListSection(TaskList.anytime));
+        expect(anytime.sections.map((s) => s.kind), [
+          TaskViewSectionKind.loose,
+          TaskViewSectionKind.area,
+          TaskViewSectionKind.project,
+          TaskViewSectionKind.heading,
+          TaskViewSectionKind.heading,
+          TaskViewSectionKind.project,
+        ]);
+        expect(anytime.sections[1].tasks.single.id, direct);
+        expect(anytime.sections[2].tasks.single.id, unheaded);
+        expect(anytime.sections[3].heading, headingB);
+        expect(anytime.sections[3].tasks.single.id, underB);
+        expect(anytime.sections[4].heading, headingA);
+        expect(anytime.sections[4].tasks.single.id, underA);
+        expect(anytime.sections[5].project, emptyProject);
+        expect(anytime.sections[5].tasks, isEmpty);
+
+        final areaView = view(AreaSection(area));
+        expect(areaView.sections.map((s) => s.kind), [
+          TaskViewSectionKind.area,
+          TaskViewSectionKind.project,
+          TaskViewSectionKind.heading,
+          TaskViewSectionKind.heading,
+          TaskViewSectionKind.project,
+        ]);
+        final projectView = view(ProjectSection(project));
+        expect(projectView.sections.map((s) => s.kind), [
+          TaskViewSectionKind.project,
+          TaskViewSectionKind.heading,
+          TaskViewSectionKind.heading,
+        ]);
+
+        await store.deleteHeading(headingB);
+        await store.deleteProject(emptyProject);
+        expect(view(ProjectSection(project)).sections.map((s) => s.heading), [
+          null,
+          headingA,
+        ]);
+        expect(view(ProjectSection(emptyProject)).sections, isEmpty);
+      },
+    );
+
+    test(
+      'filed Today tasks overlap Anytime without losing hierarchy',
+      () async {
+        final project = await store.createProject(title: 'P');
+        final id = await store.createTask(
+          title: 'both',
+          project: project,
+          when: const TaskWhen.date(today),
+        );
+        expect(view(const ListSection(TaskList.today)).tasks.map((t) => t.id), [
+          id,
+        ]);
+        expect(
+          view(const ListSection(TaskList.anytime)).tasks.map((t) => t.id),
+          [id],
+        );
+      },
+    );
+
+    test(
+      'Logbook groups local finish days newest-first, including cancelled',
+      () async {
+        final old = await store.createTask(title: 'old');
+        final newer = await store.createTask(title: 'newer');
+        final cancelled = await store.createTask(title: 'cancelled');
+        await store.completeTask(old, at: DateTime(2026, 8, 23, 23, 59, 59));
+        await store.completeTask(newer, at: DateTime(2026, 8, 24));
+        await store.cancelTask(cancelled, at: DateTime(2026, 8, 24, 0, 0, 1));
+        final logbook = view(const ListSection(TaskList.logbook));
+        expect(logbook.sections.map((s) => s.day), [
+          const CalendarDate(2026, 8, 24),
+          const CalendarDate(2026, 8, 23),
+        ]);
+        expect(logbook.sections.first.tasks.map((t) => t.id), [
+          cancelled,
+          newer,
+        ]);
+        expect(logbook.sections.last.tasks.single.id, old);
+      },
+    );
   });
 }

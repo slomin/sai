@@ -138,6 +138,90 @@ void main() {
     },
   );
 
+  group('ordering commands', () {
+    const today = CalendarDate(2026, 8, 24);
+
+    test('structural and Today reorder persist across restart', () async {
+      final a = await store.createTask(
+        title: 'a',
+        when: const TaskWhen.date(today),
+      );
+      final b = await store.createTask(
+        title: 'b',
+        when: const TaskWhen.date(today),
+      );
+      final c = await store.createTask(
+        title: 'c',
+        when: const TaskWhen.date(today),
+      );
+      await store.reorderTask(c, after: null);
+      await store.reorderToday(b, after: null);
+
+      expect(
+        store.projection.list(TaskList.today, today: today).map((t) => t.title),
+        ['b', 'a', 'c'],
+      );
+      await store.editTask(a, when: const Patch(TaskWhen.none));
+      await store.editTask(b, when: const Patch(TaskWhen.none));
+      await store.editTask(c, when: const Patch(TaskWhen.none));
+      expect(
+        store.projection.list(TaskList.inbox, today: today).map((t) => t.title),
+        ['c', 'a', 'b'],
+      );
+
+      final reopened = await TaskStore.open(archive, source: 'sai/app');
+      expect(reopened.projection.toJson(), store.projection.toJson());
+      expect(
+        reopened.projection
+            .list(TaskList.inbox, today: today)
+            .map((t) => t.title),
+        ['c', 'a', 'b'],
+      );
+      reopened.dispose();
+    });
+
+    test('move and destination position commit atomically', () async {
+      final project = await store.createProject(title: 'P');
+      final first = await store.createTask(title: 'first', project: project);
+      final moved = await store.createTask(title: 'moved');
+      await store.moveTask(moved, project: project, after: Patch(first));
+      expect(store.projection.inProject(project).map((t) => t.title), [
+        'first',
+        'moved',
+      ]);
+      expect(jsonDecode(logLines().last)['payload'], {
+        'task': moved.toString(),
+        'project': project.toString(),
+        'area': null,
+        'heading': null,
+        'after': first.toString(),
+      });
+    });
+
+    test(
+      'bad anchors append nothing and leave the projection untouched',
+      () async {
+        final project = await store.createProject(title: 'P');
+        final inbox = await store.createTask(title: 'inbox');
+        final filed = await store.createTask(title: 'filed', project: project);
+        final before = store.projection.toJson();
+        final lineCount = logLines().length;
+        for (final anchor in [
+          inbox,
+          filed,
+          BlobRef.sha256OfBytes(utf8.encode('ghost')),
+        ]) {
+          await expectLater(
+            store.reorderTask(inbox, after: anchor),
+            throwsA(isA<TaskProjectionError>()),
+          );
+          expect(store.projection.toJson(), before);
+          expect(logLines(), hasLength(lineCount));
+        }
+      },
+    );
+  });
+
   test('clearing a deadline writes a literal null', () async {
     final task = await store.createTask(
       title: 'x',

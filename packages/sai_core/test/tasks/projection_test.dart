@@ -261,6 +261,137 @@ void main() {
     });
   });
 
+  group('persisted task ordering', () {
+    const today = CalendarDate(2026, 8, 24);
+
+    test(
+      'creation appends and move supports first, after, and legacy append',
+      () {
+        final a = emit(TaskCreated(title: 'a'));
+        final b = emit(TaskCreated(title: 'b'));
+        final c = emit(TaskCreated(title: 'c'));
+        var p = applyAll([
+          a,
+          b,
+          c,
+          emit(TaskMoved(c.id, after: const Patch(null))),
+        ]);
+        expect(p.list(TaskList.inbox, today: today).map((t) => t.title), [
+          'c',
+          'a',
+          'b',
+        ]);
+
+        p = p.apply(emit(TaskMoved(c.id, after: Patch(a.id))));
+        expect(p.list(TaskList.inbox, today: today).map((t) => t.title), [
+          'a',
+          'c',
+          'b',
+        ]);
+
+        p = p.apply(emit(TaskMoved(c.id)));
+        expect(p.list(TaskList.inbox, today: today).map((t) => t.title), [
+          'a',
+          'b',
+          'c',
+        ]);
+      },
+    );
+
+    test('Today order is independent from structural order', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final a = emit(
+        TaskCreated(
+          title: 'a',
+          project: project.id,
+          when: const TaskWhen.date(today),
+        ),
+      );
+      final b = emit(
+        TaskCreated(
+          title: 'b',
+          project: project.id,
+          when: const TaskWhen.date(today),
+        ),
+      );
+      final c = emit(
+        TaskCreated(
+          title: 'c',
+          project: project.id,
+          when: const TaskWhen.date(today),
+        ),
+      );
+      final p = applyAll([
+        project,
+        a,
+        b,
+        c,
+        emit(TaskMoved(c.id, project: project.id, after: const Patch(null))),
+        emit(TaskReordered(b.id, list: TaskList.today, after: null)),
+      ]);
+      expect(p.inProject(project.id).map((t) => t.title), ['c', 'a', 'b']);
+      expect(p.list(TaskList.today, today: today).map((t) => t.title), [
+        'b',
+        'a',
+        'c',
+      ]);
+    });
+
+    test('completion and deletion filter without losing either position', () {
+      final a = emit(TaskCreated(title: 'a', when: const TaskWhen.date(today)));
+      final b = emit(TaskCreated(title: 'b', when: const TaskWhen.date(today)));
+      final c = emit(TaskCreated(title: 'c', when: const TaskWhen.date(today)));
+      final ordered = [
+        a,
+        b,
+        c,
+        emit(TaskMoved(c.id, after: const Patch(null))),
+        emit(TaskReordered(c.id, list: TaskList.today, after: null)),
+      ];
+      final hidden = applyAll([
+        ...ordered,
+        emit(TaskCompleted(c.id)),
+        emit(TaskDeleted(c.id)),
+      ]);
+      expect(hidden.list(TaskList.today, today: today).map((t) => t.title), [
+        'a',
+        'b',
+      ]);
+      final restored = hidden
+          .apply(emit(TaskRestored(c.id)))
+          .apply(emit(TaskReopened(c.id)));
+      expect(restored.list(TaskList.today, today: today).map((t) => t.title), [
+        'c',
+        'a',
+        'b',
+      ]);
+      final inbox = restored.apply(
+        emit(TaskEdited(c.id, when: const Patch(TaskWhen.none))),
+      );
+      expect(inbox.list(TaskList.inbox, today: today).map((t) => t.title), [
+        'c',
+      ]);
+    });
+
+    test('unknown, self, and cross-group structural anchors are refused', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final inbox = emit(TaskCreated(title: 'inbox'));
+      final filed = emit(TaskCreated(title: 'filed', project: project.id));
+      final ghost = BlobRef.sha256OfBytes(utf8.encode('ghost-anchor'));
+      final base = applyAll([project, inbox, filed]);
+      for (final event in [
+        TaskMoved(inbox.id, after: Patch(ghost)),
+        TaskMoved(inbox.id, after: Patch(inbox.id)),
+        TaskMoved(inbox.id, after: Patch(filed.id)),
+      ]) {
+        expect(
+          () => base.apply(emit(event)),
+          throwsA(isA<TaskProjectionError>()),
+        );
+      }
+    });
+  });
+
   group('delete and restore', () {
     test('a deleted task leaves the lists but stays in the trash', () {
       const today = CalendarDate(2026, 8, 24);

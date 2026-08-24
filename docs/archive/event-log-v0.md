@@ -223,7 +223,8 @@ types. Payload schemas:
 | --- | --- | --- |
 | `task.create` | user / system / assistant | `payload.title`; optional `notes`, `when`, `deadline`, `project`/`area`/`heading`, `tags`, `checklist`, `created_at` (import-only, requires `external`), `external` |
 | `task.edit` | user / system / assistant | `payload.task` plus changed content fields; a JSON `null` clears, an absent key leaves the field alone; placement keys are rejected — that is `task.move` |
-| `task.move` | user / system / assistant | `payload.task` plus `project`, `area`, `heading` — every placement key written on every move |
+| `task.move` | user / system / assistant | `payload.task` plus `project`, `area`, `heading` — every placement key written; optional `after` is omitted to append in the destination group, null for first, or a live sibling id |
+| `task.reorder` | user / system / assistant | `payload.task`, `list:"today"`, required nullable `after` — first or immediately after that task in Today's independent order |
 | `task.complete` | user / system / assistant | `payload.task`; optional `at` for imported history |
 | `task.cancel` | user / system / assistant | `payload.task`; optional `at` |
 | `task.reopen` | user / system / assistant | `payload.task`; clears completion and cancellation |

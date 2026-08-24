@@ -1,6 +1,6 @@
 # The task model, v0
 
-Status: current · Issue: #17 · ADR: [0004](../decisions/0004-the-task-store-is-event-sourced.md) · Registry: [event-log-v0](../archive/event-log-v0.md#task-domain-17)
+Status: current · Issues: #17, #20 · ADR: [0004](../decisions/0004-the-task-store-is-event-sourced.md) · Registry: [event-log-v0](../archive/event-log-v0.md#task-domain-17)
 
 sai's tasks are the Things 3 subset v0.1 honours: areas, projects,
 headings within projects, tags, and tasks with title, Markdown notes, a
@@ -27,7 +27,8 @@ blobref of the `*.create` line's exact bytes. There is no UUID anywhere.
 Every non-create event names its subject in `payload` (`task`, `area`,
 `project`, `heading` or `tag`) — the only key the reducer reads — and
 repeats it in the envelope's `refs` so provenance tooling works without
-task knowledge. A `task.move` also refs its destination containers. Do
+task knowledge. A `task.move` also refs its destination containers and
+an explicit predecessor; `task.reorder` refs its predecessor. Do
 not read `refs` back; only the payload is normative.
 
 Subject kind is checked at replay: a `task.edit` whose subject is a
@@ -95,15 +96,56 @@ Deliberate divergences from Things, both to keep the pure contract
   projection's queries, not by the membership rules — `listOf` on the
   task alone still answers from its own state.
 
-Within a list, v0.1 orders deterministically: when-date asc (none last),
-deadline asc (none last), createdAt asc, id asc — Logbook newest-done
-first. **Manual ordering is deferred to #20**; the planned extension is
-an additive `after` key on `task.move`, which changes no existing key's
-meaning and therefore needs no new type names.
+The projection replays two independent task-id sequences:
+
+- **Structural order** drives Inbox and every area/project/heading group.
+  Creation appends to it. A placement move removes the task and inserts it
+  in its final group.
+- **Today order** drives the flat Today list only. Creation appends to it;
+  structural moves never change it, and Today reorders never change
+  placement.
+
+Completion/cancellation and deletion filter a task without removing it from
+either sequence. Reopen/restore therefore reveals it at its former position.
+Upcoming remains chronological. Logbook remains completion-driven. Area and
+project sidebar/heading order is deterministic rather than user-controlled;
+task order is the only persisted manual order in this version.
+
+`task.move.after` has three wire states: omitted means append in the
+destination group (including every pre-#20 move); JSON `null` means first;
+an id means immediately after that live sibling in the final Inbox, direct
+area, unheaded project, or heading group. Unknown, self, deleted/finished, and
+cross-group anchors are refused before append. `task.reorder` carries
+`list:"today"` and a required nullable `after` with the same first/after
+meaning for Today's independent sequence.
+
+### View shape (#20)
+
+`TaskView` is the immutable shared client model and is keyed by the selected
+sidebar section:
+
+- Inbox and Today are one flat section, in structural and Today order.
+- Upcoming is grouped by ascending calendar day. A future when-date supplies
+  the day; otherwise the future deadline does.
+- Anytime and Someday start with loose tasks, then expand live areas and
+  projects in sidebar order. Projects contain unheaded tasks followed by live
+  headings in creation/id order.
+- A project view is its unheaded section followed by those heading sections.
+  An area view is its direct-task section followed by every live project and
+  that project's unheaded/heading sections. Live empty groups remain present;
+  deleted or unknown selected containers produce no sections.
+- Logbook groups completed and cancelled tasks by the finish instant's local
+  calendar day, newest day first and newest finish first within the day.
+
+`taskViewProvider` and `sidebarProvider` preserve the task provider's loading
+and error state and watch both its projection and `todayProvider`.
+`todayProvider` schedules local midnight, reads the clock again after a late
+sleep/wake callback, reschedules, and cancels its timer on disposal. Thus date
+membership changes without a task mutation.
 
 ## Events
 
-The 25 types and their actor columns are rows in the
+The 26 types and their actor columns are rows in the
 [event log registry](../archive/event-log-v0.md#task-domain-17).
 Payloads use the shared value forms:
 
@@ -120,8 +162,9 @@ Payloads use the shared value forms:
 **field-set semantics**: a key present sets the field, a JSON `null`
 clears it, an absent key leaves it alone — one key per future
 `set-attribute` claim. Notes clear to `""`, never to `null`. Placement
-never changes through an edit; `task.move` replaces the whole placement
-and always writes every placement key. `task.checklist` replaces the
+never changes through an edit; `task.move` replaces the whole placement,
+always writes every placement key, and optionally carries `after`.
+`task.reorder` is only Today's independent order. `task.checklist` replaces the
 whole ordered list — items have no identity in v0.1; per-item events
 would arrive as a new `checklist.*` family.
 
@@ -204,7 +247,7 @@ a payload key for it would be a spec change).
 ## Undo (#19)
 
 Undo is a new event, never a rewrite: reversing a mutation appends its
-**inverse** — an event of the same 25-type vocabulary, computed against
+**inverse** — an event of the same 26-type vocabulary, computed against
 the projection the mutation was validated on — with the reversed
 event's id in the envelope `refs`. No new types, no new payload keys.
 
@@ -212,7 +255,8 @@ event's id in the envelope `refs`. No new types, no new payload keys.
 | --- | --- |
 | `*.create` | `*.delete` of the minted id — a **soft** delete; an undone create sits in the Trash, the log keeps it forever |
 | `*.edit` | an edit writing the prior values of exactly the fields the event set |
-| `task.move` | a move back to the prior placement |
+| `task.move` | one move restoring the prior placement and predecessor |
+| `task.reorder` | one Today reorder restoring the prior predecessor |
 | `task.complete` / `task.cancel` / `task.reopen` | whichever of complete-with-prior-`at` / cancel-with-prior-`at` / reopen restores the prior pair |
 | `*.delete` / `*.restore` | whichever of restore / delete restores the prior state |
 | `task.checklist` | the prior items |
@@ -243,8 +287,8 @@ are unchanged; only the medium is deferred, tracked in
 query needs earn it (#12 measured replay at microseconds per line).
 
 Consequences: one store per process; a concurrent writer's appends
-become visible on `reload()` or reopen, not live; `todayProvider` does
-not roll over at midnight (#20 owns that).
+become visible on `reload()` or reopen, not live. Date-derived providers do
+roll over at local midnight, independently of archive writes.
 
 ## Repeating tasks are deferred
 
@@ -258,7 +302,6 @@ same task ids.
 
 Also deferred, with their re-entry paths:
 
-- **Manual ordering** — #20, via the additive `after` key on `task.move`.
 - **Project completion** — no `project.complete` in v0.1; #18 reports
   completed Things projects as unsupported; the type lands when a
   consumer needs it.
