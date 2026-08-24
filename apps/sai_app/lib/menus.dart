@@ -27,6 +27,15 @@ List<PlatformMenuItem> saiMenus({
     label: 'sai',
     menus: [
       const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.about),
+      // Where Settings… goes on macOS; #40 replaces it with the screen.
+      PlatformMenuItemGroup(
+        members: [
+          PlatformMenuItem(
+            label: 'Provider API Key…',
+            onSelected: commands.setApiKey,
+          ),
+        ],
+      ),
       const PlatformMenuItemGroup(
         members: [
           PlatformProvidedMenuItem(

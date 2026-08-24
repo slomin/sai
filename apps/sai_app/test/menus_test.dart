@@ -21,6 +21,7 @@ void main() {
       undo: () => calls.add('undo'),
       toggleChat: () => calls.add('chat'),
       showShortcuts: () => calls.add('shortcuts'),
+      setApiKey: () => calls.add('api key'),
       select: (section) => calls.add('select $section'),
     );
     List<PlatformMenuItem> menus({
@@ -47,6 +48,7 @@ void main() {
       expect(
         app.menus
             .expand((m) => m is PlatformMenuItemGroup ? m.members : [m])
+            .whereType<PlatformProvidedMenuItem>()
             .map(typeOf),
         [
           PlatformProvidedMenuItemType.about,
@@ -147,6 +149,11 @@ void main() {
     test('Help > Keyboard Shortcuts', () {
       menuItem(menus(), ['Help', 'Keyboard Shortcuts']).onSelected!();
       expect(calls, ['shortcuts']);
+    });
+
+    test('sai > Provider API Key…', () {
+      menuItem(menus(), ['sai', 'Provider API Key…']).onSelected!();
+      expect(calls, ['api key']);
     });
   });
 

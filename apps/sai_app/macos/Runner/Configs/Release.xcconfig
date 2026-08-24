@@ -1,2 +1,6 @@
 #include "../../Flutter/Flutter-Release.xcconfig"
 #include "Warnings.xcconfig"
+
+// Machine-local overrides (gitignored): a stable CODE_SIGN_IDENTITY so
+// Keychain items keep trusting the app across rebuilds (ADR 0008).
+#include? "Local.xcconfig"
