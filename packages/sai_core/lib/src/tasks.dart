@@ -4,4 +4,5 @@
 library;
 
 export 'tasks/date.dart';
+export 'tasks/lists.dart';
 export 'tasks/model.dart';
