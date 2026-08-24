@@ -7,3 +7,4 @@ export 'tasks/date.dart';
 export 'tasks/events.dart';
 export 'tasks/lists.dart';
 export 'tasks/model.dart';
+export 'tasks/projection.dart';
