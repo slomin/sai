@@ -1357,6 +1357,21 @@ TaskEvent? decodeTaskEvent(Event event) {
   final decoder = _decoders[event.type];
   if (decoder == null) return null;
   final decoded = decoder(event.payload);
+  final (instant, field) = switch (decoded) {
+    TaskCreated(:final createdAt) => (createdAt, 'created_at'),
+    AreaCreated(:final createdAt) => (createdAt, 'created_at'),
+    ProjectCreated(:final createdAt) => (createdAt, 'created_at'),
+    HeadingCreated(:final createdAt) => (createdAt, 'created_at'),
+    TagCreated(:final createdAt) => (createdAt, 'created_at'),
+    TaskCompleted(:final at) => (at, 'at'),
+    TaskCancelled(:final at) => (at, 'at'),
+    _ => (null, null),
+  };
+  if (instant != null && instant.isAfter(event.ts)) {
+    throw FormatException(
+      '${event.type}.$field must not be later than event.ts',
+    );
+  }
   if (event.actor == Actor.assistant && !decoded._assistantAllowed) {
     throw FormatException(
       'the registry admits only user/system actors for ${event.type}',

@@ -118,7 +118,7 @@ void main() {
 
     test('an explicit at overrides the completion stamp', () {
       final created = emit(TaskCreated(title: 'x'));
-      final at = DateTime.utc(2026, 8, 24, 12);
+      final at = DateTime.utc(2026, 8, 24, 9);
       final completed = applyAll([
         created,
         emit(TaskCompleted(created.id, at: at)),
@@ -659,6 +659,29 @@ void main() {
       expect(back.toJson(), p.toJson());
       expect(back.lastEventId, p.lastEventId);
       expect(back.eventCount, p.eventCount);
+    });
+
+    test('malformed blobrefs fail as FormatException', () {
+      final json = TaskProjection.empty.toJson();
+      for (final value in [7, '', 'not-a-ref']) {
+        final malformed = Map<String, Object?>.from(json)
+          ..['last_event'] = value;
+        expect(
+          () => TaskProjection.fromJson(malformed),
+          throwsFormatException,
+          reason: 'last_event: $value',
+        );
+      }
+
+      for (final value in [null, 7, '', 'not-a-ref']) {
+        final malformed = Map<String, Object?>.from(json)
+          ..['externals'] = {'things3:T-1': value};
+        expect(
+          () => TaskProjection.fromJson(malformed),
+          throwsFormatException,
+          reason: 'external id: $value',
+        );
+      }
     });
   });
 

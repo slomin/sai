@@ -246,6 +246,27 @@ void main() {
     expect(store.projection.eventCount, 0);
   });
 
+  test(
+    'future history is rejected before archive or store state changes',
+    () async {
+      final task = await store.createTask(title: 'x');
+      final beforeProjection = store.projection.toJson();
+      final beforeUndoDepth = store.undoDepth;
+      final beforeLines = logLines();
+      final beforeHead = File('${tmp.path}/HEAD').readAsStringSync();
+
+      await expectLater(
+        store.completeTask(task, at: DateTime.utc(2030)),
+        throwsFormatException,
+      );
+
+      expect(store.projection.toJson(), beforeProjection);
+      expect(store.undoDepth, beforeUndoDepth);
+      expect(logLines(), beforeLines);
+      expect(File('${tmp.path}/HEAD').readAsStringSync(), beforeHead);
+    },
+  );
+
   test('interleaved chat events are replayed over, not tripped over', () async {
     final task = await store.createTask(title: 'x');
     await archive.append(

@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 
+import '../json_codec.dart';
 import 'blobref.dart';
 
 /// Who an event speaks for. Serialized as the lowercase name.
@@ -45,18 +46,18 @@ final class ModelRef {
       '${requestId == null ? '' : ' #$requestId'})';
 
   static ModelRef _fromJson(Object? json) {
-    final map = _requireObject(json, 'model');
-    _rejectUnknownKeys(map, const {
+    final map = requireObject(json, 'model');
+    rejectUnknownKeys(map, const {
       'provider',
       'id',
       'version',
       'request_id',
     }, where: 'model');
     return ModelRef(
-      provider: _requireString(map, 'provider', where: 'model'),
-      id: _requireString(map, 'id', where: 'model'),
-      version: _optionalString(map, 'version', where: 'model'),
-      requestId: _optionalString(map, 'request_id', where: 'model'),
+      provider: requireString(map, 'provider', where: 'model'),
+      id: requireString(map, 'id', where: 'model'),
+      version: optionalString(map, 'version', where: 'model'),
+      requestId: optionalString(map, 'request_id', where: 'model'),
     );
   }
 }
@@ -137,8 +138,8 @@ final class Event {
     } on FormatException catch (e) {
       throw FormatException('not JSON: ${e.message}');
     }
-    final map = _requireObject(json, 'event');
-    _rejectUnknownKeys(map, const {
+    final map = requireObject(json, 'event');
+    rejectUnknownKeys(map, const {
       'v',
       'ts',
       'type',
@@ -152,8 +153,8 @@ final class Event {
     if (map['v'] != 0) {
       throw FormatException('unsupported event version: ${map['v']}');
     }
-    final tsText = _requireString(map, 'ts', where: 'event');
-    final actorName = _requireString(map, 'actor', where: 'event');
+    final tsText = requireString(map, 'ts', where: 'event');
+    final actorName = requireString(map, 'actor', where: 'event');
     final actor = Actor.values.asNameMap()[actorName];
     if (actor == null) {
       throw FormatException('unknown actor: "$actorName"');
@@ -165,15 +166,15 @@ final class Event {
     final event = Event._(
       ts: parseTs(tsText),
       tsText: tsText,
-      type: _requireString(map, 'type', where: 'event'),
+      type: requireString(map, 'type', where: 'event'),
       actor: actor,
-      source: _requireString(map, 'source', where: 'event'),
+      source: requireString(map, 'source', where: 'event'),
       payload: Map<String, Object?>.from(
-        _requireObject(map['payload'], 'payload'),
+        requireObject(map['payload'], 'payload'),
       ),
       model: map.containsKey('model') ? ModelRef._fromJson(map['model']) : null,
       refs: _parseRefs(map['refs'], present: map.containsKey('refs')),
-      prev: prevText == null ? null : _parseRef(prevText, where: 'prev'),
+      prev: nullableBlobRef(prevText, where: 'prev'),
     );
     event._validate(throwing: FormatException.new);
     return event;
@@ -328,14 +329,7 @@ DateTime parseTs(String text) {
 }
 
 BlobRef _parseRef(Object? value, {required String where}) {
-  if (value is! String) {
-    throw FormatException('$where must be a blobref string');
-  }
-  try {
-    return BlobRef.parse(value);
-  } on FormatException {
-    throw FormatException('$where is not a blobref: "$value"');
-  }
+  return requireBlobRef(value, where: where);
 }
 
 List<BlobRef> _parseRefs(Object? value, {required bool present}) {
@@ -346,50 +340,6 @@ List<BlobRef> _parseRefs(Object? value, {required bool present}) {
   return List.unmodifiable([
     for (final entry in value) _parseRef(entry, where: 'refs entry'),
   ]);
-}
-
-Map<String, Object?> _requireObject(Object? value, String where) {
-  if (value is! Map<String, Object?>) {
-    throw FormatException('$where must be a JSON object');
-  }
-  return value;
-}
-
-String _requireString(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  final value = map[key];
-  if (value is! String || value.isEmpty) {
-    throw FormatException('$where.$key must be a non-empty string');
-  }
-  return value;
-}
-
-String? _optionalString(
-  Map<String, Object?> map,
-  String key, {
-  required String where,
-}) {
-  if (!map.containsKey(key)) return null;
-  final value = map[key];
-  if (value is! String || value.isEmpty) {
-    throw FormatException('$where.$key must be a non-empty string');
-  }
-  return value;
-}
-
-void _rejectUnknownKeys(
-  Map<String, Object?> map,
-  Set<String> allowed, {
-  required String where,
-}) {
-  for (final key in map.keys) {
-    if (!allowed.contains(key)) {
-      throw FormatException('unknown key in $where: "$key"');
-    }
-  }
 }
 
 Object? _sortedDeep(Object? value) => switch (value) {

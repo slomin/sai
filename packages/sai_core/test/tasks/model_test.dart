@@ -196,6 +196,19 @@ void main() {
       final badInstant = bareTask().toJson()..['created_at'] = '2026-08-20';
       expect(() => Task.fromJson(badInstant), throwsFormatException);
     });
+
+    test('rejects present null optional strings', () {
+      final nullNotes = bareTask().toJson()..['notes'] = null;
+      expect(() => Task.fromJson(nullNotes), throwsFormatException);
+      expect(
+        () => ExternalRef.fromJson({
+          'system': 'things3',
+          'id': 'T-1',
+          'version': null,
+        }),
+        throwsFormatException,
+      );
+    });
   });
 
   group('derived status', () {

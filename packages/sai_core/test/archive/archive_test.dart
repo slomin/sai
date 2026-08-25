@@ -41,6 +41,41 @@ void main() {
     expect(report.head, stored.id);
   });
 
+  test('pre-write validation sees the final event and is atomic', () async {
+    final archive = await Archive.open(tmp, clock: clock);
+    final first = await archive.append(draft('first'));
+    final day = dayFile('2026-08-23');
+    final linesBefore = day.readAsBytesSync();
+    final headBefore = File('${tmp.path}/HEAD').readAsBytesSync();
+    final explicitTs = DateTime.utc(2026, 8, 23, 9);
+    StoredEvent? seen;
+
+    await expectLater(
+      archive.append(
+        EventDraft(
+          type: EventTypes.chatMessage,
+          actor: Actor.user,
+          source: 'sai/tui',
+          payload: {'text': 'rejected'},
+          ts: explicitTs,
+        ),
+        validate: (stored) {
+          seen = stored;
+          throw const FormatException('rejected');
+        },
+      ),
+      throwsFormatException,
+    );
+
+    expect(seen, isNotNull);
+    expect(seen!.event.prev, first.id);
+    expect(seen!.event.ts, explicitTs);
+    expect(seen!.id, seen!.event.deriveId());
+    expect(day.readAsBytesSync(), linesBefore);
+    expect(File('${tmp.path}/HEAD').readAsBytesSync(), headBefore);
+    expect((await archive.verify()).count, 1);
+  });
+
   test('the chain crosses a day rollover and reads back in order', () async {
     final archive = await Archive.open(tmp, clock: clock);
     final ids = <BlobRef>[];

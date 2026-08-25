@@ -107,9 +107,14 @@ final class Archive {
     return archive;
   }
 
-  /// Appends one event: seals [draft] onto the chain, writes its line with
-  /// fsync, then advances HEAD. Returns the stored event with its id.
-  Future<StoredEvent> append(EventDraft draft) => _store.withLock(() async {
+  /// Appends one event: seals [draft] onto the chain, runs the optional
+  /// synchronous [validate] callback against that final envelope and id,
+  /// writes its line with fsync, then advances HEAD. A validation failure
+  /// touches neither the JSONL files nor HEAD.
+  Future<StoredEvent> append(
+    EventDraft draft, {
+    void Function(StoredEvent stored)? validate,
+  }) => _store.withLock(() async {
     final tail = await _tailState();
     final ts = (draft.ts ?? _clock()).toUtc();
     final event = Event.seal(draft, prev: tail.head, ts: ts);
@@ -127,11 +132,13 @@ final class Archive {
     }
     final bytes = utf8.encode(event.encode());
     final id = BlobRef.sha256OfBytes(bytes);
+    final stored = StoredEvent(id: id, event: event);
+    validate?.call(stored);
     _store.appendLine(_store.dayFile(day), bytes);
     _store.writeHead(
       HeadRecord(count: tail.count + 1, head: id, updated: formatTs(_clock())),
     );
-    return StoredEvent(id: id, event: event);
+    return stored;
   });
 
   /// All events, oldest first, verifying as it goes: every line's id links

@@ -310,7 +310,10 @@ final class TaskProjection {
       },
       externals: {
         for (final entry in externalsJson.entries)
-          entry.key: BlobRef.parse(entry.value as String),
+          entry.key: requireBlobRef(
+            entry.value,
+            where: 'projection.externals.${entry.key}',
+          ),
       },
       structuralOrder: _decodeOrder(
         map['structural_order'],
@@ -322,9 +325,10 @@ final class TaskProjection {
         'projection.today_order',
         tasks.keys,
       ),
-      lastEventId: map['last_event'] == null
-          ? null
-          : BlobRef.parse(map['last_event'] as String),
+      lastEventId: nullableBlobRef(
+        map['last_event'],
+        where: 'projection.last_event',
+      ),
       eventCount: count,
     );
   }

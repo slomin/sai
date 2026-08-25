@@ -50,8 +50,8 @@ void main() {
       TaskReordered(taskId, list: TaskList.today, after: null),
       TaskReordered(taskId, list: TaskList.today, after: areaId),
       TaskCompleted(taskId),
-      TaskCompleted(taskId, at: DateTime.utc(2026, 8, 24, 12)),
-      TaskCancelled(taskId, at: DateTime.utc(2026, 8, 24, 12)),
+      TaskCompleted(taskId, at: DateTime.utc(2026, 8, 24, 8)),
+      TaskCancelled(taskId, at: DateTime.utc(2026, 8, 24, 8)),
       TaskReopened(taskId),
       TaskDeleted(taskId),
       TaskRestored(taskId),
@@ -391,6 +391,15 @@ void main() {
       );
     });
 
+    test('rejects present null optional strings', () {
+      expect(
+        () => decodeTaskEvent(
+          rawEvent(TaskEventTypes.taskCreate, {'title': 'x', 'notes': null}),
+        ),
+        throwsFormatException,
+      );
+    });
+
     test('rejects created_at without external', () {
       expect(
         () => decodeTaskEvent(
@@ -401,6 +410,65 @@ void main() {
         ),
         throwsFormatException,
       );
+    });
+
+    test('created_at and at cannot be later than the event timestamp', () {
+      final boundedPayloads = <String, Map<String, Object?> Function(String)>{
+        TaskEventTypes.taskCreate: (instant) => {
+          'title': 'x',
+          'created_at': instant,
+          'external': {'system': 'things3', 'id': 'T-1'},
+        },
+        TaskEventTypes.areaCreate: (instant) => {
+          'title': 'x',
+          'created_at': instant,
+          'external': {'system': 'things3', 'id': 'A-1'},
+        },
+        TaskEventTypes.projectCreate: (instant) => {
+          'title': 'x',
+          'created_at': instant,
+          'external': {'system': 'things3', 'id': 'P-1'},
+        },
+        TaskEventTypes.headingCreate: (instant) => {
+          'project': projectId.toString(),
+          'title': 'x',
+          'created_at': instant,
+          'external': {'system': 'things3', 'id': 'H-1'},
+        },
+        TaskEventTypes.tagCreate: (instant) => {
+          'title': 'x',
+          'created_at': instant,
+          'external': {'system': 'things3', 'id': 'G-1'},
+        },
+        TaskEventTypes.taskComplete: (instant) => {
+          'task': taskId.toString(),
+          'at': instant,
+        },
+        TaskEventTypes.taskCancel: (instant) => {
+          'task': taskId.toString(),
+          'at': instant,
+        },
+      };
+
+      for (final entry in boundedPayloads.entries) {
+        for (final accepted in [ts.subtract(const Duration(days: 1)), ts]) {
+          expect(
+            decodeTaskEvent(
+              rawEvent(entry.key, entry.value(formatTs(accepted))),
+            ),
+            isNotNull,
+            reason: '${entry.key} at $accepted',
+          );
+        }
+        final future = ts.add(const Duration(microseconds: 1));
+        expect(
+          () => decodeTaskEvent(
+            rawEvent(entry.key, entry.value(formatTs(future))),
+          ),
+          throwsFormatException,
+          reason: '${entry.key} at $future',
+        );
+      }
     });
   });
 
