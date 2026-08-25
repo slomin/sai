@@ -6,6 +6,7 @@ import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'chat_pane.dart';
+import 'task_list.dart';
 
 final _listStateProvider = Provider(
   (ref) => (tasks: ref.watch(tasksProvider), today: ref.watch(todayProvider)),
@@ -18,8 +19,8 @@ final _chatViewProvider = Provider(
   ),
 );
 
-/// Quick capture, the lists it feeds (#19) and the chat (#34). Still a
-/// thin shell — #41 puts the real Today list in.
+/// Quick capture, the lists it feeds (#19, selectable since #41) and the
+/// chat (#34).
 ///
 /// Expects a [RiverpodScope] above it; the entry point in `bin/` provides
 /// one together with [onQuit], which must end the process (nocterm's
@@ -28,7 +29,9 @@ final _chatViewProvider = Provider(
 ///
 /// Key map: one of the two fields is always focused, so printable keys
 /// type; Tab moves to the chat, Esc back to capture (or stops a running
-/// answer first). Ctrl+C quits (it bubbles through the
+/// answer first). With capture focused, ↑/↓ move the cursor over the
+/// task rows (a single-line field lets them through) and **Ctrl+D**
+/// completes the selected task. Ctrl+C quits (it bubbles through the
 /// field by design). **Ctrl+U** is undo — not Ctrl+Z, which stays
 /// `SIGTSTP` in a real terminal (`stdin.lineMode = false` clears ICANON
 /// only, ISIG stays on) and would suspend the TUI mid-alt-screen. Esc
@@ -48,7 +51,30 @@ class _TuiAppState extends State<TuiApp> {
   final _controller = TextEditingController();
   final _chatInput = TextEditingController();
   final _chatScroll = AutoScrollController();
+  final _listScroll = ScrollController();
   var _pane = _Pane.capture;
+
+  /// The cursor over the task rows; clamped against the current list
+  /// whenever it is read, so it never points past a shrunken list.
+  var _selected = 0;
+
+  /// The archive head count this process last replayed to. The log is
+  /// shared with the app (one store per process, ADR 0004 amendment):
+  /// a count that moved means another writer appended, and a reload
+  /// brings its events in. Own commits move it too and cost one spare
+  /// replay — microseconds per line, not worth tracking apart.
+  int? _replayedCount;
+  Timer? _poll;
+
+  /// How often the head is checked. A read of one tiny file.
+  static const pollEvery = Duration(seconds: 2);
+
+  @override
+  void initState() {
+    super.initState();
+    _poll = Timer.periodic(pollEvery, (_) => _followArchive());
+  }
+
   String _notice = '';
 
   @override
@@ -56,6 +82,8 @@ class _TuiAppState extends State<TuiApp> {
     _controller.dispose();
     _chatInput.dispose();
     _chatScroll.dispose();
+    _listScroll.dispose();
+    _poll?.cancel();
     super.dispose();
   }
 
@@ -66,6 +94,16 @@ class _TuiAppState extends State<TuiApp> {
     }
     if (event.logicalKey == LogicalKey.keyU && event.isControlPressed) {
       _undo();
+      return true;
+    }
+    if (event.logicalKey == LogicalKey.keyD && event.isControlPressed) {
+      _complete();
+      return true;
+    }
+    if (_pane == _Pane.capture &&
+        (event.logicalKey == LogicalKey.arrowUp ||
+            event.logicalKey == LogicalKey.arrowDown)) {
+      _move(event.logicalKey == LogicalKey.arrowDown ? 1 : -1);
       return true;
     }
     // Directional, not toggles: a real terminal can deliver a key twice
@@ -102,6 +140,73 @@ class _TuiAppState extends State<TuiApp> {
         }
       }),
     );
+  }
+
+  /// The capture sections of the settled projection, or null before it.
+  List<CaptureSection>? _sections() {
+    final container = context.container;
+    final projection = container.read(tasksProvider).value;
+    if (projection == null) return null;
+    return captureSections(projection, container.read(todayProvider));
+  }
+
+  void _move(int by) {
+    final sections = _sections();
+    if (sections == null) return;
+    final rows = TaskListPane.rows(sections);
+    final next = TaskListPane.clamp(_selected + by, rows.length);
+    if (next < 0) return;
+    setState(() {
+      _selected = next;
+      _listScroll.ensureIndexVisible(
+        index: TaskListPane.screenRow(sections, next),
+      );
+    });
+  }
+
+  Future<void> _complete() async {
+    final sections = _sections();
+    final rows = sections == null
+        ? const <Task>[]
+        : TaskListPane.rows(sections);
+    final index = TaskListPane.clamp(_selected, rows.length);
+    if (index < 0) {
+      _setNotice('nothing selected');
+      return;
+    }
+    final task = rows[index];
+    try {
+      await context.container
+          .read(tasksProvider.notifier)
+          .store
+          .completeTask(task.id);
+      _setNotice('done: ${task.title}');
+    } on Object catch (error) {
+      _setNotice('complete failed: $error');
+    }
+  }
+
+  Future<void> _followArchive() async {
+    final container = context.container;
+    try {
+      if (container.read(tasksProvider).value == null) return;
+      final archive = await container.read(archiveProvider.future);
+      final count = (await archive.head()).count;
+      if (count == _replayedCount) return;
+      await container.read(tasksProvider.notifier).reload();
+      _replayedCount = count;
+    } on StateError catch (error) {
+      // The container is gone (riverpod's own wording): the tester never
+      // unmounts, so the timer would otherwise outlive it and fail a
+      // later test. Ending the poll is right in a real run as well.
+      if (error.message.contains('disposed')) {
+        _poll?.cancel();
+        return;
+      }
+      _setNotice('reload failed: $error');
+    } on Object catch (error) {
+      _setNotice('reload failed: $error');
+    }
   }
 
   void _setNotice(String notice) {
@@ -206,7 +311,7 @@ class _TuiAppState extends State<TuiApp> {
                   ),
                 ),
                 Text(
-                  '^C quit · ^U undo · Tab chat · Esc stop/back',
+                  '^C quit · ^U undo · ^D done · ↑↓ select · Tab chat · Esc stop/back',
                   style: TextStyle(color: Colors.gray),
                 ),
               ],
@@ -222,13 +327,14 @@ class _TuiAppState extends State<TuiApp> {
     if (sections.every((section) => section.tasks.isEmpty)) {
       return Center(child: Text(context.read(shellGreetingProvider)));
     }
-    final lines = [
-      for (final section in sections) ...[
-        section.label,
-        for (final task in section.tasks)
-          '  ${formatQuickCapture(task, today: today)}',
-      ],
-    ];
-    return ListView(children: [for (final line in lines) Text(line)]);
+    return TaskListPane(
+      sections: sections,
+      today: today,
+      selected: TaskListPane.clamp(
+        _selected,
+        TaskListPane.rows(sections).length,
+      ),
+      scroll: _listScroll,
+    );
   }
 }

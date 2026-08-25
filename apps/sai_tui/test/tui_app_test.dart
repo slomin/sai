@@ -324,6 +324,143 @@ void main() {
     }, size: size);
   });
 
+  group('the list (#41)', () {
+    const ctrlD = KeyboardEvent(
+      logicalKey: LogicalKey.keyD,
+      modifiers: ModifierKeys(ctrl: true),
+    );
+    const ctrlU = KeyboardEvent(
+      logicalKey: LogicalKey.keyU,
+      modifiers: ModifierKeys(ctrl: true),
+    );
+
+    /// Two Today tasks, `One` above `Two`; the cursor starts on `One`.
+    Future<ProviderContainer> pumpTwo(NoctermTester tester) async {
+      final container = testContainer();
+      await container.read(tasksProvider.future);
+      final store = container.read(tasksProvider.notifier).store;
+      final today = container.read(todayProvider);
+      for (final title in ['One', 'Two']) {
+        await store.createTask(title: title, when: TaskWhen.date(today));
+      }
+      await tester.pumpComponent(
+        RiverpodScope(
+          container: container,
+          child: TuiApp(onQuit: () {}),
+        ),
+      );
+      await pumpUntilText(tester, '› One @today');
+      return container;
+    }
+
+    test('the footer names the list keys', () async {
+      await testNocterm('list keys', (tester) async {
+        await pumpTui(tester);
+        expect(tester.terminalState, containsText('^D done'));
+        expect(tester.terminalState, containsText('↑↓ select'));
+      }, size: size);
+    });
+
+    test('↓ and ↑ move the cursor and stop at the ends', () async {
+      await testNocterm('cursor', (tester) async {
+        await pumpTwo(tester);
+        await tester.sendKey(LogicalKey.arrowUp);
+        await tester.pump();
+        expect(tester.terminalState, containsText('› One @today'));
+        await tester.sendKey(LogicalKey.arrowDown);
+        await pumpUntilText(tester, '› Two @today');
+        expect(tester.terminalState, containsText('  One @today'));
+        await tester.sendKey(LogicalKey.arrowDown);
+        await tester.pump();
+        expect(tester.terminalState, containsText('› Two @today'));
+      }, size: size);
+    });
+
+    test('Ctrl+D completes the selected task and the cursor stays', () async {
+      await testNocterm('complete', (tester) async {
+        final container = await pumpTwo(tester);
+        await tester.sendKey(LogicalKey.arrowDown);
+        await pumpUntilText(tester, '› Two @today');
+        await tester.sendKeyEvent(ctrlD);
+        await pumpUntilText(tester, 'done: Two');
+        expect(tester.terminalState, isNot(containsText('Two @today')));
+        expect(tester.terminalState, containsText('› One @today'));
+        final line = archiveLines(container).last;
+        final json = jsonDecode(line) as Map<String, Object?>;
+        expect(json['type'], 'task.complete');
+        expect(json['actor'], 'user');
+        expect(json['source'], EventSources.tui);
+        expect(
+          container
+              .read(tasksProvider)
+              .value!
+              .list(TaskList.logbook, today: container.read(todayProvider))
+              .single
+              .title,
+          'Two',
+        );
+      }, size: size);
+    });
+
+    test(
+      'Ctrl+U after a completion puts the task back under the cursor',
+      () async {
+        await testNocterm('complete undo', (tester) async {
+          await pumpTwo(tester);
+          await tester.sendKey(LogicalKey.arrowDown);
+          await pumpUntilText(tester, '› Two @today');
+          await tester.sendKeyEvent(ctrlD);
+          await pumpUntilText(tester, 'done: Two');
+          await tester.sendKeyEvent(ctrlU);
+          await pumpUntilText(tester, '› Two @today');
+          expect(tester.terminalState, containsText('  One @today'));
+        }, size: size);
+      },
+    );
+
+    test('Ctrl+D with no task says so', () async {
+      await testNocterm('complete nothing', (tester) async {
+        await pumpTui(tester);
+        await tester.sendKeyEvent(ctrlD);
+        await pumpUntilText(tester, 'nothing selected');
+      }, size: size);
+    });
+
+    test("another process's append shows up within the poll", () async {
+      await testNocterm('follow', (tester) async {
+        final container = await pumpTwo(tester);
+        final root = container.read(archiveRootProvider);
+        final other = await Archive.open(root);
+        final store = await TaskStore.open(other, source: EventSources.app);
+        await store.createTask(
+          title: 'From the app',
+          when: TaskWhen.date(container.read(todayProvider)),
+        );
+        store.dispose();
+        await other.close();
+        await pumpUntilText(
+          tester,
+          'From the app @today',
+          timeout: _TuiAppPoll.twice,
+        );
+        expect(tester.terminalState, containsText('Today (3)'));
+        expect(tester.terminalState, containsText('› One @today'));
+      }, size: size);
+    });
+
+    test('arrows in the chat pane leave the cursor alone', () async {
+      await testNocterm('chat arrows', (tester) async {
+        await pumpTwo(tester);
+        await tester.sendKey(LogicalKey.tab);
+        await tester.pump();
+        await tester.sendKey(LogicalKey.arrowDown);
+        await pumpFor(tester, const Duration(milliseconds: 100));
+        expect(tester.terminalState, containsText('› One @today'));
+        expect(tester.terminalState, isNot(containsText('› Two')));
+      }, size: size);
+    });
+  });
+
   group('the chat (#34)', () {
     const big = Size(80, 24);
 
@@ -570,6 +707,10 @@ class _FailingTasks extends TasksNotifier {
   Future<TaskProjection> build() async {
     throw StateError('no archive today');
   }
+}
+
+abstract final class _TuiAppPoll {
+  static const twice = Duration(seconds: 5);
 }
 
 class _TestToday extends TodayNotifier {
