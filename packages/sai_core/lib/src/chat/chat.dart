@@ -158,7 +158,13 @@ class ChatNotifier extends Notifier<ChatState> {
     bool current() => generation == _generation;
     // Busy from here, before the first await: a second Enter in the same
     // tick is refused rather than racing this one to the recorder.
-    state = state.copyWith(streaming: '', clearError: true);
+    // The withheld flag belongs to this call, not the last one: it is
+    // false until the recorder has decided for this provider.
+    state = state.copyWith(
+      streaming: '',
+      tasksWithheld: false,
+      clearError: true,
+    );
     final Archive archive;
     final LlmRecorder recorder;
     final StoredEvent said;

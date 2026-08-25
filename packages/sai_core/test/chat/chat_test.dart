@@ -260,6 +260,22 @@ void main() {
       expect(jsonEncode(lines()), isNot(contains('Call mom @today')));
     });
 
+    test('the withheld flag does not leak into the next turn', () async {
+      final container = await make();
+      final settings = container.read(settingsProvider.notifier);
+      settings.selectLlm('cloudy');
+      final chat = container.read(chatProvider.notifier);
+      await chat.send('due?');
+      expect(container.read(chatProvider).tasksWithheld, isTrue);
+      settings.setShareTasksWithCloud(true);
+      final next = chat.send('and now?');
+      // Busy already, before any await — and not claiming a withheld list.
+      expect(container.read(chatProvider).busy, isTrue);
+      expect(container.read(chatProvider).tasksWithheld, isFalse);
+      await next;
+      expect(container.read(chatProvider).turns.last.tasksWithheld, isFalse);
+    });
+
     test('sharing on sends it', () async {
       final container = await make();
       final settings = container.read(settingsProvider.notifier);
