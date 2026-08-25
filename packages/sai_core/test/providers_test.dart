@@ -586,6 +586,39 @@ void main() {
           settings.selectLlm('local');
           final active = container.read(activeLlmProvider);
           expect(active, isA<OpenAiCompatibleProvider>());
+          // Storing a key binds it without rebuilding the provider a call
+          // may be running on: the binding is pushed into the live one.
+          settings.upsertProvider(
+            container
+                .read(settingsProvider)
+                .provider('local')!
+                .copyWith(credential: () => 'provider:local'),
+          );
+          final keyed = container.read(activeLlmProvider);
+          expect(
+            identical(keyed, active),
+            isFalse,
+            reason: 'credential changed',
+          );
+          container.read(credentialsProvider.notifier).set('local', 'k');
+          expect(
+            identical(container.read(activeLlmProvider), keyed),
+            isTrue,
+            reason: 'a key save is not a rebuild',
+          );
+          expect(
+            (container.read(
+              activeLlmProvider,
+            ) as OpenAiCompatibleProvider).credentialOrigin,
+            stub.origin,
+          );
+          container.read(credentialsProvider.notifier).clear('local');
+          settings.upsertProvider(
+            container
+                .read(settingsProvider)
+                .provider('local')!
+                .copyWith(credential: () => null),
+          );
           expect(
             container.read(llmStatusProvider),
             'local @ ${stub.origin} (qwen) — local',
@@ -604,7 +637,10 @@ void main() {
             ),
           );
           final recorder = await container.read(llmRecorderProvider.future);
-          final call = await recorder.start(active!, providerTestRequest());
+          final call = await recorder.start(
+            container.read(activeLlmProvider)!,
+            providerTestRequest(),
+          );
           final result = await call.done;
           expect(result.text, 'ready');
           expect(result.usage!.tokensPerSecond, 30);
@@ -621,6 +657,7 @@ void main() {
         settings.selectLlm('bare');
         expect(container.read(llmRegistryProvider).keys, ['fake']);
         expect(container.read(misconfiguredLlmsProvider), {'bare': 'endpoint'});
+        expect(misconfiguredNote('endpoint'), 'missing its endpoint');
         expect(
           container.read(llmStatusProvider),
           "provider 'bare' is missing its endpoint — local only",
@@ -729,6 +766,27 @@ void main() {
           container.read(settingsProvider).provider('lan')!.keyBound,
           isFalse,
         );
+        // The binding is written before the secret: a store that refuses
+        // leaves "no key", never a key that can never be sent.
+        final refusing = make(store: _RefusingStore());
+        refusing
+            .read(settingsProvider.notifier)
+            .upsertProvider(
+              ProviderConfig(
+                id: 'lan',
+                kind: 'fake',
+                endpoint: 'https://lan.example:8443/v1',
+                credential: 'provider:lan',
+              ),
+            );
+        expect(
+          () => refusing.read(credentialsProvider.notifier).set('lan', 'k'),
+          throwsA(isA<SecretStoreException>()),
+        );
+        expect(
+          refusing.read(settingsProvider).provider('lan')!.credentialOrigin,
+          'https://lan.example:8443',
+        );
         container.read(credentialsProvider.notifier).set('lan', 'k1');
         final bound = container.read(settingsProvider).provider('lan')!;
         expect(bound.credentialOrigin, 'https://lan.example:8443');
@@ -826,4 +884,16 @@ final class _BrokenStore implements SecretStore {
 
   @override
   bool delete(String account) => read(account) != null;
+}
+
+final class _RefusingStore implements SecretStore {
+  @override
+  String? read(String account) => null;
+  @override
+  bool has(String account) => false;
+  @override
+  void write(String account, String value) =>
+      throw const SecretStoreException('refused');
+  @override
+  bool delete(String account) => false;
 }

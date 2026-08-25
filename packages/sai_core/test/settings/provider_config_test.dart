@@ -127,7 +127,7 @@ void main() {
         'https://lan.example/v1',
         'https://192.168.1.20:8443/v1',
       ]) {
-        expect(() => ProviderConfig.checkEndpoint(ok), returnsNormally);
+        expect(() => ProviderConfig.checkEndpointForEntry(ok), returnsNormally);
       }
       for (final bad in [
         'http://lan.example/v1',
@@ -136,7 +136,7 @@ void main() {
         'http://[fe80::1]:8080/v1',
       ]) {
         expect(
-          () => ProviderConfig.checkEndpoint(bad),
+          () => ProviderConfig.checkEndpointForEntry(bad),
           throwsA(
             isA<ArgumentError>().having(
               (e) => e.message,
@@ -145,6 +145,32 @@ void main() {
             ),
           ),
           reason: bad,
+        );
+        // Entry-time only: a stored file with such an endpoint stays
+        // readable, and the transport refuses at request time.
+        expect(() => ProviderConfig.checkEndpoint(bad), returnsNormally);
+      }
+      final stored = Settings.decode(
+        '{"version":0,"llm":"lan","providers":[{"id":"lan","kind":'
+        '"openai_compatible","endpoint":"http://192.168.1.5:8080/v1",'
+        '"default_model":"m"},{"id":"f","kind":"fake"}]}',
+      );
+      expect(stored.providers.map((p) => p.id), ['lan', 'f']);
+      expect(stored.llm, 'lan');
+    });
+
+    test('a malformed endpoint is an ArgumentError from every entry point', () {
+      final lan = ProviderConfig(
+        id: 'lan',
+        kind: 'openai_compatible',
+        endpoint: 'https://lan.example/v1',
+        credential: 'provider:lan',
+      );
+      for (final bad in ['http://[::1', 'http://', '://x']) {
+        expect(() => lan.copyWith(endpoint: () => bad), throwsArgumentError);
+        expect(
+          () => ProviderConfig.checkEndpointForEntry(bad),
+          throwsArgumentError,
         );
       }
     });
@@ -190,38 +216,44 @@ void main() {
       );
       expect(bound.copyWith(endpoint: () => null).credentialOrigin, isNull);
       expect(bound.copyWith(credential: () => null).credentialOrigin, isNull);
-      // On disk the two must agree, or the file is not one sai wrote.
-      for (final bad in [
-        () => ProviderConfig(
+      // A binding that does not fit is not a binding — never a refusal:
+      // a rule tightened later must not make a stored file unreadable.
+      expect(
+        ProviderConfig(
           id: 'lan',
           kind: 'openai_compatible',
           endpoint: 'https://lan.example:8443/v1',
           credential: 'provider:lan',
           credentialOrigin: 'https://lan.example',
-        ),
-        () => ProviderConfig(
+        ).credentialOrigin,
+        isNull,
+      );
+      expect(
+        ProviderConfig(
           id: 'lan',
           kind: 'fake',
           credential: 'provider:lan',
           credentialOrigin: 'https://lan.example',
-        ),
-        () => ProviderConfig(
+        ).credentialOrigin,
+        isNull,
+      );
+      expect(
+        ProviderConfig(
           id: 'lan',
           kind: 'openai_compatible',
           endpoint: 'https://lan.example/v1',
           credentialOrigin: 'https://lan.example',
-        ),
-      ]) {
-        expect(bad, throwsArgumentError);
-      }
-      expect(
-        () => Settings.decode(
-          '{"version":0,"providers":[{"id":"lan","kind":"openai_compatible",'
-          '"endpoint":"https://lan.example/v1","credential":"provider:lan",'
-          '"credential_origin":"https://other.example"}]}',
-        ),
-        throwsA(isA<SettingsFormatException>()),
+        ).credentialOrigin,
+        isNull,
+        reason: 'no credential to bind',
       );
+      final edited = Settings.decode(
+        '{"version":0,"providers":[{"id":"lan","kind":"openai_compatible",'
+        '"endpoint":"https://lan.example/v1","credential":"provider:lan",'
+        '"credential_origin":"https://other.example"}]}',
+      ).provider('lan')!;
+      expect(edited.keyBound, isFalse);
+      expect(edited.toJson().containsKey('credential_origin'), isFalse);
     });
 
     test('malformed providers are a format error', () {

@@ -14,9 +14,10 @@ final class ProviderConfig {
     this.endpoint,
     this.defaultModel,
     this.credential,
-    this.credentialOrigin,
+    String? credentialOrigin,
     Map<String, Object?> extra = const {},
-  }) : extra = Map.unmodifiable(extra) {
+  }) : extra = Map.unmodifiable(extra),
+       credentialOrigin = _boundOrigin(endpoint, credential, credentialOrigin) {
     if (!idForm.hasMatch(id)) {
       throw ArgumentError.value(id, 'id', 'must match ${idForm.pattern}');
     }
@@ -36,18 +37,6 @@ final class ProviderConfig {
         'credential',
         'must match ${credentialForm.pattern}',
       );
-    }
-    final o = credentialOrigin;
-    if (o != null) {
-      if (c == null) {
-        throw ArgumentError('credential_origin needs a credential');
-      }
-      if (e == null || o != endpointOrigin(Uri.parse(e))) {
-        throw ArgumentError(
-          "credential_origin must be the endpoint's origin, "
-          '${e == null ? 'and there is no endpoint' : endpointOrigin(Uri.parse(e))}',
-        );
-      }
     }
     // The same guard the reader applies, so nothing written here is ever
     // refused on the way back in (a value must not merely look like a key).
@@ -92,9 +81,21 @@ final class ProviderConfig {
   /// The origin (`scheme://host[:port]`) the key under [credential] was
   /// entered for, recorded when it was stored. The key is sent only while
   /// this equals the endpoint's origin (ADR 0009): after the endpoint moves
-  /// it is not, until the key is entered again. Always equal to the
-  /// endpoint's origin when present; null until a key is stored.
+  /// it is not, until the key is entered again. Normalised on the way in:
+  /// an origin that does not match the endpoint, or names no credential,
+  /// is simply not a binding (null) — never a reason to refuse a file.
   final String? credentialOrigin;
+
+  static String? _boundOrigin(
+    String? endpoint,
+    String? credential,
+    String? origin,
+  ) {
+    if (origin == null || credential == null || endpoint == null) return null;
+    final uri = Uri.tryParse(endpoint);
+    if (uri == null) return null;
+    return origin == endpointOrigin(uri) ? origin : null;
+  }
 
   /// Keys this sai does not know, exactly as read.
   final Map<String, Object?> extra;
@@ -111,6 +112,9 @@ final class ProviderConfig {
 
   /// Throws [ArgumentError] unless [url] is an absolute http(s) URL with
   /// no userinfo, query or fragment — the places a key leaks into a URL.
+  /// What a stored file must satisfy; [checkEndpointForEntry] adds the
+  /// rule a new entry must, so that a rule tightened later never makes an
+  /// existing file unreadable (the transport refuses at request time).
   static void checkEndpoint(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null ||
@@ -122,6 +126,14 @@ final class ProviderConfig {
     if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
       throw ArgumentError('endpoint must carry no userinfo, query or fragment');
     }
+  }
+
+  /// [checkEndpoint] plus the entry-time rules: plaintext `http` only for
+  /// this machine (ADR 0009). Writers (the CLI, the dialogs) call this
+  /// before storing; the reader does not.
+  static void checkEndpointForEntry(String url) {
+    checkEndpoint(url);
+    final uri = Uri.parse(url);
     if (uri.scheme == 'http' && !isLoopbackHost(uri.host)) {
       throw ArgumentError(plaintextRefused);
     }
@@ -136,26 +148,21 @@ final class ProviderConfig {
     String? Function()? defaultModel,
     String? Function()? credential,
     String? Function()? credentialOrigin,
-  }) {
-    final nextEndpoint = endpoint == null ? this.endpoint : endpoint();
-    final nextCredential = credential == null ? this.credential : credential();
-    final nextOrigin = credentialOrigin == null
+  }) => ProviderConfig(
+    id: id,
+    kind: kind ?? this.kind,
+    endpoint: endpoint == null ? this.endpoint : endpoint(),
+    defaultModel: defaultModel == null ? this.defaultModel : defaultModel(),
+    credential: credential == null ? this.credential : credential(),
+    credentialOrigin: credentialOrigin == null
         ? this.credentialOrigin
-        : credentialOrigin();
-    final keeps =
-        nextCredential != null &&
-        nextEndpoint != null &&
-        nextOrigin == endpointOrigin(Uri.parse(nextEndpoint));
-    return ProviderConfig(
-      id: id,
-      kind: kind ?? this.kind,
-      endpoint: nextEndpoint,
-      defaultModel: defaultModel == null ? this.defaultModel : defaultModel(),
-      credential: nextCredential,
-      credentialOrigin: keeps ? nextOrigin : null,
-      extra: extra,
-    );
-  }
+        : credentialOrigin(),
+    extra: extra,
+  );
+
+  /// A copy whose binding is dropped, for the cache key that must not
+  /// change when a key is stored (`installedLlmsProvider`).
+  ProviderConfig get unbound => copyWith(credentialOrigin: () => null);
 
   static const _known = {
     'id',

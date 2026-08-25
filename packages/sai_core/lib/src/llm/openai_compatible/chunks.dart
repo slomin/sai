@@ -13,6 +13,7 @@ final class ChatChunk {
     this.finishReason,
     this.usage,
     this.tokensPerSecond,
+    this.error = false,
   });
 
   final String? id;
@@ -30,6 +31,10 @@ final class ChatChunk {
 
   /// llama.cpp's `timings.predicted_per_second`.
   final double? tokensPerSecond;
+
+  /// The chunk carries an `error` — an OpenAI-style refusal sent inside
+  /// the stream. Its text is not kept.
+  final bool error;
 
   /// Parses one event's data. Throws [FormatException] when it is not a
   /// JSON object — the caller turns that into a protocol failure with a
@@ -83,6 +88,7 @@ final class ChatChunk {
       finishReason: finish,
       usage: usage,
       tokensPerSecond: tps,
+      error: json['error'] != null,
     );
   }
 

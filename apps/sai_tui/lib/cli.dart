@@ -62,17 +62,10 @@ Future<int> runCli(
         for (final provider in registry.values) {
           final config = settings.provider(provider.id);
           final mark = settings.llm == provider.id ? '*' : ' ';
-          final key = switch (container.read(
-            credentialStatusProvider(provider.id),
-          )) {
-            CredentialStatus.none => '',
-            CredentialStatus.set =>
-              config != null && config.endpoint != null && !config.keyBound
-                  ? ' · key needs re-entry'
-                  : ' · key set',
-            CredentialStatus.missing => ' · no key',
-            CredentialStatus.unavailable => ' · keychain unavailable',
-          };
+          final key = credentialSuffix(
+            container.read(credentialStatusProvider(provider.id)),
+            config,
+          );
           final where = config?.endpoint == null
               ? (config == null ? 'built-in' : config.kind)
               : '${config!.kind} @ ${config.endpoint}';
@@ -87,7 +80,7 @@ Future<int> runCli(
           final why = misconfigured[config.id];
           out.writeln(
             '$mark ${config.id}  ${config.kind}  — '
-            '${why == null ? 'kind not available in this build' : 'missing its $why'}',
+            '${why == null ? 'kind not available in this build' : misconfiguredNote(why)}',
           );
         }
         if (settings.llm == null) out.writeln('  (no provider selected)');
@@ -128,6 +121,8 @@ Future<int> runCli(
         if (kind == null) throw _Usage('provider add needs --kind');
         final ProviderConfig config;
         try {
+          // What a new entry must satisfy beyond what a stored one must.
+          if (endpoint != null) ProviderConfig.checkEndpointForEntry(endpoint);
           // The key binding survives only while the origin does; the
           // copy drops it otherwise (settings-v0, ADR 0009).
           final base = ProviderConfig(
@@ -171,8 +166,8 @@ Future<int> runCli(
         final missing = container.read(misconfiguredLlmsProvider)[id];
         if (missing != null) {
           err.writeln(
-            "sai_tui: provider '$id' is missing its $missing; add it with "
-            '--${missing == 'default_model' ? 'model' : missing}',
+            "sai_tui: provider '$id' is ${misconfiguredNote(missing)}; add it "
+            'with --${missing == 'default_model' ? 'model' : missing}',
           );
         }
         if (key && wasBound && !config.keyBound) {

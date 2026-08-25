@@ -27,9 +27,19 @@ String unavailableKindStatus(String id, String kind) =>
 String misconfiguredStatus(String id, String missing) =>
     "provider '$id' is missing its $missing — local only";
 
+/// The one-line note both clients show beside a provider that lacks a
+/// key its kind needs (see `llmKindNeeds`).
+String misconfiguredNote(String missing) => 'missing its $missing';
+
 /// Appended to the status line when the provider names a credential the
 /// secret store does not hold.
 const missingCredentialSuffix = ' · no key';
+
+/// Appended when the key is there and bound to this endpoint.
+const setCredentialSuffix = ' · key set';
+
+/// Appended when the key is there but was entered for another endpoint.
+const reenterCredentialSuffix = ' · key needs re-entry';
 
 /// Appended when the secret store could not be asked.
 const unavailableSecretsSuffix = ' · keychain unavailable';

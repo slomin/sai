@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 Future<List<String>> frame(List<String> chunks) =>
     Stream.fromIterable(chunks.map(utf8.encode))
         .transform(sseEvents())
+        .where((e) => !e.comment)
         .map((e) => e.data)
         .toList();
 
@@ -40,9 +41,14 @@ void main() {
       expect(last.isDone, isTrue);
     });
 
-    test('nothing is nothing', () async {
+    test('nothing is nothing; a comment is a keep-alive', () async {
       expect(await frame(['']), isEmpty);
       expect(await frame([': only comments\n\n']), isEmpty);
+      final all = await Stream<List<int>>.fromIterable([
+        utf8.encode(': ping\n: pong\ndata: [DONE]\n\n'),
+      ]).transform(sseEvents()).toList();
+      expect(all.map((e) => e.comment), [true, true, false]);
+      expect(all.last.isDone, isTrue);
     });
   });
 

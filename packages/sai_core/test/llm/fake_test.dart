@@ -12,6 +12,13 @@ LlmRequest ask(String text, {int? maxTokens}) => LlmRequest(
 );
 
 void main() {
+  test('the lorem fake streams lorem ipsum, not the prompt', () async {
+    final fake = FakeLlmProvider.lorem(words: 5, delta: Duration.zero);
+    final result = await fake.start(ask('hello')).done;
+    expect(result.text, 'Lorem ipsum dolor sit amet,');
+    expect(loremIpsum(70).split(' '), hasLength(70));
+  });
+
   llmProviderContract(
     'FakeLlmProvider',
     FakeLlmProvider.new,

@@ -30,6 +30,11 @@ abstract final class TransportText {
   static const endedEarly = 'the stream ended early';
   static const closed = 'the provider is closed';
   static const notJson = 'the answer was not JSON';
+  static const errorPayload = 'the endpoint answered with an error';
+  static const tooLarge = 'the answer was too large';
+
+  /// The one non-constant: an unexpected exception's type, never its text.
+  static String threw(Object error) => 'transport threw: ${error.runtimeType}';
 
   /// Everything above that is a constant, for the tests that assert a
   /// message is one of these.
@@ -51,6 +56,8 @@ abstract final class TransportText {
     endedEarly,
     closed,
     notJson,
+    errorPayload,
+    tooLarge,
   };
 }
 
@@ -60,6 +67,7 @@ final class OpenAiDeadlines {
   const OpenAiDeadlines({
     this.connect = const Duration(seconds: 10),
     this.firstResponse = const Duration(seconds: 30),
+    this.firstToken = const Duration(minutes: 5),
     this.interToken = const Duration(seconds: 30),
   });
 
@@ -69,7 +77,12 @@ final class OpenAiDeadlines {
   /// From the request being sent to the response headers arriving.
   final Duration firstResponse;
 
-  /// Between two events on the stream (also from the headers to the first).
+  /// From the response headers to the first data event: prompt
+  /// evaluation, which on a large context takes minutes on a laptop. An
+  /// SSE comment (`: ping`) resets the clock without ending the wait.
+  final Duration firstToken;
+
+  /// Between two later events on the stream.
   final Duration interToken;
 }
 
@@ -90,7 +103,7 @@ LlmFailure connectFailure(Object error, String origin) {
       LlmFailureKind.unreachable,
       TransportText.couldNotConnect,
     ),
-    _ => (LlmFailureKind.internal, 'transport threw: ${error.runtimeType}'),
+    _ => (LlmFailureKind.internal, TransportText.threw(error)),
   };
   return LlmFailure(kind, message, endpoint: origin);
 }

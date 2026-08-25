@@ -22,21 +22,36 @@ LlmProvider fakeProviderFactory(ProviderConfig config, SecretStore secrets) =>
       defaultModel: config.defaultModel ?? 'fake-1',
     );
 
+/// What each kind must find in its configuration before it can be built,
+/// by the settings key name. The registry leaves a provider missing one
+/// of these out and names the gap; the factory refuses it too.
+const llmKindNeeds = <String, List<String>>{
+  'openai_compatible': ['endpoint', 'default_model'],
+};
+
+/// The first key of [llmKindNeeds] that [config] lacks, or null.
+String? missingForKind(ProviderConfig config) {
+  for (final key in llmKindNeeds[config.kind] ?? const <String>[]) {
+    final present = switch (key) {
+      'endpoint' => config.endpoint != null,
+      'default_model' => config.defaultModel != null,
+      _ => true,
+    };
+    if (!present) return key;
+  }
+  return null;
+}
+
 /// The `openai_compatible` kind (#22). Throws [ArgumentError] when the
-/// configuration lacks the endpoint or the default model the transport
-/// needs — the registry then leaves the provider out and the status line
-/// says so, rather than building one that can only fail.
+/// configuration lacks what [llmKindNeeds] lists.
 LlmProvider openAiCompatibleFactory(
   ProviderConfig config,
   SecretStore secrets,
 ) {
   final endpoint = config.endpoint;
   final model = config.defaultModel;
-  if (endpoint == null) {
-    throw ArgumentError('openai_compatible needs endpoint');
-  }
-  if (model == null) {
-    throw ArgumentError('openai_compatible needs default_model');
+  if (endpoint == null || model == null) {
+    throw ArgumentError('openai_compatible needs ${missingForKind(config)}');
   }
   return OpenAiCompatibleProvider(
     id: config.id,

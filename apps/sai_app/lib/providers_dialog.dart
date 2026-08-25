@@ -37,9 +37,14 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
   LlmResult? _testResult;
   StreamSubscription<LlmDelta>? _testDeltas;
 
+  /// Which test the screen belongs to; a result from an older one is
+  /// dropped. [_starting] holds a second click while one is starting.
+  var _generation = 0;
+  var _starting = false;
+
   @override
   void dispose() {
-    _testDeltas?.cancel();
+    _resetTest();
     _controller.dispose();
     super.dispose();
   }
@@ -103,19 +108,11 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
     required bool selected,
   }) {
     final status = ref.watch(credentialStatusProvider(id));
-    final key = switch (status) {
-      CredentialStatus.none => '',
-      CredentialStatus.set =>
-        config != null && config.endpoint != null && !config.keyBound
-            ? ' · key needs re-entry'
-            : ' · key set',
-      CredentialStatus.missing => ' · no key',
-      CredentialStatus.unavailable => ' · keychain unavailable',
-    };
+    final key = credentialSuffix(status, config);
     final subtitle = provider == null
         ? (missing == null
               ? "kind '${config?.kind}' is not available in this build"
-              : 'missing its $missing')
+              : misconfiguredNote(missing))
         : '${provider.defaultModel} — ${provider.privacy.name}$key';
     return ListTile(
       key: providerRowKey(id),
@@ -143,7 +140,7 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
       AsyncError() => 'could not be asked',
       _ => 'asking…',
     };
-    final running = _test != null && _testResult == null;
+    final running = _starting || (_test != null && _testResult == null);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -158,7 +155,7 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
             ),
             running
                 ? TextButton(
-                    onPressed: () => _test?.cancel(),
+                    onPressed: _test == null ? null : () => _test?.cancel(),
                     child: const Text('Cancel test'),
                   )
                 : TextButton(
@@ -241,6 +238,7 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
                 child: TextField(
                   key: apiKeyFieldKey,
                   controller: _controller,
+                  autofocus: true,
                   obscureText: true,
                   enableSuggestions: false,
                   autocorrect: false,
@@ -280,32 +278,47 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
     notice.show(ref.read(llmStatusProvider));
   }
 
+  /// Drops the current test: an abandoned call is cancelled, so it stops
+  /// streaming and the recorder closes its record — not just forgotten.
   void _resetTest() {
+    _generation++;
     _testDeltas?.cancel();
     _testDeltas = null;
+    _test?.cancel();
     _test = null;
     _testText = '';
     _testResult = null;
+    _starting = false;
   }
 
   Future<void> _runTest(LlmProvider provider) async {
-    setState(_resetTest);
+    if (_starting) return;
+    setState(() {
+      _resetTest();
+      _starting = true;
+    });
+    final generation = _generation;
+    bool current() => mounted && generation == _generation;
     final RecordedCall call;
     try {
       final recorder = await ref.read(llmRecorderProvider.future);
       call = await recorder.start(provider, providerTestRequest());
     } on Object catch (error) {
-      if (!mounted) return;
+      if (!current()) return;
+      setState(() => _starting = false);
       ref.read(noticeProvider.notifier).show('test failed to start: $error');
       return;
     }
-    if (!mounted) return call.cancel();
-    setState(() => _test = call);
+    if (!current()) return call.cancel();
+    setState(() {
+      _test = call;
+      _starting = false;
+    });
     _testDeltas = call.deltas.listen((_) {
-      if (mounted) setState(() => _testText = call.text);
+      if (current()) setState(() => _testText = call.text);
     });
     final result = await call.done;
-    if (!mounted) return;
+    if (!current()) return;
     setState(() {
       _testText = result.text;
       _testResult = result;

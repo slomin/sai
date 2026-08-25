@@ -65,7 +65,9 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   final String? credential;
 
   /// The origin the key was entered for (`ProviderConfig.credentialOrigin`).
-  final String? credentialOrigin;
+  /// Live: the registry updates it when a key is stored, so a running
+  /// call is never cut for it.
+  String? credentialOrigin;
 
   final OpenAiDeadlines deadlines;
 
@@ -108,12 +110,6 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     }
     final account = credential;
     if (account == null) return (null, null);
-    if (credentialOrigin != origin) {
-      return (
-        refuse(LlmFailureKind.credential, TransportText.keyElsewhere),
-        null,
-      );
-    }
     final String? key;
     try {
       key = _secrets.read(account);
@@ -125,6 +121,12 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     }
     if (key == null) {
       return (refuse(LlmFailureKind.credential, TransportText.noKey), null);
+    }
+    if (credentialOrigin != origin) {
+      return (
+        refuse(LlmFailureKind.credential, TransportText.keyElsewhere),
+        null,
+      );
     }
     return (null, 'Bearer $key');
   }
@@ -238,9 +240,10 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     late final StreamSubscription<SseEvent> sub;
     sub = response
         .transform(sseEvents())
-        .timeout(deadlines.interToken)
+        .transform(_deadlines(deadlines.firstToken, deadlines.interToken))
         .listen(
           (event) {
+            if (event.comment) return;
             if (event.isDone) {
               doneSeen = true;
               _quietly(sub.cancel());
@@ -254,6 +257,16 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
               failure = LlmFailure(
                 LlmFailureKind.protocol,
                 TransportText.badChunk,
+                endpoint: origin,
+              );
+              _quietly(sub.cancel());
+              end();
+              return;
+            }
+            if (chunk.error) {
+              failure = LlmFailure(
+                LlmFailureKind.rejected,
+                TransportText.errorPayload,
                 endpoint: origin,
               );
               _quietly(sub.cancel());
@@ -351,7 +364,10 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     // counts: LM Studio answers any unknown path with a 200 and an error
     // body. LM Studio says so on /api/v1/models; anything else is taken
     // at its /v1/models word.
-    final health = await _get(_atRoot('/health'), auth);
+    final [health, lm] = await Future.wait([
+      _get(_atRoot('/health'), auth),
+      _get(_atRoot('/api/v1/models'), auth),
+    ]);
     final h = health.json;
     final ok =
         health.status == 200 &&
@@ -379,7 +395,6 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         serverKind: 'llama.cpp',
       );
     }
-    final lm = await _get(_atRoot('/api/v1/models'), auth);
     final l = lm.json;
     if (lm.status == 200 && l is Map<String, Object?> && l['models'] is List) {
       int? ctx;
@@ -407,9 +422,13 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
 
   /// One bounded GET. A non-2xx answer is a failure only for the caller
   /// to judge (a 404 on `/health` just means "not llama.cpp").
+  /// The most a discovery answer may be; a model list is kilobytes.
+  static const maxProbeBytes = 1 << 20;
+
   Future<_Answer> _get(Uri uri, String? auth) async {
+    HttpClientRequest? req;
     try {
-      final req = await _client.getUrl(uri);
+      req = await _client.getUrl(uri);
       req.followRedirects = false;
       req.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
       if (auth != null) req.headers.set(HttpHeaders.authorizationHeader, auth);
@@ -427,10 +446,17 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
           ),
         );
       }
-      final text = await utf8.decoder
-          .bind(response)
-          .join()
-          .timeout(deadlines.interToken);
+      final text = await _readCapped(response);
+      if (text == null) {
+        return _Answer(
+          status,
+          failure: LlmFailure(
+            LlmFailureKind.protocol,
+            TransportText.tooLarge,
+            endpoint: origin,
+          ),
+        );
+      }
       if (status < 200 || status >= 300) {
         // The body still tells llama.cpp's "loading" 503 apart from a
         // refusal; it is never surfaced beyond that.
@@ -459,6 +485,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         );
       }
     } on TimeoutException {
+      req?.abort();
       return _Answer(
         0,
         failure: LlmFailure(
@@ -470,6 +497,37 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     } catch (error) {
       return _Answer(0, failure: connectFailure(error, origin));
     }
+  }
+
+  /// The body as text, or null once it passes [maxProbeBytes] — the
+  /// subscription is cancelled there, and on the inter-token deadline.
+  Future<String?> _readCapped(HttpClientResponse response) async {
+    final bytes = <int>[];
+    var over = false;
+    final done = Completer<void>();
+    late final StreamSubscription<List<int>> sub;
+    sub = response
+        .timeout(deadlines.interToken)
+        .listen(
+          (chunk) {
+            bytes.addAll(chunk);
+            if (bytes.length > maxProbeBytes) {
+              over = true;
+              _quietly(sub.cancel());
+              if (!done.isCompleted) done.complete();
+            }
+          },
+          onError: (Object e) {
+            _quietly(sub.cancel());
+            if (!done.isCompleted) done.completeError(e);
+          },
+          onDone: () {
+            if (!done.isCompleted) done.complete();
+          },
+          cancelOnError: true,
+        );
+    await done.future;
+    return over ? null : utf8.decode(bytes, allowMalformed: true);
   }
 
   /// Whether [close] has been called.
@@ -484,6 +542,51 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     _client.close(force: true);
   }
 }
+
+/// A first-token deadline, then a between-events one; either fires as a
+/// [TimeoutException] on the stream and ends it. Comments reset both.
+StreamTransformer<SseEvent, SseEvent> _deadlines(
+  Duration first,
+  Duration between,
+) => StreamTransformer.fromBind((events) {
+  late StreamController<SseEvent> out;
+  StreamSubscription<SseEvent>? sub;
+  Timer? timer;
+  var seen = false;
+  void arm() {
+    timer?.cancel();
+    timer = Timer(seen ? between : first, () {
+      out.addError(TimeoutException('stream deadline'));
+      out.close();
+      sub?.cancel();
+    });
+  }
+
+  out = StreamController<SseEvent>(
+    onListen: () {
+      arm();
+      sub = events.listen(
+        (e) {
+          // A keep-alive resets the clock but does not end the wait for
+          // the first token: a server may ping while it evaluates.
+          if (!e.comment) seen = true;
+          arm();
+          out.add(e);
+        },
+        onError: out.addError,
+        onDone: () {
+          timer?.cancel();
+          out.close();
+        },
+      );
+    },
+    onCancel: () {
+      timer?.cancel();
+      return sub?.cancel();
+    },
+  );
+  return out.stream;
+});
 
 /// What a running call holds on the wire, so cancel can cut it.
 final class _Attempt {

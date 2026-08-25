@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:sai_core/sai_core.dart';
 import 'package:sai_core/src/llm/openai_compatible/policy.dart';
 import 'package:test/test.dart';
@@ -52,11 +54,12 @@ void main() {
     expect(info.contextWindow, 8192);
     expect(info.serverKind, 'llama.cpp');
     expect(info.failure, isNull);
-    expect(stub.requests.map((r) => r.path), [
+    expect(stub.requests.map((r) => r.path).toSet(), {
       '/v1/models',
       '/health',
+      '/api/v1/models',
       '/props',
-    ]);
+    });
   });
 
   test('llama.cpp still loading', () async {
@@ -162,6 +165,21 @@ void main() {
     info = await make(credential: 'provider:lan', origin: 'https://x').probe();
     expect(info.failure!.kind, LlmFailureKind.credential);
     expect(stub.requests, hasLength(1), reason: 'nothing more was sent');
+  });
+
+  test('an answer past the size cap is refused, not buffered', () async {
+    stub.routes['GET /v1/models'] = (req) async {
+      req.response.headers.contentType = ContentType.json;
+      final chunk = List.filled(64 << 10, 0x20);
+      for (var i = 0; i < 40; i++) {
+        req.response.add(chunk);
+        await req.response.flush();
+      }
+      await req.response.close();
+    };
+    final info = await make().probe();
+    expect(info.failure!.kind, LlmFailureKind.protocol);
+    expect(info.failure!.message, TransportText.tooLarge);
   });
 
   test('a redirect on discovery is refused too', () async {

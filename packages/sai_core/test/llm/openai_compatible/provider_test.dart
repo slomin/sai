@@ -19,6 +19,7 @@ const canary = 'sk-canary-3c9e1a7b5d2f4e6a8c0b1d3f5a7c9e2b';
 const quick = OpenAiDeadlines(
   connect: Duration(seconds: 2),
   firstResponse: Duration(milliseconds: 400),
+  firstToken: Duration(milliseconds: 1200),
   interToken: Duration(milliseconds: 400),
 );
 
@@ -125,6 +126,10 @@ void main() {
           TransportText.keyElsewhere,
         );
         expect(stub.requests, hasLength(1));
+        // The binding is live: the registry can set it on a running provider.
+        unbound.credentialOrigin = stub.origin;
+        expect((await unbound.start(ask('x')).done).finish, LlmFinish.stop);
+        expect(stub.requests, hasLength(2));
       },
     );
 
@@ -137,6 +142,13 @@ void main() {
       var result = await missing.start(ask('x')).done;
       expect(result.failure!.kind, LlmFailureKind.credential);
       expect(result.failure!.message, TransportText.noKey);
+      // "no key" comes before "another endpoint": a provider added with
+      // --key and no key yet is told to enter one, not to re-enter one.
+      final fresh = make(credential: 'provider:lan');
+      expect(
+        (await fresh.start(ask('x')).done).failure!.message,
+        TransportText.noKey,
+      );
       final broken = make(
         credential: 'provider:lan',
         credentialOrigin: stub.origin,
@@ -289,6 +301,24 @@ void main() {
       expect(result.failure!.message, TransportText.endedEarly);
     });
 
+    test('an error object inside the stream is a rejection', () async {
+      stub.routes['POST /v1/chat/completions'] = (req) async {
+        final r = StubServer.sse(req);
+        StubServer.event(r, StubServer.chunk('a'));
+        StubServer.event(r, {
+          'error': {'message': 'context length exceeded $canary', 'code': 400},
+        });
+        StubServer.event(r, '[DONE]', json: false);
+        await r.close();
+      };
+      final result = await make().start(ask('x')).done;
+      expect(result.text, 'a');
+      expect(result.finish, LlmFinish.failed);
+      expect(result.failure!.kind, LlmFailureKind.rejected);
+      expect(result.failure!.message, TransportText.errorPayload);
+      expect(result.toString(), isNot(contains(canary)));
+    });
+
     test('nothing listening is unreachable, naming the origin', () async {
       final closed = await StubServer.start();
       final origin = closed.origin;
@@ -323,6 +353,41 @@ void main() {
       expect(result.text, 'a');
       expect(result.failure!.kind, LlmFailureKind.timeout);
       expect(result.failure!.message, TransportText.stalled);
+    });
+
+    test('the first token gets its own, longer deadline', () async {
+      // Headers at once, then prompt evaluation longer than the
+      // inter-token deadline but within the first-token one.
+      stub.routes['POST /v1/chat/completions'] = (req) async {
+        final r = StubServer.sse(req);
+        // Headers (and a keep-alive) now, the token much later.
+        r.write(': processing\n\n');
+        await r.flush();
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        StubServer.event(r, StubServer.chunk('late'));
+        StubServer.event(r, '[DONE]', json: false);
+        await r.close();
+      };
+      final result = await make().start(ask('x')).done;
+      expect(result.finish, LlmFinish.stop, reason: '${result.failure}');
+      expect(result.text, 'late');
+    });
+
+    test('keep-alive comments hold a slow stream open', () async {
+      stub.routes['POST /v1/chat/completions'] = (req) async {
+        final r = StubServer.sse(req);
+        StubServer.event(r, StubServer.chunk('a'));
+        for (var i = 0; i < 5; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          r.write(': ping\n\n');
+        }
+        StubServer.event(r, StubServer.chunk('b'));
+        StubServer.event(r, '[DONE]', json: false);
+        await r.close();
+      };
+      final result = await make().start(ask('x')).done;
+      expect(result.finish, LlmFinish.stop, reason: '${result.failure}');
+      expect(result.text, 'ab');
     });
 
     test('a slow but moving stream is fine', () async {
@@ -386,6 +451,10 @@ void main() {
       expect(text, isNot(contains('://')));
       expect(text, isNot(contains('sk-')));
     }
+    expect(
+      TransportText.threw(StateError('sk-x http://u@h')),
+      'transport threw: StateError',
+    );
   });
 }
 

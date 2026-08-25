@@ -212,6 +212,20 @@ void main() {
     },
   );
 
+  test('a malformed endpoint is a usage error, not a crash', () async {
+    expect(
+      await run(
+        'provider add lan --kind openai_compatible --endpoint http://[::1 --model m --key',
+      ),
+      cliUsageError,
+    );
+    expect(
+      err.toString(),
+      contains('endpoint must be an absolute http(s) URL'),
+    );
+    expect(container.read(settingsProvider).provider('lan'), isNull);
+  });
+
   test('provider add rejects what settings would reject', () async {
     expect(await run('provider add Lan --kind fake'), cliUsageError);
     expect(await run('provider add lan'), cliUsageError);

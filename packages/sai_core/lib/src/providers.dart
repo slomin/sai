@@ -10,6 +10,7 @@ import 'archive/archive_root.dart';
 import 'archive/event.dart';
 import 'llm/factory.dart';
 import 'llm/fake.dart';
+import 'llm/openai_compatible/provider.dart';
 import 'llm/probe.dart';
 import 'llm/provider.dart';
 import 'llm/recorder.dart';
@@ -215,31 +216,26 @@ final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>(
 final misconfiguredLlmsProvider = Provider<Map<String, String>>((ref) {
   final configs = ref.watch(settingsProvider.select((s) => s.providers));
   final factories = ref.watch(llmFactoriesProvider);
-  final secrets = ref.watch(secretStoreProvider);
   final out = <String, String>{};
   for (final config in configs) {
-    final factory = factories[config.kind];
-    if (factory == null) continue;
-    final missing = _refusal(factory, config, secrets);
+    if (!factories.containsKey(config.kind)) continue;
+    final missing = missingForKind(config);
     if (missing != null) out[config.id] = missing;
   }
   return out;
 });
 
-/// What a factory says is missing, or null when it would build.
-String? _refusal(
-  LlmProviderFactory factory,
-  ProviderConfig config,
-  SecretStore secrets,
-) {
-  try {
-    factory(config, secrets).close();
-    return null;
-  } on ArgumentError catch (e) {
-    final message = '${e.message}';
-    return message.split(' needs ').last;
-  }
-}
+/// The credential suffix both clients append to a provider line.
+String credentialSuffix(CredentialStatus status, ProviderConfig? config) =>
+    switch (status) {
+      CredentialStatus.none => '',
+      CredentialStatus.set =>
+        config != null && config.endpoint != null && !config.keyBound
+            ? reenterCredentialSuffix
+            : setCredentialSuffix,
+      CredentialStatus.missing => missingCredentialSuffix,
+      CredentialStatus.unavailable => unavailableSecretsSuffix,
+    };
 
 /// The providers that ship with every build, needing no configuration,
 /// as constructors: the cache below decides when one is built. A
@@ -270,11 +266,15 @@ final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
   final wanted = <String, LlmProvider Function()>{};
   final configured = <String>[];
   final misconfigured = ref.watch(misconfiguredLlmsProvider);
+  final bindings = <String, String?>{};
   for (final config in configs) {
     final factory = factories[config.kind];
     if (factory == null || misconfigured.containsKey(config.id)) continue;
-    wanted['config:${jsonEncode(config.toJson())}'] = () =>
-        factory(config, secrets);
+    // The key binding is live state, not build state: storing a key must
+    // not rebuild (and so close) the provider a call may be running on.
+    final key = 'config:${jsonEncode(config.unbound.toJson())}';
+    wanted[key] = () => factory(config, secrets);
+    bindings[key] = config.credentialOrigin;
     configured.add(config.id);
   }
   final builtins = ref.watch(builtinLlmsProvider);
@@ -282,6 +282,11 @@ final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
     wanted['builtin:$i'] = builtins[i];
   }
   final providers = cache.sync(wanted);
+  for (final e in bindings.entries) {
+    if (providers[e.key] case final OpenAiCompatibleProvider p) {
+      p.credentialOrigin = e.value;
+    }
+  }
   final taken = configured.toSet();
   return [
     for (final key in wanted.keys)
@@ -410,10 +415,12 @@ class CredentialsNotifier extends Notifier<int> {
   /// [StateError] for an unconfigured id or one that takes no key, and
   /// [SecretStoreException] when the store refuses.
   void set(String id, String value) {
-    ref.read(secretStoreProvider).write(_account(id), value);
-    state++;
-    // The key is now good for the endpoint as configured this moment:
-    // record its origin, so a later endpoint change stops sending it.
+    final account = _account(id);
+    // The key is good for the endpoint as configured this moment: record
+    // its origin first, so a later endpoint change stops sending it. The
+    // binding before the secret: a write that fails half-way leaves a
+    // binding without a key (a plain "no key"), never a key that can
+    // never be sent.
     final config = ref.read(settingsProvider).provider(id)!;
     final origin = config.origin;
     if (origin != null && config.credentialOrigin != origin) {
@@ -421,6 +428,8 @@ class CredentialsNotifier extends Notifier<int> {
           .read(settingsProvider.notifier)
           .upsertProvider(config.copyWith(credentialOrigin: () => origin));
     }
+    ref.read(secretStoreProvider).write(account, value);
+    state++;
   }
 
   /// Removes the credential of [id]; returns whether there was one.
