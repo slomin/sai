@@ -1,6 +1,6 @@
 # Settings, v0
 
-Status: current · Issues: #21, #29 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md)
+Status: current · Issues: #21, #29, #22 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md)
 
 The non-secret preferences both clients share: one JSON object in
 `settings.json`, beside the default archive (`SAI_SETTINGS_FILE` moves it).
@@ -22,9 +22,10 @@ and `test/no_secrets_test.dart` enforce that.
 | --- | --- | --- |
 | `id` | yes | `^[a-z0-9][a-z0-9_-]*$`; what `llm` selects and the archive's `model.provider` carries |
 | `kind` | yes | which implementation builds it: `fake`, `openai_compatible` (#22). Open: an unknown kind is kept and shown as "not available" |
-| `endpoint` | no | absolute `http`/`https` URL with no userinfo, query or fragment |
+| `endpoint` | no | absolute `http`/`https` URL with no userinfo, query or fragment; `http` only for `localhost` or a loopback address (ADR 0009). `openai_compatible` needs it, and `default_model` |
 | `default_model` | no | the model used when a request names none |
 | `credential` | no | `^provider:[a-z0-9][a-z0-9_-]*$` — the secret-store *account* holding the key, by convention `provider:<id>`. Absent for keyless backends |
+| `credential_origin` | no | `scheme://host[:port]` of the endpoint the key was entered for; written when the key is stored, always equal to the endpoint's origin while present. The key is sent only while they match (ADR 0009); a mismatch on disk is a format error, an edit that moves the endpoint drops it |
 
 ## Rules
 
@@ -42,11 +43,14 @@ and `test/no_secrets_test.dart` enforce that.
   object, so two binaries of different versions share one file.
 - **Removing a provider clears its selection**: `llm` never names a
   provider that is gone.
+- **Moving an endpoint unbinds its key.** A new host, port or scheme
+  drops `credential_origin`; the key stays in the Keychain but is not
+  sent until entered again. A new path keeps it.
 - Writes are atomic, unparseable content is quarantined, a newer
   `version` is refused and left untouched — ADR 0006.
 
 ## Example
 
 ```json
-{"llm":"lan","providers":[{"credential":"provider:lan","default_model":"qwen","endpoint":"https://lan.example:8443/v1","id":"lan","kind":"openai_compatible"},{"endpoint":"http://127.0.0.1:8080/v1","id":"local","kind":"openai_compatible"}],"version":0}
+{"llm":"lan","providers":[{"credential":"provider:lan","credential_origin":"https://lan.example:8443","default_model":"qwen","endpoint":"https://lan.example:8443/v1","id":"lan","kind":"openai_compatible"},{"default_model":"qwen","endpoint":"http://127.0.0.1:8080/v1","id":"local","kind":"openai_compatible"}],"version":0}
 ```

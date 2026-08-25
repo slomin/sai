@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 
+import 'endpoint.dart';
 import 'settings.dart';
 
 /// One configured LLM backend, as stored in `settings.json`
@@ -13,6 +14,7 @@ final class ProviderConfig {
     this.endpoint,
     this.defaultModel,
     this.credential,
+    this.credentialOrigin,
     Map<String, Object?> extra = const {},
   }) : extra = Map.unmodifiable(extra) {
     if (!idForm.hasMatch(id)) {
@@ -34,6 +36,18 @@ final class ProviderConfig {
         'credential',
         'must match ${credentialForm.pattern}',
       );
+    }
+    final o = credentialOrigin;
+    if (o != null) {
+      if (c == null) {
+        throw ArgumentError('credential_origin needs a credential');
+      }
+      if (e == null || o != endpointOrigin(Uri.parse(e))) {
+        throw ArgumentError(
+          "credential_origin must be the endpoint's origin, "
+          '${e == null ? 'and there is no endpoint' : endpointOrigin(Uri.parse(e))}',
+        );
+      }
     }
     // The same guard the reader applies, so nothing written here is ever
     // refused on the way back in (a value must not merely look like a key).
@@ -75,8 +89,25 @@ final class ProviderConfig {
   /// backend takes none (a keyless `llama-server`, the fake).
   final String? credential;
 
+  /// The origin (`scheme://host[:port]`) the key under [credential] was
+  /// entered for, recorded when it was stored. The key is sent only while
+  /// this equals the endpoint's origin (ADR 0009): after the endpoint moves
+  /// it is not, until the key is entered again. Always equal to the
+  /// endpoint's origin when present; null until a key is stored.
+  final String? credentialOrigin;
+
   /// Keys this sai does not know, exactly as read.
   final Map<String, Object?> extra;
+
+  /// The endpoint's origin, or null without an endpoint.
+  String? get origin {
+    final e = endpoint;
+    return e == null ? null : endpointOrigin(Uri.parse(e));
+  }
+
+  /// Whether the stored key may be sent to [endpoint]: it takes one, and
+  /// the one on record was entered for this origin.
+  bool get keyBound => credential != null && credentialOrigin == origin;
 
   /// Throws [ArgumentError] unless [url] is an absolute http(s) URL with
   /// no userinfo, query or fragment — the places a key leaks into a URL.
@@ -91,21 +122,40 @@ final class ProviderConfig {
     if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
       throw ArgumentError('endpoint must carry no userinfo, query or fragment');
     }
+    if (uri.scheme == 'http' && !isLoopbackHost(uri.host)) {
+      throw ArgumentError(plaintextRefused);
+    }
   }
 
+  /// A copy with the given fields replaced. The key binding follows the
+  /// rule above: an origin that no longer matches the (new) endpoint, or
+  /// a credential that is gone, drops it.
   ProviderConfig copyWith({
     String? kind,
     String? Function()? endpoint,
     String? Function()? defaultModel,
     String? Function()? credential,
-  }) => ProviderConfig(
-    id: id,
-    kind: kind ?? this.kind,
-    endpoint: endpoint == null ? this.endpoint : endpoint(),
-    defaultModel: defaultModel == null ? this.defaultModel : defaultModel(),
-    credential: credential == null ? this.credential : credential(),
-    extra: extra,
-  );
+    String? Function()? credentialOrigin,
+  }) {
+    final nextEndpoint = endpoint == null ? this.endpoint : endpoint();
+    final nextCredential = credential == null ? this.credential : credential();
+    final nextOrigin = credentialOrigin == null
+        ? this.credentialOrigin
+        : credentialOrigin();
+    final keeps =
+        nextCredential != null &&
+        nextEndpoint != null &&
+        nextOrigin == endpointOrigin(Uri.parse(nextEndpoint));
+    return ProviderConfig(
+      id: id,
+      kind: kind ?? this.kind,
+      endpoint: nextEndpoint,
+      defaultModel: defaultModel == null ? this.defaultModel : defaultModel(),
+      credential: nextCredential,
+      credentialOrigin: keeps ? nextOrigin : null,
+      extra: extra,
+    );
+  }
 
   static const _known = {
     'id',
@@ -113,6 +163,7 @@ final class ProviderConfig {
     'endpoint',
     'default_model',
     'credential',
+    'credential_origin',
   };
 
   /// Reads one `providers[]` entry. Throws [SettingsFormatException] on a
@@ -145,6 +196,7 @@ final class ProviderConfig {
         endpoint: optional('endpoint'),
         defaultModel: optional('default_model'),
         credential: optional('credential'),
+        credentialOrigin: optional('credential_origin'),
         extra: {
           for (final e in json.entries)
             if (!_known.contains(e.key)) e.key: e.value,
@@ -162,6 +214,7 @@ final class ProviderConfig {
     if (endpoint != null) 'endpoint': endpoint,
     if (defaultModel != null) 'default_model': defaultModel,
     if (credential != null) 'credential': credential,
+    if (credentialOrigin != null) 'credential_origin': credentialOrigin,
   });
 
   /// Value equality over the stored form: two configs that would write

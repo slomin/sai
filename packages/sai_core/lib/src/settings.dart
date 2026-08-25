@@ -3,6 +3,7 @@
 /// the Keychain (`secrets.dart`) and the file names their accounts.
 library;
 
+export 'settings/endpoint.dart';
 export 'settings/provider_config.dart';
 export 'settings/settings.dart';
 export 'settings/store.dart';

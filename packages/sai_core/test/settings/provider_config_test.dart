@@ -118,6 +118,112 @@ void main() {
       expect(make(endpoint: 'http://127.0.0.1:8080/v1').endpoint, isNotNull);
     });
 
+    test('plaintext http is refused for anything but this machine', () {
+      for (final ok in [
+        'http://localhost:8080/v1',
+        'http://127.0.0.1/v1',
+        'http://127.5.5.5:1/v1',
+        'http://[::1]:8080/v1',
+        'https://lan.example/v1',
+        'https://192.168.1.20:8443/v1',
+      ]) {
+        expect(() => ProviderConfig.checkEndpoint(ok), returnsNormally);
+      }
+      for (final bad in [
+        'http://lan.example/v1',
+        'http://192.168.1.20:8080/v1',
+        'http://0.0.0.0:8080/v1',
+        'http://[fe80::1]:8080/v1',
+      ]) {
+        expect(
+          () => ProviderConfig.checkEndpoint(bad),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              plaintextRefused,
+            ),
+          ),
+          reason: bad,
+        );
+      }
+    });
+
+    test('a key is bound to the origin it was entered for', () {
+      expect(
+        endpointOrigin(Uri.parse('https://lan.example:8443/v1')),
+        'https://lan.example:8443',
+      );
+      expect(
+        endpointOrigin(Uri.parse('http://[::1]:8080/v1')),
+        'http://[::1]:8080',
+      );
+      expect(
+        endpointOrigin(Uri.parse('https://lan.example/v1/')),
+        'https://lan.example',
+      );
+      final lan = ProviderConfig(
+        id: 'lan',
+        kind: 'openai_compatible',
+        endpoint: 'https://lan.example:8443/v1',
+        credential: 'provider:lan',
+      );
+      expect(lan.origin, 'https://lan.example:8443');
+      expect(lan.keyBound, isFalse, reason: 'no key entered yet');
+      final bound = lan.copyWith(credentialOrigin: () => lan.origin);
+      expect(bound.keyBound, isTrue);
+      expect(bound.toJson()['credential_origin'], 'https://lan.example:8443');
+      expect(
+        Settings.decode(Settings.empty.withProvider(bound).encode())
+            .provider('lan')!
+            .keyBound,
+        isTrue,
+      );
+      // A path change keeps the binding; a port, host or scheme change drops it.
+      expect(
+        bound.copyWith(endpoint: () => 'https://lan.example:8443/v2').keyBound,
+        isTrue,
+      );
+      expect(
+        bound.copyWith(endpoint: () => 'https://lan.example:9443/v1').keyBound,
+        isFalse,
+      );
+      expect(bound.copyWith(endpoint: () => null).credentialOrigin, isNull);
+      expect(bound.copyWith(credential: () => null).credentialOrigin, isNull);
+      // On disk the two must agree, or the file is not one sai wrote.
+      for (final bad in [
+        () => ProviderConfig(
+          id: 'lan',
+          kind: 'openai_compatible',
+          endpoint: 'https://lan.example:8443/v1',
+          credential: 'provider:lan',
+          credentialOrigin: 'https://lan.example',
+        ),
+        () => ProviderConfig(
+          id: 'lan',
+          kind: 'fake',
+          credential: 'provider:lan',
+          credentialOrigin: 'https://lan.example',
+        ),
+        () => ProviderConfig(
+          id: 'lan',
+          kind: 'openai_compatible',
+          endpoint: 'https://lan.example/v1',
+          credentialOrigin: 'https://lan.example',
+        ),
+      ]) {
+        expect(bad, throwsArgumentError);
+      }
+      expect(
+        () => Settings.decode(
+          '{"version":0,"providers":[{"id":"lan","kind":"openai_compatible",'
+          '"endpoint":"https://lan.example/v1","credential":"provider:lan",'
+          '"credential_origin":"https://other.example"}]}',
+        ),
+        throwsA(isA<SettingsFormatException>()),
+      );
+    });
+
     test('malformed providers are a format error', () {
       for (final bad in [
         '{"version":0,"providers":{}}',
