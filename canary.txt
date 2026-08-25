@@ -1,0 +1,2 @@
+canary for #56: this must never reach main
+ANTHROPIC_API_KEY=sk-ant-api03-CANARY-n0t-a-r3al-k3y-2026-sai-do-not-use-CANARY-n0t-a-r3al-k3y-2026-sai-do-not-use-CANARY-noAA
