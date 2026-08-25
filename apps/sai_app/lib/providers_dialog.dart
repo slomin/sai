@@ -15,6 +15,9 @@ const providerTestOutputKey = ValueKey('provider-test-output');
 /// The cloud-sharing switch (#27), for tests.
 const shareTasksSwitchKey = ValueKey('share-tasks-switch');
 
+/// The reasoning switch (#34), for tests.
+const reasoningSwitchKey = ValueKey('reasoning-switch');
+
 /// One provider's row, for tests.
 Key providerRowKey(String id) => ValueKey('provider-row-$id');
 
@@ -71,38 +74,55 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
     final provider = registry[selected];
     return AlertDialog(
       title: const Text('Providers'),
+      // Scrolls: the rows, two switches, an endpoint's health and a test's
+      // output do not all fit a small window, and a cut switch is worse
+      // than a scrollbar.
       content: SizedBox(
         width: 560,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final id in ids)
-              _row(
-                id,
-                config: settings.provider(id),
-                provider: registry[id],
-                missing: misconfigured[id],
-                active: settings.llm == id,
-                selected: selected == id,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final id in ids)
+                _row(
+                  id,
+                  config: settings.provider(id),
+                  provider: registry[id],
+                  missing: misconfigured[id],
+                  active: settings.llm == id,
+                  selected: selected == id,
+                ),
+              SwitchListTile(
+                key: shareTasksSwitchKey,
+                dense: true,
+                title: const Text('Allow cloud providers to see my tasks'),
+                subtitle: Text(
+                  settings.shareTasksWithCloud
+                      ? 'A cloud provider sees the task list with each request.'
+                      : 'Cloud providers answer without the task list.',
+                ),
+                value: settings.shareTasksWithCloud,
+                onChanged: _setShareTasks,
               ),
-            SwitchListTile(
-              key: shareTasksSwitchKey,
-              dense: true,
-              title: const Text('Allow cloud providers to see my tasks'),
-              subtitle: Text(
-                settings.shareTasksWithCloud
-                    ? 'A cloud provider sees the task list with each request.'
-                    : 'Cloud providers answer without the task list.',
+              SwitchListTile(
+                key: reasoningSwitchKey,
+                dense: true,
+                title: const Text('Let the model think before it answers'),
+                subtitle: Text(
+                  settings.reasoningOn
+                      ? 'The chat shows the thinking above the answer.'
+                      : 'The model answers directly (faster).',
+                ),
+                value: settings.reasoningOn,
+                onChanged: _setReasoning,
               ),
-              value: settings.shareTasksWithCloud,
-              onChanged: _setShareTasks,
-            ),
-            const Divider(),
-            if (config?.endpoint != null && provider != null)
-              _endpoint(selected, provider),
-            if (config?.credential != null) _key(selected),
-          ],
+              const Divider(),
+              if (config?.endpoint != null && provider != null)
+                _endpoint(selected, provider),
+              if (config?.credential != null) _key(selected),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -219,10 +239,7 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
 
   static String _outcome(LlmResult result) {
     final failure = result.failure;
-    if (failure != null) {
-      return 'failed: ${failure.kind.name} — ${failure.message}'
-          '${failure.endpoint == null ? '' : ' (${failure.endpoint})'}';
-    }
+    if (failure != null) return chatFailureLine(failure);
     final tps = result.usage?.tokensPerSecond;
     return '${result.finish.name}'
         '${tps == null ? ' · tokens/s unavailable' : ' · ${tps.toStringAsFixed(1)} tokens/s'}';
@@ -296,6 +313,17 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
     );
   }
 
+  void _setReasoning(bool on) {
+    final notice = ref.read(noticeProvider.notifier);
+    try {
+      ref.read(settingsProvider.notifier).setReasoning(on);
+    } on StateError catch (e) {
+      notice.show(e.message);
+      return;
+    }
+    notice.show(on ? 'reasoning on' : 'reasoning off');
+  }
+
   void _setShareTasks(bool share) {
     final notice = ref.read(noticeProvider.notifier);
     try {
@@ -334,7 +362,12 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
     final RecordedCall call;
     try {
       final recorder = await ref.read(llmRecorderProvider.future);
-      call = await recorder.start(provider, providerTestRequest());
+      call = await recorder.start(
+        provider,
+        providerTestRequest(
+          reasoning: ref.read(reasoningProvider) ? null : false,
+        ),
+      );
     } on Object catch (error) {
       if (!current()) return;
       setState(() => _starting = false);

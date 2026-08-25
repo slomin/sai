@@ -133,6 +133,10 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     return (null, 'Bearer $key');
   }
 
+  /// Whether this endpoint answered 400 to `reasoning_effort` once;
+  /// from then on the switch is not sent to it.
+  var _reasoningRefused = false;
+
   Future<void> _run(
     LlmCallController controller,
     _Attempt attempt,
@@ -147,6 +151,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
           model: controller.model,
           usage: controller.usage,
           failure: failure,
+          reasoning: controller.reasoning,
         ),
       );
     }
@@ -164,6 +169,8 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       'stream_options': {'include_usage': true},
       if (request.maxTokens != null) 'max_tokens': request.maxTokens,
       if (request.temperature != null) 'temperature': request.temperature,
+      if (request.reasoning == false && !_reasoningRefused)
+        'reasoning_effort': 'none',
     });
 
     final HttpClientResponse response;
@@ -204,6 +211,15 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
           status: status,
         ),
       );
+    }
+    if (status == 400 && request.reasoning != null && !_reasoningRefused) {
+      // A generic endpoint that does not know `reasoning_effort` answers
+      // 400; ask once more without it and remember, so the next call
+      // goes straight through. The caller's wish is on the request line
+      // either way; what the backend understood is its own affair.
+      _reasoningRefused = true;
+      _drain(response);
+      return _run(controller, attempt, request.withoutReasoning());
     }
     if (status < 200 || status >= 300) {
       _drain(response);
@@ -284,6 +300,10 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
               controller.usage = merged();
             }
             if (chunk.finishReason != null) finish = chunk.finishReason;
+            final thought = chunk.reasoning;
+            if (thought != null && thought.isNotEmpty) {
+              controller.addReasoning(thought);
+            }
             final text = chunk.content;
             if (text != null && text.isNotEmpty) controller.add(text);
           },
@@ -321,6 +341,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     controller.finish(
       LlmResult(
         text: controller.text,
+        reasoning: controller.reasoning,
         finish: finish == 'length' ? LlmFinish.length : LlmFinish.stop,
         // Lineage is what was asked for; the request id is the backend's.
         model: ModelRef(

@@ -8,6 +8,7 @@ import 'package:nocterm_riverpod/nocterm_riverpod.dart';
 import 'package:riverpod/misc.dart' show Override;
 import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
+import 'package:sai_tui/chat_pane.dart';
 import 'package:sai_tui/tui_app.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
@@ -321,6 +322,230 @@ void main() {
       );
       await pumpUntilText(tester, 'archive error:');
     }, size: size);
+  });
+
+  group('the chat (#34)', () {
+    const big = Size(80, 24);
+
+    Future<ProviderContainer> pumpChat(
+      NoctermTester tester,
+      FakeLlmProvider fake, {
+      String? select = 'fake',
+    }) async {
+      // Provider and fixture first, one frame after: the fake's tag and
+      // the list then render together rather than reflowing mid-pump.
+      final container = testContainer(
+        overrides: [
+          builtinLlmsProvider.overrideWithValue([() => fake]),
+        ],
+      );
+      await container.read(tasksProvider.future);
+      await container
+          .read(tasksProvider.notifier)
+          .store
+          .createTask(
+            title: 'Call mom',
+            when: TaskWhen.date(container.read(todayProvider)),
+          );
+      if (select != null) {
+        container.read(settingsProvider.notifier).selectLlm(select);
+      }
+      await tester.pumpComponent(
+        RiverpodScope(
+          container: container,
+          child: TuiApp(onQuit: () {}),
+        ),
+      );
+      await pumpUntilText(tester, 'Call mom @today');
+      return container;
+    }
+
+    Future<void> ask(NoctermTester tester, String line) async {
+      await tester.sendKey(LogicalKey.tab);
+      await tester.pump();
+      await tester.enterText(line);
+      await tester.sendEnter();
+    }
+
+    test('the pane is a line until it is used', () async {
+      await testNocterm('collapsed', (tester) async {
+        await pumpTui(tester);
+        expect(tester.terminalState, containsText(chatPlaceholder));
+        expect(
+          tester.terminalState,
+          isNot(containsText('Ask about your list')),
+        );
+        await tester.sendKey(LogicalKey.tab);
+        await tester.pump();
+        expect(tester.terminalState, containsText('Ask about your list'));
+        // Typing now goes to the chat field, not capture.
+        await tester.enterText('hello');
+        await tester.pump();
+        expect(tester.terminalState, containsText('hello'));
+        expect(tester.terminalState, containsText('Capture to Inbox'));
+      }, size: big);
+    });
+
+    test('Tab is one-way and Esc leads back when idle', () async {
+      await testNocterm('keys', (tester) async {
+        await pumpTui(tester);
+        await tester.sendKey(LogicalKey.tab);
+        await tester.sendKey(LogicalKey.tab);
+        await tester.pump();
+        // A doubled Tab still lands in the chat, not back in capture.
+        await tester.enterText('hello');
+        await tester.pump();
+        expect(tester.terminalState, containsText('Capture to Inbox'));
+        expect(tester.terminalState, containsText('hello'));
+        await tester.sendKey(LogicalKey.escape);
+        await tester.pump();
+        await tester.enterText('milk');
+        await tester.pump();
+        // Esc when nothing runs: the capture field has focus again.
+        expect(tester.terminalState, isNot(containsText('Capture to Inbox')));
+        expect(tester.terminalState, containsText('milk'));
+      }, size: big);
+    });
+
+    test('a question streams its answer, then settles', () async {
+      await testNocterm('stream', (tester) async {
+        final container = await pumpChat(
+          tester,
+          FakeLlmProvider(
+            script: (_) => 'alpha beta gamma delta',
+            delta: const Duration(milliseconds: 40),
+          ),
+        );
+        await ask(tester, 'what is due?');
+        await pumpUntilText(tester, 'you › what is due?');
+        await pumpUntilText(tester, 'alpha beta');
+        expect(
+          tester.terminalState,
+          isNot(containsText('delta')),
+          reason: 'tokens must render as they arrive, not at the end',
+        );
+        expect(tester.terminalState, containsText('▌'));
+        await pumpUntilText(tester, 'sai › alpha beta gamma delta');
+        await pumpFor(tester, const Duration(milliseconds: 100));
+        expect(tester.terminalState, isNot(containsText('▌')));
+        expect(tester.terminalState, containsText(chatPlaceholder));
+        final types = [
+          for (final line in archiveLines(container))
+            (jsonDecode(line) as Map)['type'],
+        ];
+        expect(types, [
+          'task.create',
+          'chat.message',
+          'provider.request',
+          'provider.response',
+          'provider.usage',
+          'chat.message',
+        ]);
+      }, size: big);
+    });
+
+    test('the model saw the list', () async {
+      await testNocterm('context', (tester) async {
+        await pumpChat(
+          tester,
+          FakeLlmProvider(
+            script: (r) => r.messages
+                .where((m) => m.text.contains('Call mom'))
+                .map((m) => 'saw ${m.role.name}')
+                .join(','),
+          ),
+        );
+        await ask(tester, 'due?');
+        await pumpUntilText(tester, 'sai › saw system');
+      }, size: big);
+    });
+
+    test('reasoning shows only with the setting on', () async {
+      await testNocterm('reasoning', (tester) async {
+        final container = await pumpChat(
+          tester,
+          FakeLlmProvider(
+            script: (_) => 'ready.',
+            reasoning: (_) => 'let me think',
+          ),
+        );
+        await ask(tester, 'go');
+        await pumpUntilText(tester, 'sai › ready.');
+        expect(tester.terminalState, isNot(containsText('let me think')));
+        container.read(settingsProvider.notifier).setReasoning(true);
+        await tester.enterText('again');
+        await tester.sendEnter();
+        await pumpUntilText(tester, 'sai thinks › let me think');
+      }, size: big);
+    });
+
+    test('Esc stops a slow answer and keeps the part that came', () async {
+      await testNocterm('cancel', (tester) async {
+        await pumpChat(
+          tester,
+          FakeLlmProvider(
+            script: (_) => List.filled(100, 'x').join(' '),
+            delta: const Duration(milliseconds: 30),
+          ),
+        );
+        await ask(tester, 'go');
+        await pumpUntilText(tester, 'x x');
+        await tester.sendKey(LogicalKey.escape);
+        await pumpUntilText(tester, 'sai · cancelled › x');
+        expect(tester.terminalState, isNot(containsText('▌')));
+      }, size: big);
+    });
+
+    test('a failed call is named', () async {
+      await testNocterm('failure', (tester) async {
+        await pumpChat(
+          tester,
+          FakeLlmProvider(
+            failWith: const LlmFailure(
+              LlmFailureKind.unreachable,
+              'nothing answered at the endpoint',
+              endpoint: 'http://localhost:1',
+            ),
+          ),
+        );
+        await ask(tester, 'go');
+        await pumpUntilText(
+          tester,
+          'failed: unreachable — nothing answered at the endpoint',
+        );
+      }, size: big);
+    });
+
+    test(
+      'a cloud provider with sharing off says the tasks are withheld',
+      () async {
+        await testNocterm('withheld', (tester) async {
+          await pumpChat(
+            tester,
+            FakeLlmProvider(
+              id: 'cloudy',
+              privacy: LlmPrivacy.cloud,
+              script: (r) => r.messages.any((m) => m.text.contains('Call mom'))
+                  ? 'saw it'
+                  : 'blind',
+            ),
+            select: 'cloudy',
+          );
+          await pumpUntilText(tester, tasksWithheldSuffix);
+          await ask(tester, 'due?');
+          await pumpUntilText(tester, 'sai · tasks withheld › blind');
+        }, size: big);
+      },
+    );
+
+    test('without a provider the send is refused and the line kept', () async {
+      await testNocterm('no provider', (tester) async {
+        await pumpChat(tester, FakeLlmProvider(), select: null);
+        await ask(tester, 'anyone?');
+        await pumpUntilText(tester, noProviderStatus);
+        expect(tester.terminalState, containsText('anyone?'));
+      }, size: big);
+    });
   });
 
   test('pubspec version matches saiVersion', () async {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
@@ -49,6 +51,9 @@ class AppCommands {
     required this.focusCapture,
     required this.undo,
     required this.toggleChat,
+    required this.sendChat,
+    required this.cancelChat,
+    required this.toggleReasoning,
     required this.showShortcuts,
     required this.showProviders,
     required this.select,
@@ -63,6 +68,9 @@ class AppCommands {
       focusCapture: () => container.read(captureFocusProvider).requestFocus(),
       undo: () => _undo(container),
       toggleChat: () => _toggleChat(container, context),
+      sendChat: () => _sendChat(container),
+      cancelChat: () => container.read(chatProvider.notifier).cancel(),
+      toggleReasoning: () => _toggleReasoning(container),
       showShortcuts: () => _showShortcuts(context),
       showProviders: () => _showProviders(context),
       select: container.read(selectedSectionProvider.notifier).select,
@@ -72,6 +80,17 @@ class AppCommands {
   final VoidCallback focusCapture;
   final VoidCallback undo;
   final VoidCallback toggleChat;
+
+  /// Sends the chat draft as the next turn; the draft clears only when
+  /// the send was accepted, so a refused line is not lost.
+  final VoidCallback sendChat;
+
+  /// Stops the answer being streamed; a no-op when none is.
+  final VoidCallback cancelChat;
+
+  /// Lets the model think before it answers, or not (`reasoning` in
+  /// settings); the thinking shows in the chat pane while it is on.
+  final VoidCallback toggleReasoning;
   final VoidCallback showShortcuts;
 
   /// Opens the providers dialog (`providers_dialog.dart`).
@@ -107,6 +126,41 @@ class AppCommands {
     });
   }
 
+  static void _sendChat(ProviderContainer container) {
+    final draft = container.read(chatDraftProvider);
+    final text = draft.text;
+    if (text.trim().isEmpty) return;
+    final chat = container.read(chatProvider.notifier);
+    // A refusal before the first await (busy, no provider, over budget)
+    // shows right here and keeps the line. A refusal after it — the
+    // archive would not take the message — gives the line back, unless
+    // the user has typed something newer meanwhile.
+    final sending = chat.send(text);
+    if (container.read(chatProvider).error != null) return;
+    draft.clear();
+    container.read(chatFocusProvider).requestFocus();
+    unawaited(
+      sending.then((sent) {
+        if (!sent && draft.text.isEmpty) draft.text = text;
+      }),
+    );
+  }
+
+  static void _toggleReasoning(ProviderContainer container) {
+    final settings = container.read(settingsProvider.notifier);
+    final next = !container.read(reasoningProvider);
+    try {
+      settings.setReasoning(next);
+      container
+          .read(noticeProvider.notifier)
+          .show(next ? 'reasoning on' : 'reasoning off');
+    } on Object catch (error) {
+      container
+          .read(noticeProvider.notifier)
+          .show('could not save the setting: $error');
+    }
+  }
+
   static void _showProviders(BuildContext context) {
     showDialog<void>(
       context: context,
@@ -122,7 +176,9 @@ class AppCommands {
         content: const Text(
           '⌘N  New task (focus quick capture)\n'
           '⌘J  Show or hide the chat pane\n'
-          '⌘Z  Undo the last change',
+          '⌘Z  Undo the last change\n'
+          '⌘R  Let the model think before it answers, or not\n'
+          'Esc  Stop the assistant\'s answer',
         ),
         actions: [
           TextButton(

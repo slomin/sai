@@ -151,6 +151,7 @@ final class StubServer {
     String content, {
     String id = 'chatcmpl-1',
     String model = 'm',
+    String? reasoning,
   }) => {
     'id': id,
     'object': 'chat.completion.chunk',
@@ -158,7 +159,12 @@ final class StubServer {
     'choices': [
       {
         'index': 0,
-        'delta': {'content': content},
+        'delta': {
+          if (reasoning != null)
+            'reasoning_content': reasoning
+          else
+            'content': content,
+        },
         'finish_reason': null,
       },
     ],

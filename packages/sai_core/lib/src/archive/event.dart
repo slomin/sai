@@ -284,6 +284,10 @@ abstract final class EventTypes {
   /// The privacy policy's decision before a cloud call (#27, ADR 0010).
   static const policyDecision = 'policy.decision';
 
+  /// The conversation rows (#34): what a chat turn writes besides its
+  /// provider traffic.
+  static const chat = <String>[chatMessage];
+
   /// The provider-traffic rows (#21): what one model call may write.
   static const provider = <String>[
     providerRequest,

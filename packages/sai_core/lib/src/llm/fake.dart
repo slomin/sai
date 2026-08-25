@@ -18,6 +18,7 @@ final class FakeLlmProvider implements LlmProvider {
     this.privacy = LlmPrivacy.local,
     this.defaultModel = 'fake-1',
     String Function(LlmRequest request)? script,
+    this.reasoning,
     this.failWith,
     this.failAfter = 0,
     this.delta = Duration.zero,
@@ -38,6 +39,10 @@ final class FakeLlmProvider implements LlmProvider {
          delta: delta,
          script: (_) => loremIpsum(words),
        );
+
+  /// What the fake thinks aloud before it answers, streamed word by
+  /// word as reasoning deltas; null for none.
+  final String Function(LlmRequest request)? reasoning;
 
   @override
   final String id;
@@ -91,6 +96,14 @@ final class FakeLlmProvider implements LlmProvider {
     final cut = limit != null && limit < words.length;
     final reply = cut ? words.sublist(0, limit) : words;
     var emitted = 0;
+    final thought = request.reasoning == false
+        ? null
+        : reasoning?.call(request);
+    for (final word in _chunks(thought ?? '')) {
+      await Future<void>.delayed(delta);
+      if (controller.isDone) return;
+      controller.addReasoning(word);
+    }
     for (final word in reply) {
       if (failWith != null && emitted == failAfter) break;
       // Never a delta before start() has returned: the pause comes first.
@@ -108,6 +121,7 @@ final class FakeLlmProvider implements LlmProvider {
       controller.finish(
         LlmResult(
           text: controller.text,
+          reasoning: controller.reasoning,
           finish: LlmFinish.failed,
           model: controller.model,
           usage: usage,
@@ -119,6 +133,7 @@ final class FakeLlmProvider implements LlmProvider {
     controller.finish(
       LlmResult(
         text: controller.text,
+        reasoning: controller.reasoning,
         finish: cut ? LlmFinish.length : LlmFinish.stop,
         model: controller.model,
         usage: usage,

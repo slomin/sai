@@ -22,6 +22,7 @@ List<PlatformMenuItem> saiMenus({
   required bool canUndo,
   required bool chatShown,
   required bool chatFits,
+  required bool reasoningOn,
 }) => [
   PlatformMenu(
     label: 'sai',
@@ -94,6 +95,15 @@ List<PlatformMenuItem> saiMenus({
         label: chatShown ? 'Hide Chat' : 'Show Chat',
         shortcut: const SingleActivator(LogicalKeyboardKey.keyJ, meta: true),
         onSelected: chatFits ? commands.toggleChat : null,
+      ),
+      // Whether the model thinks before it answers (and shows it); the
+      // same switch as the Providers dialog's, until #40 gives it a
+      // screen. Platform items carry no checked state (ADR 0005), so the
+      // label says which way it goes.
+      PlatformMenuItem(
+        label: reasoningOn ? 'Disable Reasoning' : 'Enable Reasoning',
+        shortcut: const SingleActivator(LogicalKeyboardKey.keyR, meta: true),
+        onSelected: commands.toggleReasoning,
       ),
       const PlatformMenuItemGroup(
         members: [
@@ -172,7 +182,7 @@ class SaiChrome extends ConsumerStatefulWidget {
 }
 
 class _SaiChromeState extends ConsumerState<SaiChrome> {
-  (bool, bool, bool)? _menuState;
+  (bool, bool, bool, bool)? _menuState;
   List<PlatformMenuItem> _menus = const [];
 
   @override
@@ -181,7 +191,8 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
     final canUndo = ref.watch(canUndoProvider);
     final fits = chatFits(context);
     final shown = ref.watch(chatVisibleProvider) && fits;
-    final state = (canUndo, shown, fits);
+    final reasoning = ref.watch(reasoningProvider);
+    final state = (canUndo, shown, fits, reasoning);
     if (state != _menuState) {
       _menuState = state;
       _menus = saiMenus(
@@ -189,6 +200,7 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
         canUndo: canUndo,
         chatShown: shown,
         chatFits: fits,
+        reasoningOn: reasoning,
       );
     }
     return PlatformMenuBar(
@@ -201,6 +213,9 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
               commands.toggleChat,
           const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
               commands.undo,
+          const SingleActivator(LogicalKeyboardKey.escape): commands.cancelChat,
+          const SingleActivator(LogicalKeyboardKey.keyR, meta: true):
+              commands.toggleReasoning,
         },
         child: widget.child,
       ),

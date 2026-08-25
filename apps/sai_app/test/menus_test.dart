@@ -20,6 +20,9 @@ void main() {
       focusCapture: () => calls.add('capture'),
       undo: () => calls.add('undo'),
       toggleChat: () => calls.add('chat'),
+      sendChat: () => calls.add('send'),
+      cancelChat: () => calls.add('cancel'),
+      toggleReasoning: () => calls.add('reasoning'),
       showShortcuts: () => calls.add('shortcuts'),
       showProviders: () => calls.add('providers'),
       select: (section) => calls.add('select $section'),
@@ -33,6 +36,7 @@ void main() {
       canUndo: canUndo,
       chatShown: chat && fits,
       chatFits: fits,
+      reasoningOn: false,
     );
 
     setUp(calls.clear);

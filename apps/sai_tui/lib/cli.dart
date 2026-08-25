@@ -14,6 +14,7 @@ usage: sai_tui                       open the terminal client
        sai_tui provider use <id|none>
        sai_tui privacy               show the cloud-sharing switch
        sai_tui privacy share-tasks on|off
+       sai_tui reasoning [on|off]    let the model think before answering
        sai_tui secret set <id>       read the key from a hidden prompt
                                     (or from stdin when piped)
        sai_tui secret clear <id>
@@ -36,6 +37,11 @@ on any other host.''';
 String privacyLine(PrivacyPolicy policy) => policy.shareTasksWithCloud
     ? 'cloud sharing: on — cloud providers see your tasks'
     : 'cloud sharing: off — cloud providers do not see your tasks';
+
+/// What `reasoning` prints for each position of the switch.
+String reasoningLine(bool on) => on
+    ? 'reasoning: on — the model thinks before it answers, and shows it'
+    : 'reasoning: off — the model answers directly';
 
 /// Exit codes, as a shell expects them.
 const cliOk = 0;
@@ -252,6 +258,20 @@ Future<int> runCli(
         out.writeln(privacyLine(container.read(privacyPolicyProvider)));
         final warning = container.read(activeLlmWarningProvider);
         if (warning != null) out.writeln(warning);
+        return cliOk;
+
+      case ['reasoning']:
+        out.writeln(reasoningLine(container.read(reasoningProvider)));
+        return cliOk;
+
+      case ['reasoning', final position]:
+        final show = switch (position) {
+          'on' => true,
+          'off' => false,
+          _ => throw _Usage('reasoning takes on or off, not $position'),
+        };
+        container.read(settingsProvider.notifier).setReasoning(show);
+        out.writeln(reasoningLine(container.read(reasoningProvider)));
         return cliOk;
 
       case ['secret', final verb, final id]

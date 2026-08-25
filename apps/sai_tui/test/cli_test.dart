@@ -446,4 +446,22 @@ void main() {
       LlmPrivacy.cloud,
     );
   });
+
+  test('reasoning shows, sets and refuses', () async {
+    expect(await run('reasoning'), cliOk);
+    expect(out.toString().trim(), reasoningLine(false));
+    out.clear();
+    expect(await run('reasoning on'), cliOk);
+    expect(out.toString().trim(), reasoningLine(true));
+    expect(container.read(settingsProvider).reasoningOn, isTrue);
+    expect(
+      jsonDecode(settingsFile().readAsStringSync()),
+      containsPair('reasoning', true),
+    );
+    out.clear();
+    expect(await run('reasoning off'), cliOk);
+    expect(container.read(settingsProvider).reasoningOn, isFalse);
+    expect(await run('reasoning maybe'), cliUsageError);
+    expect(err.toString(), contains('reasoning takes on or off'));
+  });
 }

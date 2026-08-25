@@ -6,6 +6,7 @@ import 'package:riverpod/riverpod.dart';
 
 import 'app_info.dart';
 import 'archive/archive.dart';
+import 'chat/chat.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
 import 'llm/factory.dart';
@@ -141,6 +142,20 @@ final canUndoProvider = Provider<bool>((ref) {
 /// so the clients (#37, #41) and their menus steer the same state.
 final selectedSectionProvider =
     NotifierProvider<SelectedSection, SidebarSection>(SelectedSection.new);
+
+/// Whether a model may think before it answers, as settings hold it
+/// (`reasoning`, off by default): off is sent to the backend as
+/// `reasoning_effort: none`, on is the model's default and shown.
+final reasoningProvider = Provider<bool>(
+  (ref) => ref.watch(settingsProvider.select((s) => s.reasoningOn)),
+);
+
+/// The conversation (#34): transcript, the answer as it streams, and
+/// the last refused send. Lives here, not in a pane, so a pane that
+/// unmounts (the app's below its breakpoint) does not lose the talk.
+final chatProvider = NotifierProvider<ChatNotifier, ChatState>(
+  ChatNotifier.new,
+);
 
 /// Whether the chat pane is shown. Shell chrome; the pane's content is
 /// #34/#39.
@@ -427,6 +442,8 @@ class SettingsNotifier extends Notifier<Settings> {
   /// Sets the cloud-sharing switch (#27).
   void setShareTasksWithCloud(bool share) =>
       _commit(state.withShareTasksWithCloud(share));
+
+  void setReasoning(bool show) => _commit(state.withReasoning(show));
 
   void _commit(Settings next) {
     _store.save(next);

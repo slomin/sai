@@ -163,7 +163,7 @@ Restore from a replica (#15); do not edit the log.
 
 | type | actor | notes |
 | --- | --- | --- |
-| `chat.message` | user / assistant | `payload.text`; assistant messages carry `model` |
+| `chat.message` | user / assistant | `payload.text`; assistant messages carry `model` and `refs` → their `provider.response` — see [conversation](#conversation-34) |
 | `provider.request` | system | the raw request as sent; `model` names the target — see [provider traffic](#provider-traffic-21) |
 | `provider.response` | assistant | the assembled response as received; `model.request_id` and `version` where exposed; `refs` → the request |
 | `provider.failure` | system | a call that produced no answer; `refs` → the request |
@@ -198,8 +198,8 @@ names its decision line.
 
 | type | payload |
 | --- | --- |
-| `provider.request` | `messages` — `[{role, text}]`, `role` ∈ `system` \| `user` \| `assistant`; optional `max_tokens`, `temperature`. The request as sent, so it never holds a key, header or URL. |
-| `provider.response` | `text`, `finish` ∈ `stop` \| `length` \| `cancelled` — a cancelled call's partial text is still what the assistant said; optional `truncated` (below) |
+| `provider.request` | `messages` — `[{role, text}]`, `role` ∈ `system` \| `user` \| `assistant`; optional `max_tokens`, `temperature`, `reasoning` (false when the caller asked the backend not to think); `context_hash` — the sha256 blobref of `messages` as sent (ADR 0011), so a response is traceable to exactly what the model saw. The request as sent, so it never holds a key, header or URL. |
+| `provider.response` | `text`, `finish` ∈ `stop` \| `length` \| `cancelled` — a cancelled call's partial text is still what the assistant said; optional `truncated` (below); optional `reasoning` — the model's thinking as the backend streamed it apart from the answer (`reasoning_content`), capped at 128 KiB with `reasoning_truncated` holding the original byte length when cut |
 | `provider.failure` | `kind` ∈ `unreachable` \| `timeout` \| `rejected` \| `credential` \| `protocol` \| `internal`, `message` (fixed text, never an exception's); optional `endpoint` (an origin, `scheme://host[:port]`, never more), `status`, `text` (partial output), `truncated` |
 | `provider.usage` | `finish` ∈ `stop` \| `length` \| `cancelled` \| `failed`, `duration_ms`; optional `prompt_tokens`, `completion_tokens`, `total_tokens`, `tokens_per_second` |
 
@@ -229,6 +229,25 @@ made.
 | type | payload |
 | --- | --- |
 | `policy.decision` | `privacy` ∈ `cloud`, `share_tasks` (the switch as it stood), `task_context` ∈ `none` \| `sent` \| `withheld` |
+
+### Conversation (#34)
+
+A chat turn is the user's words, the call, and the assistant's words:
+`chat.message` (actor `user`), then the call's lines as above, then
+`chat.message` (actor `assistant`, `model` naming the provider that
+answered, `refs` → its `provider.response`). The assistant line carries
+the text the user read — a cancelled answer's partial text included,
+with `finish` saying how it stopped — so the conversation reads without
+reassembling requests, while `provider.request` keeps the raw wire
+record and, through `context_hash`, what the model actually saw. A call
+that failed leaves no assistant line: the `provider.failure` is the
+answer. The task lists reach the model only as the request's task
+context, assembled by one function (ADR 0011) and subject to the policy
+above; the conversation lines never carry them.
+
+| type | payload |
+| --- | --- |
+| `chat.message` | `text`; assistant lines add `finish` ∈ `stop` \| `length` \| `cancelled` |
 
 ### Task domain (#17)
 

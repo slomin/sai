@@ -1,25 +1,38 @@
+import 'dart:async';
+
 import 'package:nocterm/nocterm.dart';
 import 'package:nocterm_riverpod/nocterm_riverpod.dart';
 import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import 'chat_pane.dart';
+
 final _listStateProvider = Provider(
   (ref) => (tasks: ref.watch(tasksProvider), today: ref.watch(todayProvider)),
 );
 
-/// Quick capture and the two lists it feeds (#19). Still a placeholder
-/// shell — #41 puts the real Today list and chat in.
+final _chatViewProvider = Provider(
+  (ref) => (
+    chat: ref.watch(chatProvider),
+    reasoningOn: ref.watch(reasoningProvider),
+  ),
+);
+
+/// Quick capture, the lists it feeds (#19) and the chat (#34). Still a
+/// thin shell — #41 puts the real Today list in.
 ///
 /// Expects a [RiverpodScope] above it; the entry point in `bin/` provides
 /// one together with [onQuit], which must end the process (nocterm's
 /// `shutdownApp` calls `exit`, so nothing after `runApp` ever runs — any
 /// teardown belongs in [onQuit], before that call).
 ///
-/// Key map: the capture field is always focused, so printable keys type.
-/// Ctrl+C quits (it bubbles through the field by design). **Ctrl+U** is
-/// undo — not Ctrl+Z, which stays `SIGTSTP` in a real terminal
-/// (`stdin.lineMode = false` clears ICANON only, ISIG stays on) and
-/// would suspend the TUI mid-alt-screen.
+/// Key map: one of the two fields is always focused, so printable keys
+/// type; Tab moves to the chat, Esc back to capture (or stops a running
+/// answer first). Ctrl+C quits (it bubbles through the
+/// field by design). **Ctrl+U** is undo — not Ctrl+Z, which stays
+/// `SIGTSTP` in a real terminal (`stdin.lineMode = false` clears ICANON
+/// only, ISIG stays on) and would suspend the TUI mid-alt-screen. Esc
+/// stops the assistant's answer.
 class TuiApp extends StatefulComponent {
   const TuiApp({super.key, required this.onQuit});
 
@@ -29,13 +42,20 @@ class TuiApp extends StatefulComponent {
   State<TuiApp> createState() => _TuiAppState();
 }
 
+enum _Pane { capture, chat }
+
 class _TuiAppState extends State<TuiApp> {
   final _controller = TextEditingController();
+  final _chatInput = TextEditingController();
+  final _chatScroll = AutoScrollController();
+  var _pane = _Pane.capture;
   String _notice = '';
 
   @override
   void dispose() {
     _controller.dispose();
+    _chatInput.dispose();
+    _chatScroll.dispose();
     super.dispose();
   }
 
@@ -48,7 +68,40 @@ class _TuiAppState extends State<TuiApp> {
       _undo();
       return true;
     }
+    // Directional, not toggles: a real terminal can deliver a key twice
+    // (see tool/smoke/tui.py), and a toggle fired twice goes nowhere.
+    if (event.logicalKey == LogicalKey.tab) {
+      if (_pane != _Pane.chat) setState(() => _pane = _Pane.chat);
+      return true;
+    }
+    if (event.logicalKey == LogicalKey.escape) {
+      final chat = context.container.read(chatProvider);
+      if (chat.busy) {
+        context.container.read(chatProvider.notifier).cancel();
+      } else if (_pane != _Pane.capture) {
+        setState(() => _pane = _Pane.capture);
+      }
+      return true;
+    }
     return false;
+  }
+
+  void _ask(String line) {
+    if (line.trim().isEmpty) return;
+    final chat = context.container.read(chatProvider.notifier);
+    // A refusal before the first await keeps the line where it is; one
+    // after it (the archive would not take the message) gives it back,
+    // unless something newer has been typed meanwhile.
+    final sending = chat.send(line);
+    if (context.container.read(chatProvider).error != null) return;
+    setState(_chatInput.clear);
+    unawaited(
+      sending.then((sent) {
+        if (!sent && mounted && _chatInput.text.isEmpty) {
+          setState(() => _chatInput.text = line);
+        }
+      }),
+    );
   }
 
   void _setNotice(String notice) {
@@ -101,44 +154,64 @@ class _TuiAppState extends State<TuiApp> {
       onKeyEvent: _onKey,
       child: Container(
         decoration: BoxDecoration(border: BoxBorder.all(color: Colors.gray)),
-        child: Column(
-          children: [
-            TextField(
-              controller: _controller,
-              focused: true,
-              placeholder: captureHint,
-              onSubmitted: _capture,
-            ),
-            Expanded(
-              child: RiverpodConsumer(
-                provider: _listStateProvider,
-                builder: (context, state) => switch (state.tasks) {
-                  AsyncData(:final value) => _lists(value, state.today),
-                  AsyncError(:final error) => Center(
-                    child: Text('archive error: $error'),
+        child: RiverpodConsumer(
+          provider: _chatViewProvider,
+          builder: (context, view) {
+            final chat = view.chat;
+            final chatFocused = _pane == _Pane.chat;
+            final pane = ChatPane(
+              state: chat,
+              reasoningOn: view.reasoningOn,
+              focused: chatFocused,
+              scroll: _chatScroll,
+              input: _chatInput,
+              onSubmit: _ask,
+            );
+            return Column(
+              children: [
+                TextField(
+                  controller: _controller,
+                  focused: _pane == _Pane.capture,
+                  placeholder: captureHint,
+                  onSubmitted: _capture,
+                ),
+                Expanded(
+                  child: RiverpodConsumer(
+                    provider: _listStateProvider,
+                    builder: (context, state) => switch (state.tasks) {
+                      AsyncData(:final value) => _lists(value, state.today),
+                      AsyncError(:final error) => Center(
+                        child: Text('archive error: $error'),
+                      ),
+                      _ => Center(child: Text('opening the archive…')),
+                    },
                   ),
-                  _ => Center(child: Text('opening the archive…')),
-                },
-              ),
-            ),
-            if (_notice.isNotEmpty)
-              Text(_notice, style: TextStyle(color: Colors.yellow)),
-            // One row, whatever the provider is called: a wrapped status
-            // would take its extra rows from the list above.
-            RiverpodConsumer<String>(
-              provider: llmStatusProvider,
-              builder: (context, status) => Text(
-                status,
-                style: TextStyle(color: Colors.gray),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            Text(
-              '^C quit · ^U undo · Enter capture',
-              style: TextStyle(color: Colors.gray),
-            ),
-          ],
+                ),
+                // The chat takes rows only once it is in use.
+                if (ChatPane.open(chat, focused: chatFocused))
+                  Expanded(child: pane)
+                else
+                  pane,
+                if (_notice.isNotEmpty)
+                  Text(_notice, style: TextStyle(color: Colors.yellow)),
+                // One row, whatever the provider is called: a wrapped
+                // status would take its extra rows from the list above.
+                RiverpodConsumer<String>(
+                  provider: llmStatusProvider,
+                  builder: (context, status) => Text(
+                    status,
+                    style: TextStyle(color: Colors.gray),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  '^C quit · ^U undo · Tab chat · Esc stop/back',
+                  style: TextStyle(color: Colors.gray),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );

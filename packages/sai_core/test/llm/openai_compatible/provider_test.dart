@@ -1,15 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:sai_core/sai_core.dart';
+import 'package:sai_core/src/llm/openai_compatible/chunks.dart';
 import 'package:sai_core/src/llm/openai_compatible/policy.dart';
 import 'package:test/test.dart';
 
 import '../provider_contract.dart';
 import '../stub_server.dart';
 
-LlmRequest ask(String text) =>
-    LlmRequest(messages: [LlmMessage(LlmRole.user, text)]);
+LlmRequest ask(String text, {bool? reasoning}) => LlmRequest(
+  messages: [LlmMessage(LlmRole.user, text)],
+  reasoning: reasoning,
+);
 
 const canary = 'sk-canary-3c9e1a7b5d2f4e6a8c0b1d3f5a7c9e2b';
 
@@ -455,6 +459,90 @@ void main() {
       TransportText.threw(StateError('sk-x http://u@h')),
       'transport threw: StateError',
     );
+  });
+  test('reasoning deltas are kept apart from the answer (#34)', () async {
+    stub.routes['POST /v1/chat/completions'] = (req) async {
+      final response = req.response;
+      response.headers.contentType = ContentType('text', 'event-stream');
+      response.bufferOutput = false;
+      StubServer.event(response, StubServer.chunk('', reasoning: 'let me '));
+      StubServer.event(response, StubServer.chunk('', reasoning: 'think'));
+      StubServer.event(response, StubServer.chunk('ready.'));
+      StubServer.event(response, {
+        'id': 'chatcmpl-1',
+        'object': 'chat.completion.chunk',
+        'model': 'm',
+        'choices': [
+          {'index': 0, 'delta': <String, Object?>{}, 'finish_reason': 'stop'},
+        ],
+      });
+      StubServer.event(response, '[DONE]', json: false);
+      await response.close();
+    };
+    final provider = make();
+    final call = provider.start(ask('go'));
+    final deltas = await call.deltas.toList();
+    final result = await call.done;
+    expect(deltas.map((d) => (d.text, d.reasoning)), [
+      ('let me ', true),
+      ('think', true),
+      ('ready.', false),
+    ]);
+    expect(result.text, 'ready.');
+    expect(result.reasoning, 'let me think');
+    await provider.close();
+  });
+
+  test('a 400 to reasoning_effort is retried without it, once', () async {
+    stub.routes['POST /v1/chat/completions'] = (req) async {
+      final body = jsonDecode(stub.requests.last.body) as Map<String, Object?>;
+      if (body.containsKey('reasoning_effort')) {
+        req.response.statusCode = 400;
+        await req.response.close();
+        return;
+      }
+      await StubServer.stream(req, ['ok']);
+    };
+    final provider = make();
+    final first = await provider.start(ask('a', reasoning: false)).done;
+    expect(first.text, 'ok', reason: '$first ${first.failure}');
+    final second = await provider.start(ask('b', reasoning: false)).done;
+    expect(second.text, 'ok');
+    expect(
+      stub.requests.map(
+        (r) => (jsonDecode(r.body) as Map).containsKey('reasoning_effort'),
+      ),
+      [true, false, false],
+    );
+    await provider.close();
+  });
+
+  test('a backend that accepts the switch is left alone', () async {
+    stub.routes['POST /v1/chat/completions'] = (req) =>
+        StubServer.stream(req, ['ok']);
+    final provider = make();
+    await provider.start(ask('a', reasoning: false)).done;
+    await provider.start(ask('b')).done;
+    expect(
+      stub.requests.map((r) => (jsonDecode(r.body) as Map)['reasoning_effort']),
+      ['none', null],
+    );
+    await provider.close();
+  });
+
+  test('ChatChunk.parse reads reasoning_content and reasoning', () {
+    expect(
+      ChatChunk.parse('{"choices":[{"delta":{"reasoning_content":"hm"}}]}')
+          .reasoning,
+      'hm',
+    );
+    expect(
+      ChatChunk.parse('{"choices":[{"delta":{"reasoning":"hm2"}}]}').reasoning,
+      'hm2',
+    );
+    final plain = ChatChunk.parse('{"choices":[{"delta":{"content":"a"}}]}');
+    expect(plain.reasoning, isNull);
+    expect(plain.content, 'a');
   });
 }
 

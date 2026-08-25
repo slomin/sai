@@ -98,4 +98,21 @@ void main() {
       );
     });
   });
+  group('reasoning', () {
+    test('round-trips, is refused when not a boolean, and is omitted off', () {
+      final on = Settings.decode('{"version":0,"reasoning":true}');
+      expect(on.reasoningOn, isTrue);
+      expect(on.encode(), '{"llm":null,"reasoning":true,"version":0}');
+      expect(on.withReasoning(false).encode(), '{"llm":null,"version":0}');
+      expect(Settings.decode('{"version":0}').reasoningOn, isFalse);
+      expect(
+        () => Settings.decode('{"version":0,"reasoning":1}'),
+        throwsA(isA<SettingsFormatException>()),
+      );
+      // Every with* keeps it.
+      expect(on.withLlm('x').reasoningOn, isTrue);
+      expect(on.withShareTasksWithCloud(true).reasoningOn, isTrue);
+      expect(on.withoutProvider('x').reasoningOn, isTrue);
+    });
+  });
 }
