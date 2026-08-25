@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderContainer;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sai_app/commands.dart';
 import 'package:sai_app/providers_dialog.dart';
 import 'package:sai_core/sai_core.dart';
 
@@ -228,6 +229,111 @@ void main() {
     await open(tester);
     expect(find.text('missing its endpoint'), findsOneWidget);
     expect(tester.widget<TextButton>(use('bare')).onPressed, isNull);
+  });
+
+  group('the privacy switch (#27)', () {
+    final cloudy = ProviderConfig(
+      id: 'cloudy',
+      kind: 'fake',
+      privacy: LlmPrivacy.cloud,
+    );
+
+    testWidgets('reflects and writes the setting', (tester) async {
+      final container = await pumpApp(tester);
+      await open(tester);
+      expect(
+        tester.widget<SwitchListTile>(find.byKey(shareTasksSwitchKey)).value,
+        isFalse,
+      );
+      expect(
+        find.text('Cloud providers answer without the task list.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(shareTasksSwitchKey));
+      await tester.pump();
+      expect(container.read(settingsProvider).shareTasksWithCloud, isTrue);
+      expect(
+        tester.widget<SwitchListTile>(find.byKey(shareTasksSwitchKey)).value,
+        isTrue,
+      );
+      expect(find.text('cloud sharing on'), findsOneWidget);
+      expect(
+        container.read(settingsFileProvider).readAsStringSync(),
+        contains('"share_tasks_with_cloud":true'),
+      );
+      await tester.tap(find.byKey(shareTasksSwitchKey));
+      await tester.pump();
+      expect(container.read(settingsProvider).shareTasksWithCloud, isFalse);
+      expect(find.text('cloud sharing off'), findsOneWidget);
+    });
+
+    testWidgets('Use on a cloud provider warns while sharing is off', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      container.read(settingsProvider.notifier).upsertProvider(cloudy);
+      await tester.pump();
+      await open(tester);
+      expect(find.text('fake-1 — cloud'), findsOneWidget, reason: 'the tag');
+      await tester.tap(use('cloudy'));
+      await tester.pump();
+      const warning =
+          "cloud provider 'cloudy' will not see your tasks until sharing is on";
+      expect(container.read(noticeProvider), warning);
+      expect(
+        container.read(llmStatusProvider),
+        'cloudy (fake-1) — cloud · tasks withheld',
+      );
+      expect(
+        find.text('cloudy (fake-1) — cloud · tasks withheld'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(shareTasksSwitchKey));
+      await tester.pump();
+      expect(container.read(llmStatusProvider), 'cloudy (fake-1) — cloud');
+      expect(find.textContaining('tasks withheld'), findsNothing);
+      await tester.tap(find.byKey(shareTasksSwitchKey));
+      await tester.pump();
+      expect(container.read(noticeProvider), warning, reason: 'off again');
+    });
+
+    testWidgets('Test on a cloud provider records the decision', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final settings = container.read(settingsProvider.notifier);
+      settings.upsertProvider(
+        ProviderConfig(
+          id: 'cloudy',
+          kind: 'fake',
+          endpoint: 'http://127.0.0.1:9',
+          privacy: LlmPrivacy.cloud,
+        ),
+      );
+      settings.selectLlm('cloudy');
+      await tester.pump();
+      await open(tester);
+      await tester.tap(find.text('Test'));
+      // The fake runs on zero-length timers: fake-async pumps drive it,
+      // and the archive writes in between are real I/O.
+      for (var i = 0; i < 40; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+        if (find.textContaining('tokens/s').evaluate().isNotEmpty) break;
+      }
+      expect(find.textContaining('tokens/s'), findsOneWidget, reason: screen());
+      final lines = archiveLines(container.read(archiveRootProvider))
+          .where((l) => l.contains('"policy.') || l.contains('"provider.'))
+          .toList();
+      expect(lines, hasLength(4));
+      expect(lines[0], contains('"policy.decision"'));
+      expect(lines[0], contains('"task_context":"none"'));
+      expect(lines[0], contains('"share_tasks":false'));
+      expect(lines[1], contains('"provider.request"'));
+      expect(lines[1], contains('"refs"'));
+    });
   });
 
   group('against a stub endpoint', () {

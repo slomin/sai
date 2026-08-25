@@ -7,6 +7,7 @@ import '../archive/event.dart';
 import '../settings/endpoint.dart';
 import 'call.dart';
 import 'failure.dart';
+import 'privacy.dart';
 import 'provider.dart';
 
 /// The most a recorded payload takes once JSON-encoded. Half the
@@ -23,28 +24,41 @@ const maxRecordedMessageBytes = 4 << 10;
 /// "Provider traffic" section of `docs/archive/event-log-v0.md`.
 ///
 /// The provider is passed per call, not held, so switching the active
-/// provider can never disturb a call already running.
+/// provider can never disturb a call already running. The privacy policy
+/// (#27) is applied here and nowhere else: [policy] is read per call, so a
+/// switch flipped mid-session governs the next request, not a rebuild.
 final class LlmRecorder {
   LlmRecorder({
     required this.archive,
     required this.source,
     required this.clock,
+    required this.policy,
   });
 
   final Archive archive;
+
+  /// The policy as it stands when a call starts.
+  final PrivacyPolicy Function() policy;
 
   /// The `source` written on every line, e.g. [EventSources.app].
   final String source;
   final DateTime Function() clock;
 
-  /// Appends `provider.request`, then starts [provider]. Returns once the
+  /// Decides what [request] may carry to [provider], appends
+  /// `policy.decision` for a cloud provider, then `provider.request`, then
+  /// starts [provider] with the request as recorded. Returns once the
   /// request line is in the archive — a crash after that still leaves
   /// the request on record.
   ///
   /// Throws [ArgumentError], before the provider is touched, when the
   /// request is too large to record: what cannot be recorded is not sent.
   Future<RecordedCall> start(LlmProvider provider, LlmRequest request) async {
-    final payload = _requestPayload(request);
+    final decision = policy().decide(provider.privacy, request);
+    final governed = decision != null && decision.withheld
+        ? request.withoutTaskContext()
+        : request;
+    final sent = governed.assembled();
+    final payload = _requestPayload(sent);
     if (utf8.encode(jsonEncode(payload)).length > maxRecordedTextBytes) {
       throw ArgumentError(
         'request exceeds $maxRecordedTextBytes bytes and would not be '
@@ -56,6 +70,21 @@ final class LlmRecorder {
       id: request.model ?? provider.defaultModel,
     );
     final started = clock();
+    // The decision goes first: a crash between the two lines leaves the
+    // policy's word on record, and the request refers back to it.
+    BlobRef? decided;
+    if (decision != null) {
+      final stored = await archive.append(
+        EventDraft(
+          type: EventTypes.policyDecision,
+          actor: Actor.system,
+          source: source,
+          payload: decision.toJson(),
+          model: target,
+        ),
+      );
+      decided = stored.id;
+    }
     final stored = await archive.append(
       EventDraft(
         type: EventTypes.providerRequest,
@@ -63,11 +92,12 @@ final class LlmRecorder {
         source: source,
         payload: payload,
         model: target,
+        refs: decided == null ? null : [decided],
       ),
     );
     LlmCall call;
     try {
-      call = provider.start(request);
+      call = provider.start(sent);
     } catch (error) {
       call = _FailedCall(
         LlmResult(
@@ -82,7 +112,12 @@ final class LlmRecorder {
         ),
       );
     }
-    final recorded = RecordedCall._(stored.id, call);
+    final recorded = RecordedCall._(
+      stored.id,
+      call,
+      decision: decided,
+      taskContextWithheld: decision?.withheld ?? false,
+    );
     unawaited(_record(recorded, started));
     return recorded;
   }
@@ -253,7 +288,12 @@ final class LlmRecorder {
 /// A call as seen through the recorder: the same deltas, re-broadcast,
 /// plus the archive ids as they are written.
 final class RecordedCall {
-  RecordedCall._(this.request, this._call);
+  RecordedCall._(
+    this.request,
+    this._call, {
+    required this.decision,
+    required this.taskContextWithheld,
+  });
 
   final LlmCall _call;
   final _deltas = StreamController<LlmDelta>.broadcast();
@@ -262,6 +302,14 @@ final class RecordedCall {
 
   /// Id of the `provider.request` line — known before the first delta.
   final BlobRef request;
+
+  /// Id of the `policy.decision` line; null for a local provider, which
+  /// has none.
+  final BlobRef? decision;
+
+  /// Whether the policy dropped the request's task context: the
+  /// assistant is answering without the list.
+  final bool taskContextWithheld;
 
   BlobRef? _response;
   BlobRef? _failure;

@@ -12,6 +12,9 @@ const apiKeyFieldKey = ValueKey('api-key-field');
 /// The streamed text of the endpoint test, for tests.
 const providerTestOutputKey = ValueKey('provider-test-output');
 
+/// The cloud-sharing switch (#27), for tests.
+const shareTasksSwitchKey = ValueKey('share-tasks-switch');
+
 /// One provider's row, for tests.
 Key providerRowKey(String id) => ValueKey('provider-row-$id');
 
@@ -83,6 +86,18 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
                 active: settings.llm == id,
                 selected: selected == id,
               ),
+            SwitchListTile(
+              key: shareTasksSwitchKey,
+              dense: true,
+              title: const Text('Allow cloud providers to see my tasks'),
+              subtitle: Text(
+                settings.shareTasksWithCloud
+                    ? 'A cloud provider sees the task list with each request.'
+                    : 'Cloud providers answer without the task list.',
+              ),
+              value: settings.shareTasksWithCloud,
+              onChanged: _setShareTasks,
+            ),
             const Divider(),
             if (config?.endpoint != null && provider != null)
               _endpoint(selected, provider),
@@ -275,7 +290,24 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
       notice.show(e.message);
       return;
     }
-    notice.show(ref.read(llmStatusProvider));
+    // The warning beats the status line: the bar already shows the line.
+    notice.show(
+      ref.read(activeLlmWarningProvider) ?? ref.read(llmStatusProvider),
+    );
+  }
+
+  void _setShareTasks(bool share) {
+    final notice = ref.read(noticeProvider.notifier);
+    try {
+      ref.read(settingsProvider.notifier).setShareTasksWithCloud(share);
+    } on StateError catch (e) {
+      notice.show(e.message);
+      return;
+    }
+    notice.show(
+      ref.read(activeLlmWarningProvider) ??
+          (share ? 'cloud sharing on' : 'cloud sharing off'),
+    );
   }
 
   /// Drops the current test: an abandoned call is cancelled, so it stops

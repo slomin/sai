@@ -9,8 +9,11 @@ usage: sai_tui                       open the terminal client
        sai_tui provider list
        sai_tui provider add <id> --kind <kind> [--endpoint <url>]
                                     [--model <name>] [--key | --no-key]
+                                    [--privacy local|cloud]
        sai_tui provider remove <id>
        sai_tui provider use <id|none>
+       sai_tui privacy               show the cloud-sharing switch
+       sai_tui privacy share-tasks on|off
        sai_tui secret set <id>       read the key from a hidden prompt
                                     (or from stdin when piped)
        sai_tui secret clear <id>
@@ -23,7 +26,16 @@ provider:<id>; adding an existing id changes only the options given
 (docs/settings/settings-v0.md). A key is bound to the endpoint it was
 entered for: after --endpoint moves a provider to another host, port or
 scheme, enter its key again. secret clear and status also work for a
-provider that is no longer configured.''';
+provider that is no longer configured. A cloud provider sees your tasks
+only while share-tasks is on (off by default). --privacy says where a
+provider's inference happens; without it the fake is local and an
+openai_compatible endpoint is local on this machine or the LAN and cloud
+on any other host.''';
+
+/// What `privacy` prints for each position of the switch.
+String privacyLine(PrivacyPolicy policy) => policy.shareTasksWithCloud
+    ? 'cloud sharing: on — cloud providers see your tasks'
+    : 'cloud sharing: off — cloud providers do not see your tasks';
 
 /// Exit codes, as a shell expects them.
 const cliOk = 0;
@@ -70,7 +82,8 @@ Future<int> runCli(
               ? (config == null ? 'built-in' : config.kind)
               : '${config!.kind} @ ${config.endpoint}';
           out.writeln(
-            '$mark ${provider.id}  $where  (${provider.defaultModel})$key',
+            '$mark ${provider.id}  $where  (${provider.defaultModel}) · '
+            '${provider.privacy.name}$key',
           );
         }
         final misconfigured = container.read(misconfiguredLlmsProvider);
@@ -94,6 +107,7 @@ Future<int> runCli(
         String? kind = existing?.kind;
         String? endpoint = existing?.endpoint;
         String? model = existing?.defaultModel;
+        LlmPrivacy? privacy = existing?.privacy;
         var key = existing?.credential != null;
         for (var i = 0; i < rest.length; i++) {
           String value() {
@@ -114,6 +128,12 @@ Future<int> runCli(
               key = true;
             case '--no-key':
               key = false;
+            case '--privacy':
+              final name = value();
+              privacy = LlmPrivacy.values.asNameMap()[name];
+              if (privacy == null) {
+                throw _Usage('--privacy takes local or cloud, not $name');
+              }
             default:
               throw _Usage('unknown option ${rest[i]}');
           }
@@ -139,6 +159,7 @@ Future<int> runCli(
             credential: () => key
                 ? (existing?.credential ?? ProviderConfig.credentialFor(id))
                 : null,
+            privacy: () => privacy,
           );
         } on ArgumentError catch (e) {
           throw _Usage('${e.message}');
@@ -211,6 +232,26 @@ Future<int> runCli(
         }
         notifier.selectLlm(id);
         out.writeln(container.read(llmStatusProvider));
+        final warning = container.read(activeLlmWarningProvider);
+        if (warning != null) {
+          out.writeln('$warning: sai_tui privacy share-tasks on');
+        }
+        return cliOk;
+
+      case ['privacy']:
+        out.writeln(privacyLine(container.read(privacyPolicyProvider)));
+        return cliOk;
+
+      case ['privacy', 'share-tasks', final position]:
+        final share = switch (position) {
+          'on' => true,
+          'off' => false,
+          _ => throw _Usage('share-tasks takes on or off, not $position'),
+        };
+        container.read(settingsProvider.notifier).setShareTasksWithCloud(share);
+        out.writeln(privacyLine(container.read(privacyPolicyProvider)));
+        final warning = container.read(activeLlmWarningProvider);
+        if (warning != null) out.writeln(warning);
         return cliOk;
 
       case ['secret', final verb, final id]

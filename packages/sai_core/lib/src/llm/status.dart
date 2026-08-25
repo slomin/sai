@@ -1,3 +1,4 @@
+import 'privacy.dart';
 import 'provider.dart';
 
 /// What the status line shows while no provider is selected.
@@ -11,10 +12,12 @@ String missingProviderStatus(String id) =>
     "provider '$id' is not available — local only";
 
 /// The status line for a selected provider: name, default model, privacy
-/// tag — the same in every client.
-String llmStatusLine(LlmProvider provider) =>
+/// tag, and whether it operates without the task list under [policy] —
+/// the same in every client.
+String llmStatusLine(LlmProvider provider, {required PrivacyPolicy policy}) =>
     '${provider.displayName} (${provider.defaultModel}) — '
-    '${provider.privacy.name}';
+    '${provider.privacy.name}'
+    '${policy.withholdsFrom(provider.privacy) ? tasksWithheldSuffix : ''}';
 
 /// What it shows when the selected provider is configured but no
 /// factory in this build knows its kind.

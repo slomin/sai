@@ -168,6 +168,7 @@ Restore from a replica (#15); do not edit the log.
 | `provider.response` | assistant | the assembled response as received; `model.request_id` and `version` where exposed; `refs` → the request |
 | `provider.failure` | system | a call that produced no answer; `refs` → the request |
 | `provider.usage` | system | tokens and timings, written for every call including failures; `refs` → the request |
+| `policy.decision` | system | the privacy policy's word on a call to a cloud provider, written before its request; the request's `refs` name it — see [policy](#policy-27) |
 | `tool.call` | assistant | `payload.name`, `payload.arguments` |
 | `tool.result` | system | `refs` → the `tool.call` |
 | `archive.correction` | any | `refs` → the corrected event; the payload says what is wrong |
@@ -181,7 +182,10 @@ it (#29 keeps keys in the Keychain).
 ### Provider traffic (#21)
 
 One model call is **three lines, never more**: the request, then either
-the response or the failure, then the usage. Streamed deltas are not
+the response or the failure, then the usage. (A call to a `cloud`-tagged
+provider is additionally announced by a `policy.decision` line written
+before its request — [policy](#policy-27); that line belongs to the
+policy, and the call itself stays three.) Streamed deltas are not
 events — an append is a locked, fsynced line, and a paragraph is not
 worth five hundred of them (ADR
 [0007](../decisions/0007-provider-traffic-is-three-events-per-call.md)).
@@ -189,7 +193,8 @@ worth five hundred of them (ADR
 line's `model` carries the target `{provider, id}`, and the response adds
 `version` and `request_id` where the backend exposes them. `refs` on the
 response, failure and usage lines name the request line (usage also
-names the response, when there is one).
+names the response, when there is one); a request to a cloud provider
+names its decision line.
 
 | type | payload |
 | --- | --- |
@@ -206,6 +211,24 @@ original byte length (a failure `message` is capped at 4 KiB) — a marked
 cut beats a lost record, and it is the one place "raw" is qualified. A
 call the archive itself refuses to record is reported to the caller as
 a failure and is, by definition, not in the log.
+
+### Policy (#27)
+
+Every call to a `cloud`-tagged provider writes exactly one
+`policy.decision` line (actor `system`, `model` naming the same target as
+the request) before its `provider.request`; a call to a `local` provider
+has none (ADR
+[0010](../decisions/0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md)).
+The pairing is the request's `refs`, which names its decision — not
+adjacency: two clients, or two calls in one, may interleave their lines.
+The request records the messages **as sent** — withheld task context
+enters neither the wire nor the log. A decision whose request never
+followed (the archive refused the request line) is a call that was not
+made.
+
+| type | payload |
+| --- | --- |
+| `policy.decision` | `privacy` ∈ `cloud`, `share_tasks` (the switch as it stood), `task_context` ∈ `none` \| `sent` \| `withheld` |
 
 ### Task domain (#17)
 

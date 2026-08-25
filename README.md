@@ -98,6 +98,20 @@ health, models and context window, runs a recorded streaming test (the
 result and llama.cpp tokens/s land in the archive), and enters or
 removes a key. `sai_tui help` lists every command.
 
+Every provider is tagged `local` or `cloud`, and the tag is always on
+the status line and in `provider list`. A cloud provider sees your task
+list only while the switch "Allow cloud providers to see my tasks" is
+on — off by default, in the Providers dialog or `sai_tui privacy
+share-tasks on|off` (`sai_tui privacy` shows it). While it is off the
+status line reads `· tasks withheld`, selecting a cloud provider says
+so, and the assistant answers without the list; each cloud call is
+preceded by a `policy.decision` line in the archive (ADR 0010). An
+`openai_compatible` endpoint counts as `local` on this machine or the
+LAN and `cloud` on any other host; `--privacy local|cloud` overrides
+that when you know better (a tunnel, a reverse proxy). No cloud kind
+exists yet: to try the policy, give the fake one a tag —
+`provider add cloudy --kind fake --privacy cloud`.
+
 For a local test, LM Studio's server (default port 1234) or
 `llama-server -m <model.gguf> --port 8080` work as they are; give
 `llama-server` a key with `--api-key-file`, never `--api-key` (argv is

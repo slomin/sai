@@ -41,6 +41,30 @@ void main() {
       expect(back.provider('nope'), isNull);
     });
 
+    test('privacy is local or cloud, stored and copied', () {
+      final cloudy = ProviderConfig(
+        id: 'cloudy',
+        kind: 'fake',
+        privacy: LlmPrivacy.cloud,
+      );
+      expect(cloudy.toJson()['privacy'], 'cloud');
+      expect(ProviderConfig.fromJson(cloudy.toJson()), cloudy);
+      expect(
+        ProviderConfig(id: 'x', kind: 'fake').toJson(),
+        isNot(contains('privacy')),
+      );
+      expect(cloudy.copyWith(privacy: () => null).privacy, isNull);
+      expect(cloudy.copyWith(kind: 'other').privacy, LlmPrivacy.cloud);
+      // A tag this sai does not know is not a reason to lose the file.
+      final unknown = ProviderConfig.fromJson({
+        'id': 'x',
+        'kind': 'fake',
+        'privacy': 'orbit',
+      });
+      expect(unknown.privacy, isNull);
+      expect(unknown.toJson(), isNot(contains('privacy')));
+    });
+
     test('an empty provider list is not written', () {
       expect(Settings.empty.encode(), '{"llm":null,"version":0}');
     });

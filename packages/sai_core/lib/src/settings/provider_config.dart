@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 
+import '../llm/provider.dart';
 import 'endpoint.dart';
 import 'settings.dart';
 
@@ -15,6 +16,7 @@ final class ProviderConfig {
     this.defaultModel,
     this.credential,
     String? credentialOrigin,
+    this.privacy,
     Map<String, Object?> extra = const {},
   }) : extra = Map.unmodifiable(extra),
        credentialOrigin = _boundOrigin(endpoint, credential, credentialOrigin) {
@@ -97,6 +99,14 @@ final class ProviderConfig {
     return origin == endpointOrigin(uri) ? origin : null;
   }
 
+  /// The privacy tag, when the configuration states one (#27): where the
+  /// inference happens, `local` or `cloud`. Null leaves it to the kind —
+  /// the fake is local, an `openai_compatible` endpoint follows its host
+  /// (`defaultPrivacyFor`). A value this sai does not know is read as
+  /// null, never as a reason to refuse a file (a newer sai may write a
+  /// third tag); it is dropped on the next write.
+  final LlmPrivacy? privacy;
+
   /// Keys this sai does not know, exactly as read.
   final Map<String, Object?> extra;
 
@@ -148,6 +158,7 @@ final class ProviderConfig {
     String? Function()? defaultModel,
     String? Function()? credential,
     String? Function()? credentialOrigin,
+    LlmPrivacy? Function()? privacy,
   }) => ProviderConfig(
     id: id,
     kind: kind ?? this.kind,
@@ -157,6 +168,7 @@ final class ProviderConfig {
     credentialOrigin: credentialOrigin == null
         ? this.credentialOrigin
         : credentialOrigin(),
+    privacy: privacy == null ? this.privacy : privacy(),
     extra: extra,
   );
 
@@ -171,6 +183,7 @@ final class ProviderConfig {
     'default_model',
     'credential',
     'credential_origin',
+    'privacy',
   };
 
   /// Reads one `providers[]` entry. Throws [SettingsFormatException] on a
@@ -196,6 +209,10 @@ final class ProviderConfig {
     if (id == null || kind == null) {
       throw const SettingsFormatException('a provider needs id and kind');
     }
+    final privacyName = optional('privacy');
+    final privacy = privacyName == null
+        ? null
+        : LlmPrivacy.values.asNameMap()[privacyName];
     try {
       return ProviderConfig(
         id: id,
@@ -204,6 +221,7 @@ final class ProviderConfig {
         defaultModel: optional('default_model'),
         credential: optional('credential'),
         credentialOrigin: optional('credential_origin'),
+        privacy: privacy,
         extra: {
           for (final e in json.entries)
             if (!_known.contains(e.key)) e.key: e.value,
@@ -222,6 +240,7 @@ final class ProviderConfig {
     if (defaultModel != null) 'default_model': defaultModel,
     if (credential != null) 'credential': credential,
     if (credentialOrigin != null) 'credential_origin': credentialOrigin,
+    if (privacy != null) 'privacy': privacy!.name,
   });
 
   /// Value equality over the stored form: two configs that would write

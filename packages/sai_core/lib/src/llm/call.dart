@@ -17,15 +17,24 @@ final class LlmMessage {
 }
 
 /// What a caller asks a provider for. Immutable; [messages] is never empty.
+///
+/// [taskContext] is the task list as the caller wants the model to see it,
+/// carried apart from [messages] so the privacy policy (#27) can withhold
+/// it without reading prose. Only the recorder turns it into a message
+/// ([sent]); a provider never sees the field.
 final class LlmRequest {
   LlmRequest({
     required List<LlmMessage> messages,
     this.model,
     this.maxTokens,
     this.temperature,
+    this.taskContext,
   }) : messages = List.unmodifiable(messages) {
     if (messages.isEmpty) {
       throw ArgumentError('a request needs at least one message');
+    }
+    if (taskContext != null && taskContext!.isEmpty) {
+      throw ArgumentError('taskContext, when given, must not be empty');
     }
     if (model != null && model!.isEmpty) {
       throw ArgumentError('model, when given, must not be empty');
@@ -45,6 +54,43 @@ final class LlmRequest {
   final String? model;
   final int? maxTokens;
   final double? temperature;
+
+  /// Personal data the policy may withhold; see the class note.
+  final String? taskContext;
+
+  /// The same request without its task context.
+  LlmRequest withoutTaskContext() => LlmRequest(
+    messages: messages,
+    model: model,
+    maxTokens: maxTokens,
+    temperature: temperature,
+  );
+
+  /// The messages as they go on the wire: [taskContext], when present, as
+  /// a `system` message after any leading system messages and before the
+  /// first other one — instructions first, then the data, then the talk.
+  List<LlmMessage> get sent {
+    final context = taskContext;
+    if (context == null) return messages;
+    var at = 0;
+    while (at < messages.length && messages[at].role == LlmRole.system) {
+      at++;
+    }
+    return List.unmodifiable([
+      ...messages.take(at),
+      LlmMessage(LlmRole.system, context),
+      ...messages.skip(at),
+    ]);
+  }
+
+  /// The request a provider is started with: the [sent] messages and
+  /// no task-context field.
+  LlmRequest assembled() => LlmRequest(
+    messages: sent,
+    model: model,
+    maxTokens: maxTokens,
+    temperature: temperature,
+  );
 }
 
 /// One streamed piece of the answer. A class, not a string: later

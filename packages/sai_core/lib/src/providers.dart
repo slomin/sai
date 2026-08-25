@@ -11,6 +11,7 @@ import 'archive/event.dart';
 import 'llm/factory.dart';
 import 'llm/fake.dart';
 import 'llm/openai_compatible/provider.dart';
+import 'llm/privacy.dart';
 import 'llm/probe.dart';
 import 'llm/provider.dart';
 import 'llm/recorder.dart';
@@ -325,6 +326,24 @@ final activeLlmProvider = Provider<LlmProvider?>((ref) {
   return ref.watch(llmRegistryProvider)[id];
 });
 
+/// The privacy policy (#27) as settings hold it. Read per call by the
+/// recorder, watched by the status line.
+final privacyPolicyProvider = Provider<PrivacyPolicy>(
+  (ref) => PrivacyPolicy(
+    shareTasksWithCloud: ref.watch(
+      settingsProvider.select((s) => s.shareTasksWithCloud),
+    ),
+  ),
+);
+
+/// The warning both clients show for the active provider — a cloud one
+/// while sharing is off — or null when there is nothing to say.
+final activeLlmWarningProvider = Provider<String?>((ref) {
+  final active = ref.watch(activeLlmProvider);
+  if (active == null) return null;
+  return selectionWarning(active, ref.watch(privacyPolicyProvider));
+});
+
 /// The status-bar line naming the active LLM provider and its privacy
 /// tag — the same words in every client (`llm/status.dart`).
 final llmStatusProvider = Provider<String>((ref) {
@@ -340,7 +359,7 @@ final llmStatusProvider = Provider<String>((ref) {
     if (missing != null) return misconfiguredStatus(id, missing);
     return unavailableKindStatus(id, config.kind);
   }
-  return llmStatusLine(active) +
+  return llmStatusLine(active, policy: ref.watch(privacyPolicyProvider)) +
       switch (ref.watch(credentialStatusProvider(id))) {
         CredentialStatus.missing => missingCredentialSuffix,
         CredentialStatus.unavailable => unavailableSecretsSuffix,
@@ -362,13 +381,19 @@ final endpointInfoProvider = FutureProvider.autoDispose
 /// A recorder bound to the archive and this client's source — how a
 /// caller obtains a call that records itself. Deliberately independent
 /// of [activeLlmProvider]: switching never disturbs a running call.
-final llmRecorderProvider = FutureProvider<LlmRecorder>(
-  (ref) async => LlmRecorder(
+final llmRecorderProvider = FutureProvider<LlmRecorder>((ref) async {
+  // The policy is read per call, through the container rather than this
+  // ref: a flipped switch governs the next call without rebuilding the
+  // recorder, and a recorder held across a rebuild (the archive
+  // reopened, say) keeps working instead of tripping on a stale ref.
+  final container = ref.container;
+  return LlmRecorder(
     archive: await ref.watch(archiveProvider.future),
     source: ref.watch(eventSourceProvider),
     clock: ref.watch(clockProvider),
-  ),
-);
+    policy: () => container.read(privacyPolicyProvider),
+  );
+});
 
 /// Loads the settings file once and writes it on every change. One
 /// store per build: it remembers whether the file belongs to a newer sai.
@@ -398,6 +423,10 @@ class SettingsNotifier extends Notifier<Settings> {
   /// configuration is not revoking a key; [CredentialsNotifier.clear]
   /// is.
   void removeProvider(String id) => _commit(state.withoutProvider(id));
+
+  /// Sets the cloud-sharing switch (#27).
+  void setShareTasksWithCloud(bool share) =>
+      _commit(state.withShareTasksWithCloud(share));
 
   void _commit(Settings next) {
     _store.save(next);

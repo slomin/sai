@@ -48,7 +48,11 @@ type; `finish: cancelled` says how it stopped.
 ## Consequences
 
 - The recorder, not the provider, is the single request-assembly point
-  — the privacy policy (#27) hooks there and nowhere else.
+  — the privacy policy (#27) hooks there and nowhere else. Amendment
+  (ADR [0010](0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md)):
+  a call to a `cloud`-tagged provider is preceded by one
+  `policy.decision` line; the three-line rule is unchanged for the call
+  itself, and local calls carry no extra line.
 - Text is bounded to half a line (`maxRecordedTextBytes`) and cut on a
   rune boundary with a `truncated` marker, so "raw" is qualified in
   exactly one documented way; a request that would not fit is refused

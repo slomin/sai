@@ -33,6 +33,40 @@ void main() {
       });
     });
 
+    test('the cloud-sharing switch is off, unwritten, until set', () {
+      expect(Settings.empty.shareTasksWithCloud, isFalse);
+      expect(Settings.decode('{"version":0}').shareTasksWithCloud, isFalse);
+      final on = Settings.empty.withShareTasksWithCloud(true);
+      expect(
+        on.encode(),
+        '{"llm":null,"share_tasks_with_cloud":true,"version":0}',
+      );
+      expect(Settings.decode(on.encode()).shareTasksWithCloud, isTrue);
+      expect(
+        on.withShareTasksWithCloud(false).encode(),
+        Settings.empty.encode(),
+      );
+      // Every copy keeps it.
+      expect(on.withLlm('fake').shareTasksWithCloud, isTrue);
+      expect(
+        on
+            .withProvider(ProviderConfig(id: 'a', kind: 'fake'))
+            .shareTasksWithCloud,
+        isTrue,
+      );
+      expect(on.withoutProvider('a').shareTasksWithCloud, isTrue);
+      expect(
+        () => Settings.decode('{"version":0,"share_tasks_with_cloud":"yes"}'),
+        throwsA(
+          isA<SettingsFormatException>().having(
+            (e) => e.reason,
+            'reason',
+            'share_tasks_with_cloud must be a boolean',
+          ),
+        ),
+      );
+    });
+
     test('withLlm clears a stale problem', () {
       const broken = Settings(problem: 'was unreadable');
       expect(broken.withLlm('fake').problem, isNull);
