@@ -16,7 +16,7 @@ and `test/no_secrets_test.dart` enforce that.
 | `llm` | no | id of the selected provider — a configured one or a built-in (`fake`, `lmstudio`, `lan`; #23) — or `null` for none. While the file does not exist, a first run selects `lmstudio` without writing; once the file exists, its word stands |
 | `providers` | no | list of provider objects, ids unique; omitted when empty |
 | `share_tasks_with_cloud` | no | boolean, the privacy switch (#27, ADR 0010): whether a `cloud`-tagged provider may see the task list. Off when absent, and omitted while off |
-| `reasoning` | no | boolean (#34): whether a model may think before it answers. Off (absent) asks the backend not to (`reasoning_effort: none` on the request) and the clients show no thinking; on lets it and shows it. Omitted while off |
+| `reasoning` | no | boolean (#34): whether a model may think before it answers. Off (absent) asks the backend not to (`reasoning_effort: none` and `chat_template_kwargs: {enable_thinking: false}` on the request) and the clients show no thinking; on lets it and shows it. Omitted while off |
 
 ## Provider object
 

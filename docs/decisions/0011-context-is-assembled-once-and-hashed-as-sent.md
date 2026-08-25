@@ -66,8 +66,11 @@ put the privacy check in the recorder and asked #34 to carry the list on
   128 KiB, marked when cut). One `reasoning` setting — off by default;
   the Providers dialog and View › Enable Reasoning (⌘R) in the app,
   `sai_tui reasoning on|off` — decides whether the model may think at
-  all: off goes on the request as `reasoning_effort: none` (the one
-  switch LM Studio honours for Qwen-family models) and nothing shows;
+  all: off goes on the request as `reasoning_effort: none` (the switch
+  LM Studio honours for Qwen-family models) together with llama.cpp's
+  `chat_template_kwargs: {enable_thinking: false}` (the one the LAN
+  box's `llama-server` reads — #23 measured `reasoning_effort` alone
+  leaving Qwen3.8 thinking) and nothing shows;
   on leaves the model to it and the clients show what it thought. A
   generic endpoint that answers 400 to the switch is asked once more
   without it and not asked again — the request line still records what

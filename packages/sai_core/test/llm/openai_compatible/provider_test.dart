@@ -536,6 +536,12 @@ void main() {
       ),
       [true, false, false],
     );
+    expect(
+      stub.requests.map(
+        (r) => (jsonDecode(r.body) as Map).containsKey('chat_template_kwargs'),
+      ),
+      [true, false, false],
+    );
     await provider.close();
   });
 
@@ -548,6 +554,16 @@ void main() {
     expect(
       stub.requests.map((r) => (jsonDecode(r.body) as Map)['reasoning_effort']),
       ['none', null],
+    );
+    // llama-server reads the template switch, not reasoning_effort (#23).
+    expect(
+      stub.requests.map(
+        (r) => (jsonDecode(r.body) as Map)['chat_template_kwargs'],
+      ),
+      [
+        {'enable_thinking': false},
+        null,
+      ],
     );
     await provider.close();
   });

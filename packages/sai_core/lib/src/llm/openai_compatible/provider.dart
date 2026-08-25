@@ -185,8 +185,14 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       'stream_options': {'include_usage': true},
       if (request.maxTokens != null) 'max_tokens': request.maxTokens,
       if (request.temperature != null) 'temperature': request.temperature,
-      if (request.reasoning == false && !_reasoningRefused)
+      // Off, said both ways: OpenAI's word (LM Studio, and llama.cpp on
+      // master) and the template switch llama-server actually reads on
+      // the LAN box (#23) — measured: reasoning_effort alone leaves
+      // Qwen3.8 thinking there.
+      if (request.reasoning == false && !_reasoningRefused) ...{
         'reasoning_effort': 'none',
+        'chat_template_kwargs': {'enable_thinking': false},
+      },
     });
 
     final HttpClientResponse response;
@@ -229,8 +235,9 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       );
     }
     if (status == 400 && request.reasoning != null && !_reasoningRefused) {
-      // A generic endpoint that does not know `reasoning_effort` answers
-      // 400; ask once more without it and remember, so the next call
+      // A generic endpoint that does not know `reasoning_effort` or
+      // `chat_template_kwargs` answers 400; ask once more without them
+      // and remember, so the next call
       // goes straight through. The caller's wish is on the request line
       // either way; what the backend understood is its own affair.
       _reasoningRefused = true;

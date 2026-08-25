@@ -57,7 +57,8 @@ final class Settings {
   final bool shareTasksWithCloud;
 
   /// Whether a model may think before it answers (#34): off asks the
-  /// backend not to (`reasoning_effort: none`) and the clients show no
+  /// backend not to (`reasoning_effort: none` and llama.cpp's
+  /// `chat_template_kwargs.enable_thinking`) and the clients show no
   /// thinking; on lets it, and the clients show what it thought. Off by
   /// default: faster, and the answer is what matters.
   final bool reasoningOn;
