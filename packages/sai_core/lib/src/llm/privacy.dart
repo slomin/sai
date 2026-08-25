@@ -85,9 +85,12 @@ final class PolicyDecision {
   String toString() => 'PolicyDecision(${toJson()})';
 }
 
+/// What both clients say of a provider operating without the task list.
+const tasksWithheldWord = 'tasks withheld';
+
 /// Appended to the status line while the active provider operates
 /// without the task list.
-const tasksWithheldSuffix = ' · tasks withheld';
+const tasksWithheldSuffix = ' · $tasksWithheldWord';
 
 /// The one-line warning both clients show when a cloud provider is
 /// selected while sharing is off.

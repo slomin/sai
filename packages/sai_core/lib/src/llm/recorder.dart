@@ -4,6 +4,7 @@ import 'dart:convert';
 import '../archive/archive.dart';
 import '../archive/blobref.dart';
 import '../archive/event.dart';
+import '../context/hash.dart';
 import '../settings/endpoint.dart';
 import 'call.dart';
 import 'failure.dart';
@@ -17,6 +18,10 @@ const maxRecordedTextBytes = 512 << 10;
 
 /// The most of a failure message that is recorded.
 const maxRecordedMessageBytes = 4 << 10;
+
+/// The most reasoning a response line keeps — a quarter of the text
+/// cap, so thinking never crowds out the answer it led to.
+const maxRecordedReasoningBytes = 128 << 10;
 
 /// The single write path for provider traffic: every call through here
 /// lands in the archive as a request line, a response or failure line,
@@ -58,7 +63,8 @@ final class LlmRecorder {
         ? request.withoutTaskContext()
         : request;
     final sent = governed.assembled();
-    final payload = _requestPayload(sent);
+    final hash = contextHash(sent.messages);
+    final payload = _requestPayload(sent, hash);
     if (utf8.encode(jsonEncode(payload)).length > maxRecordedTextBytes) {
       throw ArgumentError(
         'request exceeds $maxRecordedTextBytes bytes and would not be '
@@ -116,6 +122,7 @@ final class LlmRecorder {
       stored.id,
       call,
       decision: decided,
+      contextHash: hash,
       taskContextWithheld: decision?.withheld ?? false,
     );
     unawaited(_record(recorded, started));
@@ -161,7 +168,10 @@ final class LlmRecorder {
             result.text,
             omitEmpty: true,
           )
-        : _fitted({'finish': result.finish.name}, result.text);
+        : _fitted({
+            'finish': result.finish.name,
+            ..._reasoningFields(result.reasoning),
+          }, result.text);
     final outcome = EventDraft(
       type: failed ? EventTypes.providerFailure : EventTypes.providerResponse,
       actor: failed ? Actor.system : Actor.assistant,
@@ -219,6 +229,19 @@ final class LlmRecorder {
     );
   }
 
+  /// `reasoning`, clipped to [maxRecordedReasoningBytes] with
+  /// `reasoning_truncated` holding the original length when cut; nothing
+  /// when the backend sent none.
+  static Map<String, Object?> _reasoningFields(String? reasoning) {
+    if (reasoning == null) return const {};
+    final clipped = _clipBytes(reasoning, maxRecordedReasoningBytes);
+    return {
+      'reasoning': clipped,
+      if (clipped.length != reasoning.length)
+        'reasoning_truncated': utf8.encode(reasoning).length,
+    };
+  }
+
   /// The origin of [endpoint] — `scheme://host[:port]` — and nothing
   /// else: a path, userinfo, query or fragment can carry a key, and a
   /// failure line is permanent. What does not parse as a URL is written
@@ -231,10 +254,16 @@ final class LlmRecorder {
     return endpointOrigin(uri);
   }
 
-  static Map<String, Object?> _requestPayload(LlmRequest request) => {
+  /// The request as sent plus `context_hash`, the blobref of its
+  /// messages (ADR 0011).
+  static Map<String, Object?> _requestPayload(
+    LlmRequest request,
+    BlobRef hash,
+  ) => {
     'messages': [for (final m in request.messages) m.toJson()],
     if (request.maxTokens != null) 'max_tokens': request.maxTokens,
     if (request.temperature != null) 'temperature': request.temperature,
+    'context_hash': hash.toString(),
   };
 
   /// [base] plus `text`, cut on a rune boundary until the whole payload
@@ -292,6 +321,7 @@ final class RecordedCall {
     this.request,
     this._call, {
     required this.decision,
+    required this.contextHash,
     required this.taskContextWithheld,
   });
 
@@ -299,6 +329,7 @@ final class RecordedCall {
   final _deltas = StreamController<LlmDelta>.broadcast();
   final _done = Completer<LlmResult>();
   final _text = StringBuffer();
+  final _reasoning = StringBuffer();
 
   /// Id of the `provider.request` line — known before the first delta.
   final BlobRef request;
@@ -306,6 +337,10 @@ final class RecordedCall {
   /// Id of the `policy.decision` line; null for a local provider, which
   /// has none.
   final BlobRef? decision;
+
+  /// The `context_hash` on the request line: the blobref of the messages
+  /// as sent, policy applied (ADR 0011).
+  final BlobRef contextHash;
 
   /// Whether the policy dropped the request's task context: the
   /// assistant is answering without the list.
@@ -333,6 +368,9 @@ final class RecordedCall {
   /// What has arrived so far — for a listener that attaches late.
   String get text => _text.toString();
 
+  /// The reasoning so far, kept apart from [text].
+  String get reasoning => _reasoning.toString();
+
   /// Completes after the archive writes, so a caller that awaits this can
   /// read the log immediately. Never completes with an error: an archive
   /// that refuses a line makes the result a failure of kind
@@ -347,7 +385,7 @@ final class RecordedCall {
   void cancel() => _call.cancel();
 
   void _add(LlmDelta delta) {
-    _text.write(delta.text);
+    (delta.reasoning ? _reasoning : _text).write(delta.text);
     _deltas.add(delta);
   }
 

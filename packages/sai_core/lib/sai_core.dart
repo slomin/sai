@@ -6,6 +6,8 @@ library;
 
 export 'src/app_info.dart';
 export 'src/archive.dart';
+export 'src/chat.dart';
+export 'src/context.dart';
 export 'src/llm.dart';
 export 'src/providers.dart';
 export 'src/secrets.dart';

@@ -96,9 +96,13 @@ final class LlmRequest {
 /// One streamed piece of the answer. A class, not a string: later
 /// tickets add other kinds of deltas without touching every client.
 final class LlmDelta {
-  const LlmDelta(this.text);
+  const LlmDelta(this.text, {this.reasoning = false});
 
   final String text;
+
+  /// The model thinking aloud before it answers (LM Studio, DeepSeek and
+  /// kin send it apart from the answer). Never part of [LlmResult.text].
+  final bool reasoning;
 }
 
 /// Token counts and timings as the backend reports them; every field is
@@ -138,7 +142,11 @@ final class LlmResult {
     required this.model,
     this.usage,
     this.failure,
+    this.reasoning,
   }) {
+    if (reasoning != null && reasoning!.isEmpty) {
+      throw ArgumentError('reasoning must be null or non-empty');
+    }
     if ((finish == LlmFinish.failed) != (failure != null)) {
       throw ArgumentError(
         'a result carries a failure exactly when its finish is failed '
@@ -158,6 +166,9 @@ final class LlmResult {
 
   /// Non-null iff [finish] is [LlmFinish.failed].
   final LlmFailure? failure;
+
+  /// The reasoning deltas joined, where the backend sent any.
+  final String? reasoning;
 
   @override
   String toString() =>
@@ -199,6 +210,7 @@ final class LlmCallController {
   final _deltas = StreamController<LlmDelta>();
   final _done = Completer<LlmResult>();
   final _text = StringBuffer();
+  final _reasoning = StringBuffer();
 
   late final LlmCall call;
 
@@ -212,11 +224,23 @@ final class LlmCallController {
   /// The text emitted so far.
   String get text => _text.toString();
 
+  /// The reasoning emitted so far; null when there was none — the form
+  /// [LlmResult.reasoning] takes.
+  String? get reasoning => _reasoning.isEmpty ? null : _reasoning.toString();
+
   /// Emits one delta. Ignored once the call is done.
   void add(String text) {
     if (isDone) return;
     _text.write(text);
     _deltas.add(LlmDelta(text));
+  }
+
+  /// Emits one reasoning delta, kept apart from [text]. Ignored once
+  /// the call is done.
+  void addReasoning(String text) {
+    if (isDone) return;
+    _reasoning.write(text);
+    _deltas.add(LlmDelta(text, reasoning: true));
   }
 
   /// Ends the call. The first call wins; later ones are ignored.
@@ -265,6 +289,7 @@ final class LlmCallController {
         model: model,
         usage: usage,
         failure: LlmFailure(LlmFailureKind.internal, message),
+        reasoning: reasoning,
       ),
     );
   }
@@ -278,6 +303,7 @@ final class LlmCallController {
         finish: LlmFinish.cancelled,
         model: model,
         usage: usage,
+        reasoning: reasoning,
       ),
     );
     onCancel?.call();

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:sai_core/sai_core.dart';
+import 'package:sai_core/src/llm/openai_compatible/chunks.dart';
 import 'package:sai_core/src/llm/openai_compatible/policy.dart';
 import 'package:test/test.dart';
 
@@ -455,6 +456,53 @@ void main() {
       TransportText.threw(StateError('sk-x http://u@h')),
       'transport threw: StateError',
     );
+  });
+  test('reasoning deltas are kept apart from the answer (#34)', () async {
+    stub.routes['POST /v1/chat/completions'] = (req) async {
+      final response = req.response;
+      response.headers.contentType = ContentType('text', 'event-stream');
+      response.bufferOutput = false;
+      StubServer.event(response, StubServer.chunk('', reasoning: 'let me '));
+      StubServer.event(response, StubServer.chunk('', reasoning: 'think'));
+      StubServer.event(response, StubServer.chunk('ready.'));
+      StubServer.event(response, {
+        'id': 'chatcmpl-1',
+        'object': 'chat.completion.chunk',
+        'model': 'm',
+        'choices': [
+          {'index': 0, 'delta': <String, Object?>{}, 'finish_reason': 'stop'},
+        ],
+      });
+      StubServer.event(response, '[DONE]', json: false);
+      await response.close();
+    };
+    final provider = make();
+    final call = provider.start(ask('go'));
+    final deltas = await call.deltas.toList();
+    final result = await call.done;
+    expect(deltas.map((d) => (d.text, d.reasoning)), [
+      ('let me ', true),
+      ('think', true),
+      ('ready.', false),
+    ]);
+    expect(result.text, 'ready.');
+    expect(result.reasoning, 'let me think');
+    await provider.close();
+  });
+
+  test('ChatChunk.parse reads reasoning_content and reasoning', () {
+    expect(
+      ChatChunk.parse('{"choices":[{"delta":{"reasoning_content":"hm"}}]}')
+          .reasoning,
+      'hm',
+    );
+    expect(
+      ChatChunk.parse('{"choices":[{"delta":{"reasoning":"hm2"}}]}').reasoning,
+      'hm2',
+    );
+    final plain = ChatChunk.parse('{"choices":[{"delta":{"content":"a"}}]}');
+    expect(plain.reasoning, isNull);
+    expect(plain.content, 'a');
   });
 }
 

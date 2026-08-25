@@ -70,7 +70,12 @@ void main() {
         {'role': 'user', 'text': 'hello world'},
       ],
       'temperature': 0.2,
+      'context_hash': call.contextHash.toString(),
     });
+    expect(
+      call.contextHash,
+      contextHash(const [LlmMessage(LlmRole.user, 'hello world')]),
+    );
     expect(request['model'], {'provider': 'fake', 'id': 'fake-1'});
     expect(request.containsKey('refs'), isFalse);
 
@@ -142,7 +147,13 @@ void main() {
         'messages': [
           {'role': 'user', 'text': 'due?'},
         ],
+        'context_hash': call.contextHash.toString(),
       });
+      // The hash names what was sent, so a withheld list changes it.
+      expect(
+        call.contextHash,
+        contextHash(const [LlmMessage(LlmRole.user, 'due?')]),
+      );
       expect(jsonEncode(log), isNot(contains('buy milk')));
     });
 
@@ -163,7 +174,9 @@ void main() {
           {'role': 'system', 'text': 'Today: buy milk'},
           {'role': 'user', 'text': 'due?'},
         ],
+        'context_hash': call.contextHash.toString(),
       });
+      expect(call.contextHash, contextHash(withTasks('due?').sent));
     });
 
     test('a cloud call without context still records the decision', () async {
@@ -430,6 +443,41 @@ void main() {
     final call = await recorder.start(fake, ask('x'));
     expect(fake.linesAtStart, 1);
     await call.done;
+  });
+  test('reasoning is recorded beside the answer, apart from it', () async {
+    final call = await recorder.start(
+      FakeLlmProvider(
+        script: (_) => 'ready.',
+        reasoning: (_) => 'let me think',
+      ),
+      ask('go'),
+    );
+    final kinds = <bool>[];
+    call.deltas.listen((d) => kinds.add(d.reasoning));
+    final result = await call.done;
+    expect(kinds, [true, true, true, false]);
+    expect(call.reasoning, 'let me think');
+    expect(call.text, 'ready.');
+    expect(result.reasoning, 'let me think');
+    final response = lines()[1];
+    expect(response['type'], 'provider.response');
+    expect(response['payload'], {
+      'text': 'ready.',
+      'finish': 'stop',
+      'reasoning': 'let me think',
+    });
+  });
+
+  test('long reasoning is clipped with a marker', () async {
+    final long = 'y' * (maxRecordedReasoningBytes + 10);
+    final call = await recorder.start(
+      FakeLlmProvider(script: (_) => 'ok', reasoning: (_) => long),
+      ask('go'),
+    );
+    await call.done;
+    final payload = lines()[1]['payload']! as Map;
+    expect((payload['reasoning'] as String).length, maxRecordedReasoningBytes);
+    expect(payload['reasoning_truncated'], long.length);
   });
 }
 

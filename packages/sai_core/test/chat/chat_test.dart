@@ -1,0 +1,346 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:riverpod/misc.dart' show Override;
+import 'package:riverpod/riverpod.dart';
+import 'package:sai_core/sai_core.dart';
+import 'package:test/test.dart';
+
+/// A fake that answers with what it was shown: `role:text` per message,
+/// so a test can prove the list reached (or did not reach) the model.
+String echo(LlmRequest r) =>
+    r.messages.map((m) => '${m.role.name}:${m.text}').join(' | ');
+
+void main() {
+  late Directory tmp;
+  late FakeLlmProvider fake;
+
+  setUp(() {
+    tmp = Directory.systemTemp.createTempSync('sai_chat_test');
+    fake = FakeLlmProvider(script: echo);
+  });
+  tearDown(() => tmp.deleteSync(recursive: true));
+
+  Future<ProviderContainer> make({List<Override> overrides = const []}) async {
+    final container = ProviderContainer.test(
+      overrides: [
+        archiveRootProvider.overrideWithValue(Directory('${tmp.path}/archive')),
+        settingsFileProvider.overrideWithValue(
+          File('${tmp.path}/settings.json'),
+        ),
+        eventSourceProvider.overrideWithValue('sai/test'),
+        secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+        builtinLlmsProvider.overrideWithValue([() => fake]),
+        todayProvider.overrideWith(_FixedToday.new),
+        ...overrides,
+      ],
+    );
+    await container.read(tasksProvider.future);
+    final store = container.read(tasksProvider.notifier).store;
+    await store.createTask(
+      title: 'Call mom',
+      when: const TaskWhen.date(CalendarDate(2026, 8, 25)),
+    );
+    await store.createTask(
+      title: 'Ring dentist',
+      when: const TaskWhen.date(CalendarDate(2026, 8, 26)),
+    );
+    container.read(settingsProvider.notifier).selectLlm('fake');
+    return container;
+  }
+
+  List<Map<String, Object?>> lines() {
+    final dir = Directory('${tmp.path}/archive/events');
+    final files = dir.listSync().whereType<File>().toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+    return [
+      for (final file in files)
+        for (final line in file.readAsStringSync().split('\n'))
+          if (line.isNotEmpty) jsonDecode(line) as Map<String, Object?>,
+    ];
+  }
+
+  test(
+    'a turn is recorded around its call and the model saw the list',
+    () async {
+      final container = await make();
+      final chat = container.read(chatProvider.notifier);
+      await chat.send('  what is due today?  ');
+
+      final state = container.read(chatProvider);
+      expect(state.busy, isFalse);
+      expect(state.error, isNull);
+      expect(state.turns.map((t) => t.role), [
+        ChatRole.user,
+        ChatRole.assistant,
+      ]);
+      expect(state.turns[0].text, 'what is due today?');
+      expect(state.turns[0].event, isNotNull);
+      final answer = state.turns[1];
+      expect(answer.text, contains('system:$defaultProfile'));
+      expect(answer.text, contains('Call mom @today'));
+      expect(answer.text, contains('Ring dentist @tomorrow'));
+      expect(answer.text, endsWith('user:what is due today?'));
+      expect(answer.finish, LlmFinish.stop);
+      expect(answer.failed, isFalse);
+      expect(answer.tasksWithheld, isFalse);
+
+      final log = lines().where((l) => l['type'] != 'task.create').toList();
+      expect(log.map((l) => l['type']), [
+        'chat.message',
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+        'chat.message',
+      ]);
+      expect(log[0]['actor'], 'user');
+      expect(log[0]['payload'], {'text': 'what is due today?'});
+      final request = log[1]['payload']! as Map<String, Object?>;
+      final sentMessages = request['messages']! as List;
+      expect(sentMessages[1], {
+        'role': 'system',
+        'text': taskContextFor(
+          container.read(tasksProvider).value!,
+          const CalendarDate(2026, 8, 25),
+        ),
+      });
+      expect(request['context_hash'], startsWith('sha256-'));
+      expect(request['max_tokens'], defaultContextBudget.replyReserve);
+      final said = log[4];
+      expect(said['actor'], 'assistant');
+      expect(said['model'], {
+        'provider': 'fake',
+        'id': 'fake-1',
+        'version': 'fake-1',
+        'request_id': 'fake-req-1',
+      });
+      expect(said['payload'], {'text': answer.text, 'finish': 'stop'});
+      expect(answer.event, isNotNull);
+      // The assistant line names its response line (raw index: two
+      // task.create lines, then user, request, response).
+      final responseId = Event.decodeLine(_rawLines(tmp)[4]).deriveId();
+      expect(said['refs'], [responseId.toString()]);
+    },
+  );
+
+  test('the conversation carries forward', () async {
+    final container = await make();
+    final chat = container.read(chatProvider.notifier);
+    await chat.send('first');
+    await chat.send('second');
+    final last = container.read(chatProvider).turns.last.text;
+    expect(last, contains('user:first'));
+    expect(last, contains('assistant:system:'));
+    expect(last, endsWith('user:second'));
+    expect(container.read(chatProvider).turns, hasLength(4));
+  });
+
+  test('the answer streams into the state before it is done', () async {
+    fake = FakeLlmProvider(
+      script: (_) => 'alpha beta gamma delta',
+      delta: const Duration(milliseconds: 10),
+    );
+    final container = await make();
+    final seen = <String>[];
+    container.listen(chatProvider, (_, next) {
+      if (next.streaming != null) seen.add(next.streaming!);
+    });
+    await container.read(chatProvider.notifier).send('go');
+    expect(seen, contains('alpha '));
+    expect(seen, contains('alpha beta '));
+    expect(seen.last, 'alpha beta gamma delta');
+    expect(container.read(chatProvider).streaming, isNull);
+  });
+
+  test('cancel keeps the partial answer, marked cancelled', () async {
+    fake = FakeLlmProvider(
+      script: (_) => List.filled(50, 'x').join(' '),
+      delta: const Duration(milliseconds: 20),
+    );
+    final container = await make();
+    final chat = container.read(chatProvider.notifier);
+    final sending = chat.send('go');
+    await Future<void>.delayed(const Duration(milliseconds: 70));
+    expect(container.read(chatProvider).busy, isTrue);
+    chat.cancel();
+    await sending;
+    final state = container.read(chatProvider);
+    expect(state.busy, isFalse);
+    final answer = state.turns.last;
+    expect(answer.finish, LlmFinish.cancelled);
+    expect(answer.text, isNotEmpty);
+    expect(answer.text.length, lessThan(99));
+    final said = lines().last;
+    expect(said['type'], 'chat.message');
+    expect(said['payload'], {'text': answer.text, 'finish': 'cancelled'});
+  });
+
+  test('a failed call is a failed turn with no assistant line', () async {
+    fake = FakeLlmProvider(
+      failWith: const LlmFailure(
+        LlmFailureKind.unreachable,
+        'nothing answered at the endpoint',
+        endpoint: 'http://localhost:1',
+      ),
+    );
+    final container = await make();
+    await container.read(chatProvider.notifier).send('go');
+    final state = container.read(chatProvider);
+    expect(state.busy, isFalse);
+    final answer = state.turns.last;
+    expect(answer.failed, isTrue);
+    expect(answer.failure!.kind, LlmFailureKind.unreachable);
+    expect(answer.event, isNull);
+    final types = lines()
+        .map((l) => l['type'])
+        .where((t) => t != 'task.create');
+    expect(types, [
+      'chat.message',
+      'provider.request',
+      'provider.failure',
+      'provider.usage',
+    ]);
+  });
+
+  test(
+    'reasoning streams apart from the answer and lands on the turn',
+    () async {
+      fake = FakeLlmProvider(
+        script: (_) => 'ready.',
+        reasoning: (_) => 'let me think',
+        delta: const Duration(milliseconds: 5),
+      );
+      final container = await make();
+      final thoughts = <String>[];
+      final answers = <String>[];
+      container.listen(chatProvider, (_, next) {
+        if (next.reasoning != null) thoughts.add(next.reasoning!);
+        if (next.streaming != null && next.streaming!.isNotEmpty) {
+          answers.add(next.streaming!);
+        }
+      });
+      await container.read(chatProvider.notifier).send('go');
+      expect(thoughts, contains('let '));
+      expect(thoughts.last, 'let me think');
+      expect(answers.last, 'ready.');
+      final turn = container.read(chatProvider).turns.last;
+      expect(turn.text, 'ready.');
+      expect(turn.reasoning, 'let me think');
+      expect(container.read(chatProvider).reasoning, isNull);
+      expect(container.read(showReasoningProvider), isFalse);
+      container.read(settingsProvider.notifier).setShowReasoning(true);
+      expect(container.read(showReasoningProvider), isTrue);
+    },
+  );
+
+  group('with a cloud provider', () {
+    setUp(() {
+      fake = FakeLlmProvider(
+        id: 'cloudy',
+        privacy: LlmPrivacy.cloud,
+        script: echo,
+      );
+    });
+
+    test('sharing off withholds the list and says so', () async {
+      final container = await make();
+      container.read(settingsProvider.notifier).selectLlm('cloudy');
+      await container.read(chatProvider.notifier).send('due?');
+      final state = container.read(chatProvider);
+      final answer = state.turns.last;
+      expect(answer.tasksWithheld, isTrue);
+      expect(answer.text, isNot(contains('Call mom')));
+      expect(answer.text, contains('system:$defaultProfile'));
+      final types = lines()
+          .map((l) => l['type'])
+          .where((t) => t != 'task.create');
+      expect(types.first, 'chat.message');
+      expect(types.elementAt(1), 'policy.decision');
+      expect(jsonEncode(lines()), isNot(contains('Call mom @today')));
+    });
+
+    test('sharing on sends it', () async {
+      final container = await make();
+      final settings = container.read(settingsProvider.notifier);
+      settings.selectLlm('cloudy');
+      settings.setShareTasksWithCloud(true);
+      await container.read(chatProvider.notifier).send('due?');
+      final answer = container.read(chatProvider).turns.last;
+      expect(answer.tasksWithheld, isFalse);
+      expect(answer.text, contains('Call mom @today'));
+    });
+  });
+
+  group('refuses', () {
+    test('a second send while one runs', () async {
+      fake = FakeLlmProvider(
+        script: (_) => 'a b c',
+        delta: const Duration(milliseconds: 30),
+      );
+      final container = await make();
+      final chat = container.read(chatProvider.notifier);
+      final first = chat.send('one');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await chat.send('two');
+      expect(container.read(chatProvider).error, chatBusyError);
+      await first;
+      expect(container.read(chatProvider).turns, hasLength(2));
+      chat.clearError();
+      expect(container.read(chatProvider).error, isNull);
+    });
+
+    test('a second send in the same tick, before any await', () async {
+      // A terminal can deliver one Enter twice; the second must not race
+      // the first to the recorder (it did: two user lines, one call).
+      fake = FakeLlmProvider(
+        script: (_) => 'a b c',
+        delta: const Duration(milliseconds: 10),
+      );
+      final container = await make();
+      final chat = container.read(chatProvider.notifier);
+      final first = chat.send('one');
+      final second = chat.send('one');
+      expect(container.read(chatProvider).busy, isTrue);
+      expect(container.read(chatProvider).error, chatBusyError);
+      await Future.wait([first, second]);
+      expect(container.read(chatProvider).turns, hasLength(2));
+      final types = lines()
+          .map((l) => l['type'])
+          .where((t) => t != 'task.create');
+      expect(types.where((t) => t == 'provider.request'), hasLength(1));
+      expect(types.where((t) => t == 'chat.message'), hasLength(2));
+    });
+
+    test('without a provider', () async {
+      final container = await make();
+      container.read(settingsProvider.notifier).selectLlm(null);
+      await container.read(chatProvider.notifier).send('hi');
+      expect(container.read(chatProvider).error, noProviderStatus);
+      expect(container.read(chatProvider).turns, isEmpty);
+    });
+
+    test('a blank line silently', () async {
+      final container = await make();
+      await container.read(chatProvider.notifier).send('   ');
+      expect(container.read(chatProvider).error, isNull);
+      expect(container.read(chatProvider).turns, isEmpty);
+    });
+  });
+}
+
+List<String> _rawLines(Directory tmp) {
+  final dir = Directory('${tmp.path}/archive/events');
+  final files = dir.listSync().whereType<File>().toList()
+    ..sort((a, b) => a.path.compareTo(b.path));
+  return [
+    for (final file in files)
+      for (final line in file.readAsStringSync().split('\n'))
+        if (line.isNotEmpty) line,
+  ];
+}
+
+class _FixedToday extends TodayNotifier {
+  @override
+  CalendarDate build() => const CalendarDate(2026, 8, 25);
+}

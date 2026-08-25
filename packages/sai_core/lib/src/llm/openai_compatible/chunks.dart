@@ -10,6 +10,7 @@ final class ChatChunk {
     this.id,
     this.model,
     this.content,
+    this.reasoning,
     this.finishReason,
     this.usage,
     this.tokensPerSecond,
@@ -19,9 +20,13 @@ final class ChatChunk {
   final String? id;
   final String? model;
 
-  /// `choices[0].delta.content`. Reasoning deltas (`reasoning_content`)
-  /// are not the answer and are left out.
+  /// `choices[0].delta.content` — the answer.
   final String? content;
+
+  /// `choices[0].delta.reasoning_content` (LM Studio, DeepSeek) or
+  /// `delta.reasoning` (OpenRouter and others): the model thinking
+  /// aloud, kept apart from the answer.
+  final String? reasoning;
 
   /// `choices[0].finish_reason`, e.g. `stop`, `length`.
   final String? finishReason;
@@ -56,11 +61,14 @@ final class ChatChunk {
       if (c is Map<String, Object?>) first = c;
     }
     String? content;
+    String? reasoning;
     String? finish;
     if (first != null) {
       final delta = first['delta'];
-      if (delta is Map<String, Object?> && delta['content'] is String) {
-        content = delta['content'] as String;
+      if (delta is Map<String, Object?>) {
+        if (delta['content'] is String) content = delta['content'] as String;
+        final thought = delta['reasoning_content'] ?? delta['reasoning'];
+        if (thought is String) reasoning = thought;
       }
       if (first['finish_reason'] is String) {
         finish = first['finish_reason'] as String;
@@ -85,6 +93,7 @@ final class ChatChunk {
       id: json['id'] is String ? json['id'] as String : null,
       model: json['model'] is String ? json['model'] as String : null,
       content: content,
+      reasoning: reasoning,
       finishReason: finish,
       usage: usage,
       tokensPerSecond: tps,

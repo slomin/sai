@@ -147,6 +147,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
           model: controller.model,
           usage: controller.usage,
           failure: failure,
+          reasoning: controller.reasoning,
         ),
       );
     }
@@ -284,6 +285,10 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
               controller.usage = merged();
             }
             if (chunk.finishReason != null) finish = chunk.finishReason;
+            final thought = chunk.reasoning;
+            if (thought != null && thought.isNotEmpty) {
+              controller.addReasoning(thought);
+            }
             final text = chunk.content;
             if (text != null && text.isNotEmpty) controller.add(text);
           },
@@ -321,6 +326,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     controller.finish(
       LlmResult(
         text: controller.text,
+        reasoning: controller.reasoning,
         finish: finish == 'length' ? LlmFinish.length : LlmFinish.stop,
         // Lineage is what was asked for; the request id is the backend's.
         model: ModelRef(

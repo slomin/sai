@@ -27,12 +27,22 @@ void main() {
     }
   });
 
-  test('every provider and policy registry row has a constant', () {
+  test('every provider, policy and chat registry row has a constant', () {
     final row = RegExp(
-      r'^\| `((?:provider|policy)\.[a-z0-9_.]+)` \|',
+      r'^\| `((?:provider|policy|chat)\.[a-z0-9_.]+)` \|',
       multiLine: true,
     );
     final documented = row.allMatches(spec).map((m) => m[1]!).toSet();
-    expect(documented, {...EventTypes.provider, EventTypes.policyDecision});
+    expect(documented, {
+      ...EventTypes.provider,
+      EventTypes.policyDecision,
+      ...EventTypes.chat,
+    });
+  });
+
+  test('every chat event type has a registry row', () {
+    for (final type in EventTypes.chat) {
+      expect(spec.contains('| `$type` |'), isTrue, reason: type);
+    }
   });
 }
