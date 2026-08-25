@@ -395,6 +395,42 @@ void main() {
       await release(tester, container);
     });
 
+    testWidgets('a built-in endpoint can be refreshed and tested (#23)', (
+      tester,
+    ) async {
+      stub.words = ['ready'];
+      final container = await pumpApp(
+        tester,
+        builtins: [
+          FakeLlmProvider.new,
+          () => OpenAiCompatibleProvider(
+            id: 'lan',
+            endpoint: Uri.parse(stub.v1),
+            defaultModel: 'qwen',
+            secrets: InMemorySecretStore(),
+          ),
+        ],
+      );
+      await open(tester);
+      await tester.tap(find.byKey(providerRowKey('lan')));
+      await tester.pump();
+      await until(tester, () => find.text('asking…').evaluate().isEmpty);
+      expect(find.text('ok · 2 models · context unavailable'), findsOneWidget);
+      await tester.tap(find.text('Test'));
+      await until(
+        tester,
+        () => find.textContaining('tokens/s').evaluate().isNotEmpty,
+      );
+      expect(find.text('ready'), findsOneWidget);
+      expect(
+        archiveLines(container.read(archiveRootProvider))
+            .where((l) => l.contains('"provider.')),
+        hasLength(3),
+      );
+      await container.read(llmRegistryProvider)['lan']!.close();
+      await tester.pump();
+    });
+
     testWidgets('Test streams the fixed prompt through the recorder', (
       tester,
     ) async {
