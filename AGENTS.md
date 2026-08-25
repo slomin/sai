@@ -88,7 +88,10 @@ the layout and the toolchain; this file has the rules.
   `bin/cache` is a per-machine `sandbox.filesystem.allowWrite` in the
   ignored `.claude/settings.local.json`. The `/sandbox` panel writes
   that same local file and can switch the sandbox off for you; the
-  deny lists still hold.
+  deny lists still hold. One consequence: the sandbox refuses to
+  rewrite `.claude/settings.json`, so a sandboxed `git rebase` or
+  `checkout` that would touch it fails part-way — edit that file with
+  the Edit tool and leave history rewrites to a terminal.
 - Outbound HTTP goes only through `OpenAiCompatibleProvider`'s transport
   in `sai_core` (ADR 0009): no redirects, no proxy, no certificate
   bypass, plaintext only to this machine or the LAN (ADR 0012), fixed
