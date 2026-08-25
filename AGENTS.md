@@ -18,6 +18,26 @@ the layout and the toolchain; this file has the rules.
   `nocterm`) before changing state management or UI code, and cite what
   you relied on in the PR.
 
+## Manual smoke
+
+- A user-facing change gets a live pass on top of the tests, in a scratch
+  env — never the real data dirs:
+  `SAI_ARCHIVE_ROOT=<dir>/archive SAI_SETTINGS_FILE=<dir>/settings.json`.
+  Seed settings with the TUI CLI (`dart run apps/sai_tui/bin/sai_tui.dart
+  provider add …`) *before* launching the app: it reads the file once.
+- Drive the app yourself; do not hand the clicks to a person.
+  `tool/smoke/drive.sh launch <dir>` starts the debug bundle with that env
+  (`open` drops env vars), `shot` captures the sai window, `click x y`
+  posts a real mouse click at window-relative points (System Events'
+  `click at` never reaches Flutter), `quit` closes it. Re-read the window
+  frame before clicking and never click into another app.
+- Evidence is the archive and the settings file after the pass plus a
+  screenshot per step; put the results, not the claim, in the PR. A fake
+  provider with a dummy loopback `endpoint` gets the dialog's `Test`
+  button without dialling anything.
+- Nothing in a smoke touches the login Keychain unless the ticket is
+  about keys — and then say so before launching.
+
 ## Boundaries
 
 - `sai_core` never imports Flutter or `dart:ui`, and never a client. Its
