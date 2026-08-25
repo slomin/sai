@@ -12,6 +12,7 @@ void main() {
   late Directory tmp;
   late Archive archive;
   late LlmRecorder recorder;
+  var policy = const PrivacyPolicy();
 
   var nowMicros = DateTime.utc(2026, 8, 24, 10).microsecondsSinceEpoch;
   DateTime clock() {
@@ -20,10 +21,16 @@ void main() {
   }
 
   setUp(() async {
+    policy = const PrivacyPolicy();
     nowMicros = DateTime.utc(2026, 8, 24, 10).microsecondsSinceEpoch;
     tmp = Directory.systemTemp.createTempSync('sai_llm_recorder_test');
     archive = await Archive.open(tmp, clock: clock);
-    recorder = LlmRecorder(archive: archive, source: 'sai/test', clock: clock);
+    recorder = LlmRecorder(
+      archive: archive,
+      source: 'sai/test',
+      clock: clock,
+      policy: () => policy,
+    );
   });
 
   tearDown(() async {
@@ -89,6 +96,120 @@ void main() {
     expect(usage['refs'], [call.request.toString(), call.response.toString()]);
     expect(usage['model'], response['model']);
     expect(call.usage, isNotNull);
+  });
+
+  group('the privacy policy (#27)', () {
+    LlmRequest withTasks(String text) => LlmRequest(
+      messages: [LlmMessage(LlmRole.user, text)],
+      taskContext: 'Today: buy milk',
+    );
+
+    /// A cloud fake that echoes every message it was given, so the test
+    /// reads what the provider saw.
+    FakeLlmProvider cloud() => FakeLlmProvider(
+      id: 'cloudy',
+      privacy: LlmPrivacy.cloud,
+      script: (r) =>
+          r.messages.map((m) => '${m.role.name}:${m.text}').join(' '),
+    );
+
+    test('a cloud call with sharing off withholds the context', () async {
+      final call = await recorder.start(cloud(), withTasks('due?'));
+      expect(call.taskContextWithheld, isTrue);
+      expect(call.decision, isNotNull);
+      final result = await call.done;
+      expect(result.text, 'user:due?', reason: 'the provider never saw it');
+
+      final log = lines();
+      expect(log.map((l) => l['type']), [
+        'policy.decision',
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+      ]);
+      final decision = log[0];
+      expect(decision['actor'], 'system');
+      expect(decision['payload'], {
+        'privacy': 'cloud',
+        'share_tasks': false,
+        'task_context': 'withheld',
+      });
+      expect(decision['model'], {'provider': 'cloudy', 'id': 'fake-1'});
+      expect(decision.containsKey('refs'), isFalse);
+      final request = log[1];
+      expect(request['refs'], [call.decision.toString()]);
+      expect(request['payload'], {
+        'messages': [
+          {'role': 'user', 'text': 'due?'},
+        ],
+      });
+      expect(jsonEncode(log), isNot(contains('buy milk')));
+    });
+
+    test('a cloud call with sharing on sends it as a system message', () async {
+      policy = const PrivacyPolicy(shareTasksWithCloud: true);
+      final call = await recorder.start(cloud(), withTasks('due?'));
+      expect(call.taskContextWithheld, isFalse);
+      final result = await call.done;
+      expect(result.text, 'system:Today: buy milk user:due?');
+      final log = lines();
+      expect(log[0]['payload'], {
+        'privacy': 'cloud',
+        'share_tasks': true,
+        'task_context': 'sent',
+      });
+      expect(log[1]['payload'], {
+        'messages': [
+          {'role': 'system', 'text': 'Today: buy milk'},
+          {'role': 'user', 'text': 'due?'},
+        ],
+      });
+    });
+
+    test('a cloud call without context still records the decision', () async {
+      final call = await recorder.start(cloud(), ask('hi'));
+      await call.done;
+      expect(call.taskContextWithheld, isFalse);
+      expect(lines()[0]['payload'], {
+        'privacy': 'cloud',
+        'share_tasks': false,
+        'task_context': 'none',
+      });
+      expect(lines(), hasLength(4));
+    });
+
+    test('a local call has no decision line and keeps its context', () async {
+      final local = FakeLlmProvider(
+        script: (r) => r.messages.map((m) => m.text).join('|'),
+      );
+      final call = await recorder.start(local, withTasks('due?'));
+      expect(call.decision, isNull);
+      expect(call.taskContextWithheld, isFalse);
+      final result = await call.done;
+      expect(result.text, 'Today: buy milk|due?');
+      final log = lines();
+      expect(log.map((l) => l['type']), [
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+      ]);
+      expect(log[0].containsKey('refs'), isFalse);
+      expect((log[0]['payload'] as Map)['messages'], [
+        {'role': 'system', 'text': 'Today: buy milk'},
+        {'role': 'user', 'text': 'due?'},
+      ]);
+    });
+
+    test('the policy is read when the call starts, not before', () async {
+      final first = await recorder.start(cloud(), withTasks('a'));
+      await first.done;
+      policy = const PrivacyPolicy(shareTasksWithCloud: true);
+      final second = await recorder.start(cloud(), withTasks('b'));
+      await second.done;
+      expect(first.taskContextWithheld, isTrue);
+      expect(second.taskContextWithheld, isFalse);
+      expect((await archive.verify()).count, 8);
+    });
   });
 
   test('done resolves after the archive has the lines', () async {

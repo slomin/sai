@@ -15,11 +15,14 @@ typedef LlmProviderFactory = LlmProvider Function(
 
 /// The `fake` kind: a configured fake, for offline demos and tests that
 /// want a provider to come from settings rather than from the built-ins.
+/// The only kind whose privacy tag comes from its configuration, so the
+/// policy (#27) can be tried without a cloud backend.
 LlmProvider fakeProviderFactory(ProviderConfig config, SecretStore secrets) =>
     FakeLlmProvider(
       id: config.id,
       displayName: config.id,
       defaultModel: config.defaultModel ?? 'fake-1',
+      privacy: config.privacy ?? LlmPrivacy.local,
     );
 
 /// What each kind must find in its configuration before it can be built,

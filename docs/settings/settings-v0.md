@@ -1,6 +1,6 @@
 # Settings, v0
 
-Status: current · Issues: #21, #29, #22 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md)
+Status: current · Issues: #21, #29, #22, #27 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md)
 
 The non-secret preferences both clients share: one JSON object in
 `settings.json`, beside the default archive (`SAI_SETTINGS_FILE` moves it).
@@ -15,6 +15,7 @@ and `test/no_secrets_test.dart` enforce that.
 | `version` | yes | `0` |
 | `llm` | no | id of the selected provider — a configured one or the built-in `fake` — or `null` for none |
 | `providers` | no | list of provider objects, ids unique; omitted when empty |
+| `share_tasks_with_cloud` | no | boolean, the privacy switch (#27, ADR 0010): whether a `cloud`-tagged provider may see the task list. Off when absent, and omitted while off |
 
 ## Provider object
 
@@ -25,6 +26,7 @@ and `test/no_secrets_test.dart` enforce that.
 | `endpoint` | no | absolute `http`/`https` URL with no userinfo, query or fragment. New entries take `http` only for `localhost` or a loopback address (ADR 0009); a stored one is read either way and refused at request time. `openai_compatible` needs it, and `default_model` |
 | `default_model` | no | the model used when a request names none |
 | `credential` | no | `^provider:[a-z0-9][a-z0-9_-]*$` — the secret-store *account* holding the key, by convention `provider:<id>`. Absent for keyless backends |
+| `privacy` | no | `local` \| `cloud` — the tag of a kind that has none of its own: honoured by `fake` only, so the policy can be tried before a cloud kind exists; other kinds keep their fixed tag and ignore it |
 | `credential_origin` | no | `scheme://host[:port]` of the endpoint the key was entered for; written when the key is stored. The key is sent only while it equals the endpoint's origin (ADR 0009); one that does not match, or names no credential, is dropped on read, and an edit that moves the endpoint drops it |
 
 ## Rules

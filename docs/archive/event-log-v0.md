@@ -168,6 +168,7 @@ Restore from a replica (#15); do not edit the log.
 | `provider.response` | assistant | the assembled response as received; `model.request_id` and `version` where exposed; `refs` → the request |
 | `provider.failure` | system | a call that produced no answer; `refs` → the request |
 | `provider.usage` | system | tokens and timings, written for every call including failures; `refs` → the request |
+| `policy.decision` | system | the privacy policy's word on a call to a cloud provider, written before its request; the request's `refs` name it — see [policy](#policy-27) |
 | `tool.call` | assistant | `payload.name`, `payload.arguments` |
 | `tool.result` | system | `refs` → the `tool.call` |
 | `archive.correction` | any | `refs` → the corrected event; the payload says what is wrong |
@@ -206,6 +207,20 @@ original byte length (a failure `message` is capped at 4 KiB) — a marked
 cut beats a lost record, and it is the one place "raw" is qualified. A
 call the archive itself refuses to record is reported to the caller as
 a failure and is, by definition, not in the log.
+
+### Policy (#27)
+
+A call to a `cloud`-tagged provider is preceded by exactly one
+`policy.decision` line (actor `system`, `model` naming the same target as
+the request); a call to a `local` provider has none (ADR
+[0010](../decisions/0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md)).
+The `provider.request` that follows carries the decision's id in `refs`
+and records the messages **as sent** — withheld task context enters
+neither the wire nor the log.
+
+| type | payload |
+| --- | --- |
+| `policy.decision` | `privacy` ∈ `cloud`, `share_tasks` (the switch as it stood), `task_context` ∈ `none` \| `sent` \| `withheld` |
 
 ### Task domain (#17)
 

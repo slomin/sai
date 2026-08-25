@@ -851,6 +851,92 @@ void main() {
       });
     });
 
+    group('the privacy policy (#27)', () {
+      final cloudy = ProviderConfig(
+        id: 'cloudy',
+        kind: 'fake',
+        privacy: LlmPrivacy.cloud,
+      );
+
+      test('follows the settings switch', () {
+        final container = make();
+        expect(container.read(privacyPolicyProvider), const PrivacyPolicy());
+        container.read(settingsProvider.notifier).setShareTasksWithCloud(true);
+        expect(
+          container.read(privacyPolicyProvider),
+          const PrivacyPolicy(shareTasksWithCloud: true),
+        );
+        expect(
+          jsonDecode(File('${tmp.path}/settings.json').readAsStringSync()),
+          containsPair('share_tasks_with_cloud', true),
+        );
+      });
+
+      test('a configured fake takes its tag from settings', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(cloudy);
+        expect(
+          container.read(llmRegistryProvider)['cloudy']!.privacy,
+          LlmPrivacy.cloud,
+        );
+        expect(
+          container.read(llmRegistryProvider)['fake']!.privacy,
+          LlmPrivacy.local,
+        );
+      });
+
+      test('the status line and the warning say tasks are withheld', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(cloudy);
+        expect(container.read(activeLlmWarningProvider), isNull);
+        settings.selectLlm('cloudy');
+        expect(
+          container.read(llmStatusProvider),
+          'cloudy (fake-1) — cloud · tasks withheld',
+        );
+        expect(
+          container.read(activeLlmWarningProvider),
+          "cloud provider 'cloudy' will not see your tasks until sharing is on",
+        );
+        settings.setShareTasksWithCloud(true);
+        expect(container.read(llmStatusProvider), 'cloudy (fake-1) — cloud');
+        expect(container.read(activeLlmWarningProvider), isNull);
+        settings.selectLlm('fake');
+        settings.setShareTasksWithCloud(false);
+        expect(container.read(llmStatusProvider), 'fake (fake-1) — local');
+        expect(container.read(activeLlmWarningProvider), isNull);
+      });
+
+      test('the recorder applies the switch as it stands per call', () async {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(cloudy);
+        final provider = container.read(llmRegistryProvider)['cloudy']!;
+        final recorder = await container.read(llmRecorderProvider.future);
+        LlmRequest request() => LlmRequest(
+          messages: [const LlmMessage(LlmRole.user, 'due?')],
+          taskContext: 'Today: x',
+        );
+        final withheld = await recorder.start(provider, request());
+        await withheld.done;
+        settings.setShareTasksWithCloud(true);
+        final sent = await recorder.start(provider, request());
+        await sent.done;
+        expect(withheld.taskContextWithheld, isTrue);
+        expect(sent.taskContextWithheld, isFalse);
+        final archive = await container.read(archiveProvider.future);
+        final events = await archive.events().toList();
+        final decisions = events
+            .where((e) => e.event.type == EventTypes.policyDecision)
+            .map((e) => e.event.payload['task_context'])
+            .toList();
+        expect(decisions, ['withheld', 'sent']);
+        expect(events, hasLength(8));
+      });
+    });
+
     test('llmRecorderProvider records with the client source', () async {
       final container = make();
       final recorder = await container.read(llmRecorderProvider.future);

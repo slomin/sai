@@ -281,6 +281,9 @@ abstract final class EventTypes {
   static const toolResult = 'tool.result';
   static const correction = 'archive.correction';
 
+  /// The privacy policy's decision before a cloud call (#27, ADR 0010).
+  static const policyDecision = 'policy.decision';
+
   /// The provider-traffic rows (#21): what one model call may write.
   static const provider = <String>[
     providerRequest,

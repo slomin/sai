@@ -15,6 +15,7 @@ export 'llm/factory.dart';
 export 'llm/fake.dart';
 export 'llm/openai_compatible/policy.dart' show OpenAiDeadlines;
 export 'llm/openai_compatible/provider.dart';
+export 'llm/privacy.dart';
 export 'llm/probe.dart';
 export 'llm/provider.dart';
 export 'llm/recorder.dart';

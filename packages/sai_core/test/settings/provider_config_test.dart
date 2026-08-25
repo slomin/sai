@@ -41,6 +41,36 @@ void main() {
       expect(back.provider('nope'), isNull);
     });
 
+    test('privacy is local or cloud, stored and copied', () {
+      final cloudy = ProviderConfig(
+        id: 'cloudy',
+        kind: 'fake',
+        privacy: LlmPrivacy.cloud,
+      );
+      expect(cloudy.toJson()['privacy'], 'cloud');
+      expect(ProviderConfig.fromJson(cloudy.toJson()), cloudy);
+      expect(
+        ProviderConfig(id: 'x', kind: 'fake').toJson(),
+        isNot(contains('privacy')),
+      );
+      expect(cloudy.copyWith(privacy: () => null).privacy, isNull);
+      expect(cloudy.copyWith(kind: 'other').privacy, LlmPrivacy.cloud);
+      expect(
+        () => ProviderConfig.fromJson({
+          'id': 'x',
+          'kind': 'fake',
+          'privacy': 'lan',
+        }),
+        throwsA(
+          isA<SettingsFormatException>().having(
+            (e) => e.reason,
+            'reason',
+            'provider x: privacy must be local or cloud',
+          ),
+        ),
+      );
+    });
+
     test('an empty provider list is not written', () {
       expect(Settings.empty.encode(), '{"llm":null,"version":0}');
     });

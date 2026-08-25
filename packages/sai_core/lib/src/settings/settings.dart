@@ -34,6 +34,7 @@ final class Settings {
   const Settings({
     this.llm,
     this.providers = const [],
+    this.shareTasksWithCloud = false,
     this.problem,
     this.extra = const {},
   });
@@ -49,6 +50,10 @@ final class Settings {
 
   /// The configured providers, in file order; ids unique.
   final List<ProviderConfig> providers;
+
+  /// The privacy switch (#27): whether a cloud-tagged provider may see the
+  /// task list. Off by default; the recorder reads it before every call.
+  final bool shareTasksWithCloud;
 
   /// The configured provider with [id], or null.
   ProviderConfig? provider(String id) {
@@ -67,8 +72,21 @@ final class Settings {
 
   /// The same settings with [id] selected. Clears [problem]: a write
   /// after a quarantine starts the file fresh.
-  Settings withLlm(String? id) =>
-      Settings(llm: id, providers: providers, extra: extra);
+  Settings withLlm(String? id) => Settings(
+    llm: id,
+    providers: providers,
+    shareTasksWithCloud: shareTasksWithCloud,
+    extra: extra,
+  );
+
+  /// The same settings with the cloud-sharing switch set. Clears
+  /// [problem] like [withLlm].
+  Settings withShareTasksWithCloud(bool share) => Settings(
+    llm: llm,
+    providers: providers,
+    shareTasksWithCloud: share,
+    extra: extra,
+  );
 
   /// The same settings with [config] added, or replacing the provider
   /// with its id in place. Clears [problem] like [withLlm].
@@ -78,7 +96,12 @@ final class Settings {
         if (p.id == config.id) config else p,
       if (provider(config.id) == null) config,
     ];
-    return Settings(llm: llm, providers: next, extra: extra);
+    return Settings(
+      llm: llm,
+      providers: next,
+      shareTasksWithCloud: shareTasksWithCloud,
+      extra: extra,
+    );
   }
 
   /// The same settings without the provider [id]; a selection of it is
@@ -89,6 +112,7 @@ final class Settings {
       for (final p in providers)
         if (p.id != id) p,
     ],
+    shareTasksWithCloud: shareTasksWithCloud,
     extra: extra,
   );
 
@@ -117,6 +141,12 @@ final class Settings {
       );
     }
     rejectSecretLike(json, where: 'settings');
+    final share = json['share_tasks_with_cloud'];
+    if (share != null && share is! bool) {
+      throw const SettingsFormatException(
+        'share_tasks_with_cloud must be a boolean',
+      );
+    }
     final rawProviders = json['providers'];
     if (rawProviders != null && rawProviders is! List) {
       throw const SettingsFormatException('providers must be a list');
@@ -134,6 +164,7 @@ final class Settings {
     return Settings(
       llm: llm as String?,
       providers: providers,
+      shareTasksWithCloud: share as bool? ?? false,
       extra: {
         for (final e in json.entries)
           if (!_known.contains(e.key)) e.key: e.value,
@@ -141,7 +172,12 @@ final class Settings {
     );
   }
 
-  static const _known = {'version', 'llm', 'providers'};
+  static const _known = {
+    'version',
+    'llm',
+    'providers',
+    'share_tasks_with_cloud',
+  };
 
   /// The file's text: compact JSON, keys sorted, unknown keys included.
   ///
@@ -169,6 +205,9 @@ final class Settings {
       'llm': llm,
       if (providers.isNotEmpty)
         'providers': [for (final p in providers) p.toJson()],
+      // Off is the default and is not written: an untouched file stays
+      // byte-identical across sai versions.
+      if (shareTasksWithCloud) 'share_tasks_with_cloud': true,
     }),
   );
 }
