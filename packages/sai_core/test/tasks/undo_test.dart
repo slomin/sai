@@ -816,6 +816,39 @@ void main() {
       },
     );
 
+    test('a remote system line before a local commit still clears', () async {
+      await store.createTask(title: 'x');
+      final other = await TaskStore.open(archive, source: 'sai/app');
+      await other.createTask(title: 'imported', by: const Attribution.system());
+      other.dispose();
+      // The local commit lands after the import line and advances the
+      // projection past it without ever having seen it.
+      await store.createTask(title: 'y');
+      expect(store.undoDepth, 2);
+      await store.reload();
+      expect(store.undoDepth, 0);
+      expect(store.projection.tasks, hasLength(3));
+    });
+
+    test('a reload the reducer refuses keeps the stack', () async {
+      final project = await store.createProject(title: 'P');
+      final stale = await TaskStore.open(archive, source: 'sai/app');
+      await store.deleteProject(project);
+      // Valid against the stale projection, invalid in log order.
+      await stale.createTask(
+        title: 'imported',
+        project: project,
+        by: const Attribution.system(),
+      );
+      stale.dispose();
+      expect(store.undoDepth, 2);
+      await expectLater(store.reload(), throwsA(isA<TaskProjectionError>()));
+      expect(store.undoDepth, 2);
+      expect(store.projection.tasks, isEmpty);
+      await store.undo();
+      expect(store.projection.projects[project]!.deletedAt, isNull);
+    });
+
     test('a system-attributed undo is a barrier too', () async {
       await store.createTask(title: 'x');
       await store.createTask(title: 'y');

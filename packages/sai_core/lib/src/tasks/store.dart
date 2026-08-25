@@ -34,7 +34,8 @@ final class TaskStore {
     required String source,
   }) async {
     final events = await _readEvents(archive);
-    return TaskStore._(archive, source, TaskProjection.replay(events));
+    return TaskStore._(archive, source, TaskProjection.replay(events))
+      .._readCount = events.length;
   }
 
   /// Reads the whole log, tolerating a torn tail. A tear can also be the
@@ -94,14 +95,29 @@ final class TaskStore {
   Future<void> reload() => _serialized(() async {
     _checkOpen();
     final events = await _readEvents(_archive);
-    // The projection has seen exactly eventCount lines (its own commits
-    // included), so what follows them is another writer's work; a system
-    // task mutation among it is the same barrier a local one is.
-    final unseen = events.skip(_projection.eventCount);
-    if (unseen.any(_isSystemTaskMutation)) _undoStack.clear();
-    _projection = TaskProjection.replay(events);
+    // Everything past the last read that this store did not append itself
+    // is another writer's work — including lines that landed *before* a
+    // local commit, which the projection's own count would walk past. A
+    // system task mutation among it is the same barrier a local one is,
+    // applied only once the replay has succeeded: a log the reducer
+    // refuses leaves projection and stack alike as they were.
+    final unseen = events
+        .skip(_readCount)
+        .where((stored) => !_ownSinceRead.contains(stored.id));
+    final barrier = unseen.any(_isSystemTaskMutation);
+    final next = TaskProjection.replay(events);
+    if (barrier) _undoStack.clear();
+    _projection = next;
+    _readCount = events.length;
+    _ownSinceRead.clear();
     _notify();
   });
+
+  /// How many lines the last full read of the log returned, and the ids
+  /// this store appended since — together, the cursor [reload] uses to
+  /// tell another writer's lines from its own.
+  var _readCount = 0;
+  final _ownSinceRead = <BlobRef>{};
 
   static bool _isSystemTaskMutation(StoredEvent stored) =>
       stored.event.actor == Actor.system &&
@@ -217,6 +233,7 @@ final class TaskStore {
       },
     );
     _projection = next;
+    _ownSinceRead.add(stored.id);
     try {
       if (by.actor == Actor.system) {
         _undoStack.clear();
