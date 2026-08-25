@@ -1,0 +1,55 @@
+# Secret scanning for this repository (#56). Runs in the pre-push hook
+# and in the CI "secrets" job; `gitleaks dir .` scans the tree,
+# `gitleaks git --log-opts=<range>` the commits about to land.
+#
+# gitleaks' defaults already know OpenAI keys (sk-proj-, sk-svcacct-,
+# sk-admin-, marker T3BlbkFJ) and Anthropic API keys (sk-ant-api03-).
+# The rules below add what the defaults miss as of 8.30.1.
+
+title = "sai"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "anthropic-oauth-token"
+description = "Anthropic OAuth access token (Claude Code login, claude setup-token)"
+regex = '''\b(sk-ant-oat01-[a-zA-Z0-9_\-]{40,})(?:[\x60'"\s;]|\\[nr]|$)'''
+keywords = ["sk-ant-oat01"]
+
+[[rules]]
+id = "anthropic-oauth-refresh-token"
+description = "Anthropic OAuth refresh token"
+regex = '''\b(sk-ant-ort01-[a-zA-Z0-9_\-]{40,})(?:[\x60'"\s;]|\\[nr]|$)'''
+keywords = ["sk-ant-ort01"]
+
+[[rules]]
+id = "openrouter-api-key"
+description = "OpenRouter API key"
+regex = '''\b(sk-or(?:-v\d+)?-[a-f0-9]{64})(?:[\x60'"\s;]|\\[nr]|$)'''
+keywords = ["sk-or-"]
+
+[[rules]]
+id = "bearer-authorization-header"
+description = "Bare Authorization: Bearer header carrying a token"
+regex = '''(?i)authorization:\s*bearer\s+([A-Za-z0-9._~+/=\-]{20,})(?:[\x60'"\s;,]|\\[nr]|$)'''
+entropy = 3.0
+keywords = ["bearer"]
+
+# Test canaries and documented placeholders. Every fake key in the tree
+# is prefixed sk-canary- or sk-test-; docs write not-a-real-key.
+[[allowlists]]
+description = "fake keys used by tests and docs"
+regexTarget = "line"
+regexes = [
+  '''sk-(canary|test)-''',
+  '''not-a-real-key''',
+]
+
+# A bearer "token" spelled entirely in capitals and underscores is a
+# documentation placeholder (OPENAI_API_KEY_OR_ACCESS_TOKEN), not a key.
+[[allowlists]]
+description = "upper-case placeholder after Bearer"
+targetRules = ["bearer-authorization-header"]
+regexTarget = "secret"
+regexes = ['''^[A-Z_]+$''']

@@ -182,6 +182,7 @@ dart analyze --fatal-infos packages apps
 (cd apps/sai_tui && dart test)
 (cd apps/sai_app && flutter test)
 (cd apps/sai_app && flutter build macos --debug)
+gitleaks git . --config .gitleaks.toml   # no secret in any commit
 ```
 
 `sai_core` must stay free of Flutter: its tests fail if `lib/` imports
@@ -194,13 +195,18 @@ contract is [docs/archive/event-log-v0.md](docs/archive/event-log-v0.md).
 
 ## Git hooks
 
-Commits here carry no tool-generated attribution. The patterns are in
-`.githooks/attribution-patterns`; `commit-msg` strips matching lines,
-`pre-push` refuses to push commits that still have them, and CI refuses a
-pull request that does. Enable the hooks once per clone:
+Commits here carry no tool-generated attribution and no secret. The
+attribution patterns are in `.githooks/attribution-patterns`; `commit-msg`
+strips matching lines, `pre-push` refuses to push commits that still have
+them, and CI refuses a pull request that does. The same `pre-push` runs
+[gitleaks](https://github.com/gitleaks/gitleaks) over the commits about
+to leave the machine (rules in `.gitleaks.toml`), and the CI `secrets`
+job scans the tree and the pull request; a provider key in a commit
+fails both. Enable the hooks once per clone:
 
 ```sh
 git config core.hooksPath .githooks
+brew install gitleaks
 ```
 
 ## The Go prototype
