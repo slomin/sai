@@ -84,9 +84,13 @@ Future<int> runCli(
             container.read(credentialStatusProvider(provider.id)),
             config,
           );
-          final where = config?.endpoint == null
-              ? (config == null ? 'built-in' : config.kind)
-              : '${config!.kind} @ ${config.endpoint}';
+          final where = switch ((config, provider)) {
+            (null, OpenAiCompatibleProvider(:final origin)) =>
+              'built-in @ $origin',
+            (null, _) => 'built-in',
+            (final c?, _) when c.endpoint == null => c.kind,
+            (final c?, _) => '${c.kind} @ ${c.endpoint}',
+          };
           out.writeln(
             '$mark ${provider.id}  $where  (${provider.defaultModel}) · '
             '${provider.privacy.name}$key',
@@ -110,10 +114,25 @@ Future<int> runCli(
         // change, so a model tweak never drops the credential or what a
         // newer sai stored in the entry.
         final existing = container.read(settingsProvider).provider(id);
-        String? kind = existing?.kind;
-        String? endpoint = existing?.endpoint;
-        String? model = existing?.defaultModel;
-        LlmPrivacy? privacy = existing?.privacy;
+        // A built-in's id starts from the built-in (#23): kind, endpoint
+        // and model as shipped, so one option changes one thing.
+        final builtin = existing == null
+            ? container.read(llmRegistryProvider)[id]
+            : null;
+        String? kind =
+            existing?.kind ??
+            switch (builtin) {
+              OpenAiCompatibleProvider() => 'openai_compatible',
+              FakeLlmProvider() => 'fake',
+              _ => null,
+            };
+        String? endpoint =
+            existing?.endpoint ??
+            (builtin is OpenAiCompatibleProvider
+                ? builtin.endpoint.toString()
+                : null);
+        String? model = existing?.defaultModel ?? builtin?.defaultModel;
+        LlmPrivacy? privacy = existing?.privacy ?? builtin?.privacy;
         var key = existing?.credential != null;
         for (var i = 0; i < rest.length; i++) {
           String value() {
@@ -177,7 +196,10 @@ Future<int> runCli(
                 CredentialStatus.set;
         final wasBound = existing?.keyBound ?? false;
         notifier.upsertProvider(config);
-        out.writeln('${existing != null ? 'updated' : 'added'} provider $id');
+        out.writeln(
+          '${existing != null ? 'updated' : 'added'} provider $id'
+          '${builtin != null ? ' (over the built-in)' : ''}',
+        );
         if (hadKey && !key) {
           out.writeln(
             'its key is still in the Keychain; sai_tui secret clear $id '

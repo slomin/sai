@@ -61,6 +61,7 @@ PlatformMenuItem menuItem(List<PlatformMenuItem> menus, List<String> path) {
 Future<ProviderContainer> pumpApp(
   WidgetTester tester, {
   List<Override> overrides = const [],
+  List<LlmProvider Function()> builtins = const [FakeLlmProvider.new],
   bool settled = true,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
@@ -75,6 +76,10 @@ Future<ProviderContainer> pumpApp(
       eventSourceProvider.overrideWithValue(EventSources.app),
       // Never the login keychain from a test.
       secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+      // The fake alone, nothing selected: a test never reaches LM Studio
+      // or the LAN box unless it asks for them.
+      builtinLlmsProvider.overrideWithValue(builtins),
+      defaultLlmIdProvider.overrideWithValue(null),
       // Widget tests must finish with no pending timers. Core exercises the
       // real midnight scheduler with fake_async; app tests pin the same read
       // contract without creating a day-long timer in Flutter's fake clock.

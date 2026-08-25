@@ -350,6 +350,7 @@ void main() {
     ProviderContainer make({
       List<Override> overrides = const [],
       SecretStore? store,
+      bool shipped = false,
     }) => ProviderContainer.test(
       overrides: [
         archiveRootProvider.overrideWithValue(root),
@@ -358,6 +359,11 @@ void main() {
         ),
         eventSourceProvider.overrideWithValue('sai/test'),
         secretStoreProvider.overrideWithValue(store ?? secrets),
+        // The fake alone, nothing selected, unless a test says otherwise.
+        if (!shipped) ...[
+          builtinLlmsProvider.overrideWithValue([FakeLlmProvider.new]),
+          defaultLlmIdProvider.overrideWithValue(null),
+        ],
         ...overrides,
       ],
     );
@@ -559,6 +565,85 @@ void main() {
           expect(result.text, 'hi there');
         },
       );
+
+      test('the build ships the fake, LM Studio and the LAN box (#23)', () {
+        final container = make(shipped: true);
+        final registry = container.read(llmRegistryProvider);
+        expect(registry.keys, ['fake', lmStudioProviderId, lanProviderId]);
+        final lmstudio = registry[lmStudioProviderId]!;
+        expect(lmstudio.displayName, 'lmstudio @ http://127.0.0.1:1234');
+        expect(lmstudio.defaultModel, OpenAiCompatibleProvider.loadedModel);
+        expect(lmstudio.privacy, LlmPrivacy.local);
+        final lan = registry[lanProviderId]!;
+        expect(lan.displayName, 'lan @ http://192.168.1.5:8080');
+        expect(lan.defaultModel, lanModel);
+        expect(lan.privacy, LlmPrivacy.local);
+        // Neither takes a key.
+        expect(
+          container.read(credentialStatusProvider(lanProviderId)),
+          CredentialStatus.none,
+        );
+        // A configured one still takes over.
+        container
+            .read(settingsProvider.notifier)
+            .upsertProvider(
+              ProviderConfig(
+                id: lanProviderId,
+                kind: 'openai_compatible',
+                endpoint: 'http://10.0.0.9:8080/v1',
+                defaultModel: 'mine',
+              ),
+            );
+        expect(
+          container.read(llmRegistryProvider)[lanProviderId]!.displayName,
+          'lan @ http://10.0.0.9:8080',
+        );
+      });
+
+      test('a configured id hides its built-in even when it cannot be '
+          'built', () {
+        final container = make(shipped: true);
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          ProviderConfig(id: lanProviderId, kind: 'future'),
+        );
+        settings.selectLlm(lanProviderId);
+        expect(container.read(llmRegistryProvider).keys, [
+          'fake',
+          lmStudioProviderId,
+        ]);
+        expect(container.read(activeLlmProvider), isNull);
+        expect(
+          container.read(llmStatusProvider),
+          unavailableKindStatus(lanProviderId, 'future'),
+        );
+        settings.upsertProvider(
+          ProviderConfig(id: lanProviderId, kind: 'openai_compatible'),
+        );
+        expect(container.read(activeLlmProvider), isNull);
+        expect(
+          container.read(llmStatusProvider),
+          misconfiguredStatus(lanProviderId, 'endpoint'),
+        );
+      });
+
+      test('a first run selects LM Studio and writes nothing (#23)', () {
+        final file = File('${tmp.path}/settings.json');
+        final container = make(shipped: true);
+        expect(container.read(settingsProvider).llm, lmStudioProviderId);
+        expect(container.read(activeLlmProvider)?.id, lmStudioProviderId);
+        expect(file.existsSync(), isFalse);
+        expect(
+          container.read(llmStatusProvider),
+          'lmstudio @ http://127.0.0.1:1234 (loaded model) — local',
+        );
+        // Choosing none is kept: the file, once it exists, is the word.
+        container.read(settingsProvider.notifier).selectLlm(null);
+        expect(file.existsSync(), isTrue);
+        final again = make(shipped: true);
+        expect(again.read(settingsProvider).llm, isNull);
+        expect(again.read(llmStatusProvider), noProviderStatus);
+      });
 
       test('a configured provider may take over a built-in id', () {
         final container = make();

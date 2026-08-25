@@ -512,11 +512,7 @@ void main() {
     }) async {
       // Provider and fixture first, one frame after: the fake's tag and
       // the list then render together rather than reflowing mid-pump.
-      final container = testContainer(
-        overrides: [
-          builtinLlmsProvider.overrideWithValue([() => fake]),
-        ],
-      );
+      final container = testContainer(builtins: [() => fake]);
       await container.read(tasksProvider.future);
       await container
           .read(tasksProvider.notifier)

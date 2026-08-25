@@ -16,7 +16,8 @@ import 'sse.dart';
 /// An OpenAI-compatible `/v1` backend — llama.cpp's `llama-server`, LM
 /// Studio, the LAN box — over a direct, bounded transport (ADR 0009):
 /// no redirects, no proxy, no certificate bypass, plaintext only to this
-/// machine, the key sent only to the origin it was entered for, and a
+/// machine or the LAN (ADR 0012), the key sent only to the origin it was
+/// entered for, and a
 /// deadline on every stage. Failures carry fixed text and the origin.
 ///
 /// The key is read from [secrets] at call time, never held.
@@ -57,8 +58,22 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   @override
   final LlmPrivacy privacy;
 
+  /// The model used when a request names none. [loadedModel] stands for
+  /// whatever the endpoint has loaded.
   @override
   final String defaultModel;
+
+  /// A [defaultModel] that names no model: nothing goes on the wire as
+  /// `model` (LM Studio answers with the model it has loaded, `llama-server`
+  /// has one model anyway), and the response's lineage carries the id the
+  /// stream reports.
+  static const loadedModel = 'loaded model';
+
+  /// The id that goes on the wire for [request], or null for [loadedModel].
+  String? _wireModel(LlmRequest request) {
+    final model = request.model ?? defaultModel;
+    return model == loadedModel ? null : model;
+  }
 
   /// `scheme://host[:port]` of the endpoint — what failures name.
   final String origin;
@@ -74,6 +89,10 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   final OpenAiDeadlines deadlines;
 
   final Uri _endpoint;
+
+  /// The `/v1` base this provider talks to.
+  Uri get endpoint => _endpoint;
+
   final SecretStore _secrets;
   final HttpClient _client;
   final _running = <LlmCallController>{};
@@ -104,7 +123,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     if (_closed) {
       return (refuse(LlmFailureKind.internal, TransportText.closed), null);
     }
-    if (_endpoint.scheme == 'http' && !isLoopbackHost(_endpoint.host)) {
+    if (_endpoint.scheme == 'http' && !isPrivateHost(_endpoint.host)) {
       return (
         refuse(LlmFailureKind.unreachable, TransportText.plaintext),
         null,
@@ -133,9 +152,13 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     return (null, 'Bearer $key');
   }
 
-  /// Whether this endpoint answered 400 to `reasoning_effort` once;
-  /// from then on the switch is not sent to it.
+  /// Whether this endpoint answered 400 to `reasoning_effort`, and to
+  /// `chat_template_kwargs`, once; from then on that switch is not sent
+  /// to it. Negotiated one at a time: the template switch (llama.cpp's)
+  /// is dropped first, OpenAI's word second, so an endpoint that knows
+  /// either still gets the one it knows.
   var _reasoningRefused = false;
+  var _templateSwitchRefused = false;
 
   Future<void> _run(
     LlmCallController controller,
@@ -159,8 +182,12 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     final (refused, auth) = _prepare();
     if (refused != null) return fail(refused);
 
+    final wireModel = _wireModel(request);
+    final off = request.reasoning == false;
+    final sendEffort = off && !_reasoningRefused;
+    final sendTemplateSwitch = off && !_templateSwitchRefused;
     final body = jsonEncode({
-      'model': request.model ?? defaultModel,
+      'model': ?wireModel,
       'messages': [
         for (final m in request.messages)
           {'role': m.role.name, 'content': m.text},
@@ -169,8 +196,13 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       'stream_options': {'include_usage': true},
       if (request.maxTokens != null) 'max_tokens': request.maxTokens,
       if (request.temperature != null) 'temperature': request.temperature,
-      if (request.reasoning == false && !_reasoningRefused)
-        'reasoning_effort': 'none',
+      // Off, said both ways: OpenAI's word (LM Studio, and llama.cpp on
+      // master) and the template switch llama-server actually reads on
+      // the LAN box (#23) — measured: reasoning_effort alone leaves
+      // Qwen3.8 thinking there.
+      if (sendEffort) 'reasoning_effort': 'none',
+      if (sendTemplateSwitch)
+        'chat_template_kwargs': {'enable_thinking': false},
     });
 
     final HttpClientResponse response;
@@ -212,14 +244,18 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         ),
       );
     }
-    if (status == 400 && request.reasoning != null && !_reasoningRefused) {
-      // A generic endpoint that does not know `reasoning_effort` answers
-      // 400; ask once more without it and remember, so the next call
-      // goes straight through. The caller's wish is on the request line
-      // either way; what the backend understood is its own affair.
-      _reasoningRefused = true;
+    if (status == 400 && (sendTemplateSwitch || sendEffort)) {
+      // An endpoint that does not know a switch answers 400; drop one,
+      // ask again and remember, so the next call goes straight through.
+      // The caller's wish is on the request line either way; what the
+      // backend understood is its own affair.
+      if (sendTemplateSwitch) {
+        _templateSwitchRefused = true;
+      } else {
+        _reasoningRefused = true;
+      }
       _drain(response);
-      return _run(controller, attempt, request.withoutReasoning());
+      return _run(controller, attempt, request);
     }
     if (status < 200 || status >= 300) {
       _drain(response);
@@ -292,6 +328,11 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
               return;
             }
             requestId ??= chunk.id;
+            // Nothing was asked for: the backend's word is the lineage,
+            // from the first chunk on — a cancel carries it too.
+            if (controller.model.id == loadedModel && chunk.model != null) {
+              controller.model = ModelRef(provider: id, id: chunk.model!);
+            }
             if (chunk.usage != null) usage = chunk.usage;
             if (chunk.tokensPerSecond != null) {
               tokensPerSecond = chunk.tokensPerSecond;
@@ -422,7 +463,14 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     if (lm.status == 200 && l is Map<String, Object?> && l['models'] is List) {
       int? ctx;
       for (final m in l['models'] as List) {
-        if (m is! Map<String, Object?> || m['key'] != defaultModel) continue;
+        if (m is! Map<String, Object?>) continue;
+        // The configured model, or with [loadedModel] the first LLM that is
+        // loaded — the one LM Studio would answer with.
+        if (defaultModel == loadedModel
+            ? (m['type'] != 'llm' || ctx != null)
+            : m['key'] != defaultModel) {
+          continue;
+        }
         final loaded = m['loaded_instances'];
         if (loaded is List && loaded.isNotEmpty) {
           final first = loaded.first;

@@ -118,7 +118,9 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
                 onChanged: _setReasoning,
               ),
               const Divider(),
-              if (config?.endpoint != null && provider != null)
+              // Any endpoint that can be asked, a built-in's included (#23).
+              if (provider != null &&
+                  (config?.endpoint != null || provider is LlmEndpointProbe))
                 _endpoint(selected, provider),
               if (config?.credential != null) _key(selected),
             ],

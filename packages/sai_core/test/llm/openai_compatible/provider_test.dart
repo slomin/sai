@@ -10,9 +10,10 @@ import 'package:test/test.dart';
 import '../provider_contract.dart';
 import '../stub_server.dart';
 
-LlmRequest ask(String text, {bool? reasoning}) => LlmRequest(
+LlmRequest ask(String text, {bool? reasoning, String? model}) => LlmRequest(
   messages: [LlmMessage(LlmRole.user, text)],
   reasoning: reasoning,
+  model: model,
 );
 
 const canary = 'sk-canary-3c9e1a7b5d2f4e6a8c0b1d3f5a7c9e2b';
@@ -43,10 +44,11 @@ void main() {
     String? credentialOrigin,
     SecretStore? store,
     OpenAiDeadlines deadlines = quick,
+    String defaultModel = 'qwen',
   }) => OpenAiCompatibleProvider(
     id: 'lan',
     endpoint: endpoint ?? stub.v1,
-    defaultModel: 'qwen',
+    defaultModel: defaultModel,
     secrets: store ?? secrets,
     credential: credential,
     credentialOrigin: credentialOrigin,
@@ -191,13 +193,15 @@ void main() {
     });
 
     test(
-      'refuses plaintext to anything but this machine, without connecting',
+      'refuses plaintext beyond this machine and the LAN, without connecting',
       () async {
-        final provider = make(endpoint: Uri.parse('http://lan.example:1/v1'));
-        final result = await provider.start(ask('x')).done;
-        expect(result.failure!.kind, LlmFailureKind.unreachable);
-        expect(result.failure!.message, TransportText.plaintext);
-        expect(result.failure!.endpoint, 'http://lan.example:1');
+        for (final host in ['lan.example', '203.0.113.1']) {
+          final provider = make(endpoint: Uri.parse('http://$host:1/v1'));
+          final result = await provider.start(ask('x')).done;
+          expect(result.failure!.kind, LlmFailureKind.unreachable);
+          expect(result.failure!.message, TransportText.plaintext);
+          expect(result.failure!.endpoint, 'http://$host:1');
+        }
       },
     );
 
@@ -423,6 +427,25 @@ void main() {
       answered.complete();
     });
 
+    test('mid-stream on a loaded model: the reported id is kept', () async {
+      stub.routes['POST /v1/chat/completions'] = (req) => StubServer.stream(
+        req,
+        ['a', 'b', 'c'],
+        model: 'what-is-loaded',
+        gap: const Duration(seconds: 1),
+      );
+      final provider = make(
+        deadlines: const OpenAiDeadlines(),
+        defaultModel: OpenAiCompatibleProvider.loadedModel,
+      );
+      final call = provider.start(ask('x'));
+      await call.deltas.first;
+      call.cancel();
+      final result = await call.done;
+      expect(result.finish, LlmFinish.cancelled);
+      expect(result.model.id, 'what-is-loaded');
+    });
+
     test('mid-stream: the text so far is kept', () async {
       stub.routes['POST /v1/chat/completions'] = (req) => StubServer.stream(
         req,
@@ -493,27 +516,75 @@ void main() {
     await provider.close();
   });
 
-  test('a 400 to reasoning_effort is retried without it, once', () async {
+  test('the loaded model names nothing on the wire and takes the '
+      "backend's id", () async {
+    stub.routes['POST /v1/chat/completions'] = (req) =>
+        StubServer.stream(req, ['ok'], model: 'what-is-loaded');
+    final provider = make(defaultModel: OpenAiCompatibleProvider.loadedModel);
+    final result = await provider.start(ask('a')).done;
+    expect(result.text, 'ok');
+    expect(result.model.id, 'what-is-loaded');
+    expect(
+      (jsonDecode(stub.requests.single.body) as Map).containsKey('model'),
+      isFalse,
+    );
+    // A request that names a model is sent as named.
+    await provider.start(ask('b', model: 'named')).done;
+    expect((jsonDecode(stub.requests.last.body) as Map)['model'], 'named');
+    await provider.close();
+  });
+
+  /// Which reasoning switches each request carried: `e` for
+  /// `reasoning_effort`, `t` for `chat_template_kwargs`.
+  List<String> switchesSent() => [
+    for (final r in stub.requests)
+      [
+        if ((jsonDecode(r.body) as Map).containsKey('reasoning_effort')) 'e',
+        if ((jsonDecode(r.body) as Map).containsKey('chat_template_kwargs'))
+          't',
+      ].join(),
+  ];
+
+  /// A stub that answers 400 to any request carrying one of [refused].
+  void refuse(Set<String> refused) {
     stub.routes['POST /v1/chat/completions'] = (req) async {
       final body = jsonDecode(stub.requests.last.body) as Map<String, Object?>;
-      if (body.containsKey('reasoning_effort')) {
+      if (refused.any(body.containsKey)) {
         req.response.statusCode = 400;
         await req.response.close();
         return;
       }
       await StubServer.stream(req, ['ok']);
     };
+  }
+
+  test('a 400 drops the switches one at a time, and remembers', () async {
+    refuse({'reasoning_effort', 'chat_template_kwargs'});
     final provider = make();
     final first = await provider.start(ask('a', reasoning: false)).done;
     expect(first.text, 'ok', reason: '$first ${first.failure}');
     final second = await provider.start(ask('b', reasoning: false)).done;
     expect(second.text, 'ok');
-    expect(
-      stub.requests.map(
-        (r) => (jsonDecode(r.body) as Map).containsKey('reasoning_effort'),
-      ),
-      [true, false, false],
-    );
+    expect(switchesSent(), ['et', 'e', '', '']);
+    await provider.close();
+  });
+
+  test('an endpoint that knows reasoning_effort keeps it', () async {
+    refuse({'chat_template_kwargs'});
+    final provider = make();
+    expect((await provider.start(ask('a', reasoning: false)).done).text, 'ok');
+    expect((await provider.start(ask('b', reasoning: false)).done).text, 'ok');
+    expect(switchesSent(), ['et', 'e', 'e']);
+    await provider.close();
+  });
+
+  test('a 400 with no switch sent is a rejection, not a retry', () async {
+    refuse({'messages'});
+    final provider = make();
+    final result = await provider.start(ask('a')).done;
+    expect(result.failure!.kind, LlmFailureKind.rejected);
+    expect(result.failure!.status, 400);
+    expect(stub.requests, hasLength(1));
     await provider.close();
   });
 
@@ -526,6 +597,16 @@ void main() {
     expect(
       stub.requests.map((r) => (jsonDecode(r.body) as Map)['reasoning_effort']),
       ['none', null],
+    );
+    // llama-server reads the template switch, not reasoning_effort (#23).
+    expect(
+      stub.requests.map(
+        (r) => (jsonDecode(r.body) as Map)['chat_template_kwargs'],
+      ),
+      [
+        {'enable_thinking': false},
+        null,
+      ],
     );
     await provider.close();
   });

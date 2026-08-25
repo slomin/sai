@@ -142,12 +142,17 @@ void main() {
       expect(make(endpoint: 'http://127.0.0.1:8080/v1').endpoint, isNotNull);
     });
 
-    test('plaintext http is refused for anything but this machine', () {
+    test('plaintext http is refused beyond this machine and the LAN', () {
       for (final ok in [
         'http://localhost:8080/v1',
         'http://127.0.0.1/v1',
         'http://127.5.5.5:1/v1',
         'http://[::1]:8080/v1',
+        'http://192.168.1.20:8080/v1',
+        'http://10.0.0.7/v1',
+        'http://[fe80::1]:8080/v1',
+        'http://sai.local:8080/v1',
+        'http://box/v1',
         'https://lan.example/v1',
         'https://192.168.1.20:8443/v1',
       ]) {
@@ -155,9 +160,10 @@ void main() {
       }
       for (final bad in [
         'http://lan.example/v1',
-        'http://192.168.1.20:8080/v1',
+        'http://203.0.113.1/v1',
+        'http://8.8.8.8:8080/v1',
         'http://0.0.0.0:8080/v1',
-        'http://[fe80::1]:8080/v1',
+        'http://[2001:db8::1]:8080/v1',
       ]) {
         expect(
           () => ProviderConfig.checkEndpointForEntry(bad),

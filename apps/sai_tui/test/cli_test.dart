@@ -39,6 +39,63 @@ void main() {
 
   File settingsFile() => container.read(settingsFileProvider);
 
+  test('the built-in endpoints are listed and selectable (#23)', () async {
+    container = testContainer(builtins: builtinLlms(InMemorySecretStore()));
+    expect(await run('provider list'), cliOk);
+    expect(
+      out.toString(),
+      contains(
+        '  lmstudio  built-in @ http://127.0.0.1:1234  (loaded model) · local',
+      ),
+    );
+    expect(
+      out.toString(),
+      contains(
+        '  lan  built-in @ http://192.168.1.5:8080  '
+        '(sai-qwen38-27b-unsloth-q6k-fullctx-generic-mtp) · local',
+      ),
+    );
+    out.clear();
+    expect(await run('provider use lan'), cliOk);
+    expect(
+      out.toString().trim(),
+      'lan @ http://192.168.1.5:8080 '
+      '(sai-qwen38-27b-unsloth-q6k-fullctx-generic-mtp) — local',
+    );
+    expect(jsonDecode(settingsFile().readAsStringSync()), {
+      'version': 0,
+      'llm': 'lan',
+    });
+  });
+
+  test('provider add on a built-in id starts from the built-in', () async {
+    container = testContainer(builtins: builtinLlms(InMemorySecretStore()));
+    expect(await run('provider add lan --model other'), cliOk);
+    expect(out.toString(), contains('added provider lan (over the built-in)'));
+    expect(err.toString(), isEmpty);
+    expect(
+      jsonDecode(settingsFile().readAsStringSync()),
+      containsPair('providers', [
+        {
+          'id': 'lan',
+          'kind': 'openai_compatible',
+          'endpoint': 'http://192.168.1.5:8080/v1',
+          'default_model': 'other',
+          'privacy': 'local',
+        },
+      ]),
+    );
+    final lan = container.read(llmRegistryProvider)['lan']!;
+    expect(lan.displayName, 'lan @ http://192.168.1.5:8080');
+    expect(lan.defaultModel, 'other');
+    out.clear();
+    // An unusable configuration hides the built-in rather than
+    // routing to it.
+    expect(await run('provider add lmstudio --kind future'), cliOk);
+    expect(await run('provider use lmstudio'), cliFailed);
+    expect(err.toString(), contains("provider 'lmstudio' is not available"));
+  });
+
   test('help and an unknown command', () async {
     expect(await run('help'), cliOk);
     expect(out.toString(), contains('usage: sai_tui'));

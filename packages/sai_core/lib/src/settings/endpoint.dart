@@ -10,7 +10,7 @@ String endpointOrigin(Uri endpoint) => Uri(
 ).toString();
 
 /// Whether [host] can only be this machine: `localhost` or a loopback
-/// address. Plaintext HTTP is allowed to nothing else.
+/// address.
 bool isLoopbackHost(String host) =>
     host == 'localhost' ||
     (InternetAddress.tryParse(host)?.isLoopback ?? false);
@@ -18,9 +18,10 @@ bool isLoopbackHost(String host) =>
 /// Whether [host] is on this machine or the local network, as far as a
 /// name or address can say: loopback, a private (RFC 1918), link-local,
 /// CGNAT or unique-local address, a `.local`/`.lan`/`.home`/`.internal`
-/// name, or a name without a dot. What this says nothing about is where
-/// the inference happens — a tunnel can hide a cloud behind a LAN name —
-/// so it is a default for the privacy tag, and `privacy` in the
+/// name, or a name without a dot. Plaintext HTTP is allowed to these and
+/// nothing else (ADR 0012). What this says nothing about is where the
+/// inference happens — a tunnel can hide a cloud behind a LAN name — so
+/// for the privacy tag it is a default, and `privacy` in the
 /// configuration overrides it (ADR 0010).
 bool isPrivateHost(String host) {
   if (isLoopbackHost(host)) return true;
@@ -46,6 +47,7 @@ bool _isPrivateAddress(InternetAddress address) {
   return (b[0] & 0xfe) == 0xfc || (b[0] == 0xfe && (b[1] & 0xc0) == 0x80);
 }
 
-/// The one line every client shows for a plaintext endpoint that is not
-/// local.
-const plaintextRefused = 'plaintext http is allowed only for localhost';
+/// The one line every client shows for a plaintext endpoint that is
+/// neither this machine nor the LAN.
+const plaintextRefused =
+    'plaintext http is allowed only on this machine or the LAN';

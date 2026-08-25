@@ -9,8 +9,8 @@ import 'archive/archive.dart';
 import 'chat/chat.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
+import 'llm/builtins.dart';
 import 'llm/factory.dart';
-import 'llm/fake.dart';
 import 'llm/openai_compatible/provider.dart';
 import 'llm/privacy.dart';
 import 'llm/probe.dart';
@@ -256,9 +256,16 @@ String credentialSuffix(CredentialStatus status, ProviderConfig? config) =>
 /// The providers that ship with every build, needing no configuration,
 /// as constructors: the cache below decides when one is built. A
 /// configured provider with the same id replaces the built-in one.
+/// `llm/builtins.dart` lists them; the test harnesses override this with
+/// the fake alone.
 final builtinLlmsProvider = Provider<List<LlmProvider Function()>>(
-  (ref) => [FakeLlmProvider.new],
+  (ref) => builtinLlms(ref.watch(secretStoreProvider)),
 );
+
+/// What a first run selects (#23): LM Studio on this Mac. Applied only
+/// while the settings file does not exist; the harnesses override it
+/// with null so a fresh test container selects nothing.
+final defaultLlmIdProvider = Provider<String?>((ref) => defaultLlmId);
 
 /// The open providers, keyed by what built them, so a configuration edit
 /// rebuilds only the providers whose configuration changed and closes
@@ -280,7 +287,6 @@ final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
   final secrets = ref.watch(secretStoreProvider);
   final cache = ref.watch(_llmCacheProvider);
   final wanted = <String, LlmProvider Function()>{};
-  final configured = <String>[];
   final misconfigured = ref.watch(misconfiguredLlmsProvider);
   final bindings = <String, String?>{};
   for (final config in configs) {
@@ -291,7 +297,6 @@ final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
     final key = 'config:${jsonEncode(config.unbound.toJson())}';
     wanted[key] = () => factory(config, secrets);
     bindings[key] = config.credentialOrigin;
-    configured.add(config.id);
   }
   final builtins = ref.watch(builtinLlmsProvider);
   for (var i = 0; i < builtins.length; i++) {
@@ -303,7 +308,10 @@ final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
       p.credentialOrigin = e.value;
     }
   }
-  final taken = configured.toSet();
+  // A configured id hides the built-in with that id whether or not the
+  // configuration can be built: a misconfigured or unknown-kind `lan`
+  // must read as such, never route to the shipped endpoint.
+  final taken = {for (final c in configs) c.id};
   return [
     for (final key in wanted.keys)
       if (key.startsWith('builtin:') && !taken.contains(providers[key]!.id))
@@ -421,7 +429,14 @@ class SettingsNotifier extends Notifier<Settings> {
       ref.watch(settingsFileProvider),
       clock: ref.watch(clockProvider),
     );
-    return _store.load();
+    // A first run — no file yet — selects the built-in default without
+    // writing anything; a file that says `"llm": null` means none.
+    final fresh = !_store.file.existsSync();
+    final settings = _store.load();
+    if (fresh && settings.llm == null) {
+      return settings.withLlm(ref.watch(defaultLlmIdProvider));
+    }
+    return settings;
   }
 
   /// Selects the provider with [id] (null for none), writing the file
