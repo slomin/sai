@@ -2,6 +2,18 @@
   "sandbox": {
     "enabled": true,
     "excludedCommands": ["gh", "open", "osascript", "screencapture"],
+    "filesystem": {
+      "allowWrite": [
+        "~/.pub-cache",
+        "~/.cache",
+        "~/.dart",
+        "~/.dart-tool",
+        "~/.dartServer",
+        "~/.flutter",
+        "~/.flutter-devtools",
+        "~/Library/Caches"
+      ]
+    },
     "network": {
       "allowedDomains": [
         "github.com",
