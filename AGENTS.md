@@ -45,6 +45,11 @@ the layout and the toolchain; this file has the rules.
   driver writes one key per write; the screen repaints cell by cell,
   so the driver matches text with whitespace stripped. The first key
   after launch is swallowed: send a Tab and an Esc before typing.
+- The LAN inference box (#23, the built-in `lan` provider) has its own
+  contract check, `uv run tool/smoke/lan.py [--full]`: health, models,
+  props, streaming, the thinking switch, vision and a needle buried in a
+  long prompt (`--full` puts it near the 262k limit and holds the box's
+  single slot for minutes — run it last). Python here runs through `uv`.
 - Two app quirks worth knowing: the first click after a launch or a
   burst of typing is often swallowed — click again and verify by the
   evidence, not by the click; synthetic ⌘-chords from System Events do
