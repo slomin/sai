@@ -17,3 +17,9 @@ ref_code_examples_only/
 
 # Per-machine Xcode signing overrides (ADR 0008)
 apps/sai_app/macos/Runner/Configs/Local.xcconfig
+
+# Claude Code project settings are shared (#56); the global ignore hides
+# .claude, so re-include just the committed file.
+!/.claude/
+/.claude/*
+!/.claude/settings.json
