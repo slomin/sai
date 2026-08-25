@@ -228,6 +228,17 @@ final class Archive {
     return ArchiveReport(count: count, head: last);
   });
 
+  /// The `HEAD` record as it stands: how many events the log holds and the
+  /// id of the newest. Read without the lock and without walking the
+  /// files — a cheap "has the log grown?" probe for a process that shares
+  /// the root with another writer (a count that moved means a [events]
+  /// re-read, or a `TaskStore.reload`, will see more). Not a check:
+  /// [verify] is the locked, recomputed read.
+  Future<ArchiveReport> head() async {
+    final head = _readHead();
+    return ArchiveReport(count: head.count, head: head.head);
+  }
+
   /// Releases the archive's lock handle. Call at a quiet point (provider
   /// disposal, shutdown) — the next operation reopens it transparently.
   Future<void> close() => _store.close();
