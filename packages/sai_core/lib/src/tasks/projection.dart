@@ -5,6 +5,7 @@ import 'date.dart';
 import 'events.dart';
 import 'lists.dart';
 import 'model.dart';
+import 'undo_state.dart';
 
 /// A task-domain event that cannot be applied: its subject is unknown, of
 /// the wrong kind, or violates a placement rule. Only sai writes task
@@ -29,7 +30,7 @@ final class TaskProjectionError implements Exception {
 /// Events outside the task family are counted but change nothing. A
 /// malformed family payload throws [FormatException]; an unappliable one
 /// throws [TaskProjectionError].
-final class TaskProjection {
+final class TaskProjection implements UndoState {
   TaskProjection._({
     required Map<TaskId, Task> tasks,
     required Map<ProjectId, Project> projects,
@@ -73,10 +74,15 @@ final class TaskProjection {
     return builder.build();
   }
 
+  @override
   final Map<TaskId, Task> tasks;
+  @override
   final Map<ProjectId, Project> projects;
+  @override
   final Map<HeadingId, Heading> headings;
+  @override
   final Map<AreaId, Area> areas;
+  @override
   final Map<TagId, Tag> tags;
   final Map<String, BlobRef> _externals;
 
@@ -196,6 +202,7 @@ final class TaskProjection {
 
   /// The prior live sibling in [task]'s structural group, for an inverse
   /// move. Null means the task was first.
+  @override
   TaskId? structuralPredecessor(TaskId task) {
     final target = tasks[task];
     if (target == null) return null;
@@ -217,6 +224,7 @@ final class TaskProjection {
   /// The prior task in Today's independent sequence, for exact undo. Unlike
   /// structural anchors, Today anchors need not currently be visible: the
   /// sequence deliberately retains filtered tasks.
+  @override
   TaskId? todayPredecessor(TaskId task) {
     final index = todayOrder.indexOf(task);
     return index <= 0 ? null : todayOrder[index - 1];

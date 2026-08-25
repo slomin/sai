@@ -271,13 +271,27 @@ event's id in the envelope `refs`. No new types, no new payload keys.
 The table is total: a degenerate mutation (deleting the deleted,
 reopening the open) inverts to the state-preserving event of its kind,
 so a session's N mutations take exactly N undos, unwound newest first.
+Each event type carries its own inverse (`TaskEvent.invert`, abstract
+on the sealed hierarchy — a new type does not compile without one);
+`invertEvent` is the entry point that delegates.
 
-The stack is session-local — one entry per command this process
-committed, no redo, gone when the process ends — and survives a
-`reload()`: entries name entities by id, and an inverse a concurrent
-writer has invalidated is refused by the same validation every command
-passes, keeping its entry for a retry. Undo against concurrent writers
-is last-write-wins behind that validation.
+The stack is session-local — one entry per **user or assistant**
+command this process committed, no redo, gone when the process ends —
+and bounded to the newest **100** entries (#53): the 101st mutation
+drops the oldest. It survives a `reload()`: entries name entities by
+id, and an inverse a concurrent writer has invalidated is refused by
+the same validation every command passes, keeping its entry for a
+retry. Undo against concurrent writers is last-write-wins behind that
+validation.
+
+A **system** task-domain mutation is an undo barrier: one committed by
+this process, or one another writer appended and a `reload()`
+discovers, clears the stack and adds no entry of its own. That is what
+keeps an import (#18) from leaving thousands of entries or letting an
+older inverse cross imported state. A mutation the reducer rejects —
+system or not — changes neither the stack nor the projection; a
+reload that finds no new system task mutation keeps the stack as
+before, and provider or chat lines never touch it.
 
 Restored exactly: field values, placement, checklist, and the
 completion/cancellation instants (they ride in `at`). Not restored:

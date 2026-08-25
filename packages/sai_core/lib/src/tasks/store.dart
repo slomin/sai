@@ -34,7 +34,8 @@ final class TaskStore {
     required String source,
   }) async {
     final events = await _readEvents(archive);
-    return TaskStore._(archive, source, TaskProjection.replay(events));
+    return TaskStore._(archive, source, TaskProjection.replay(events))
+      .._readCount = events.length;
   }
 
   /// Reads the whole log, tolerating a torn tail. A tear can also be the
@@ -94,9 +95,33 @@ final class TaskStore {
   Future<void> reload() => _serialized(() async {
     _checkOpen();
     final events = await _readEvents(_archive);
-    _projection = TaskProjection.replay(events);
+    // Everything past the last read that this store did not append itself
+    // is another writer's work — including lines that landed *before* a
+    // local commit, which the projection's own count would walk past. A
+    // system task mutation among it is the same barrier a local one is,
+    // applied only once the replay has succeeded: a log the reducer
+    // refuses leaves projection and stack alike as they were.
+    final unseen = events
+        .skip(_readCount)
+        .where((stored) => !_ownSinceRead.contains(stored.id));
+    final barrier = unseen.any(_isSystemTaskMutation);
+    final next = TaskProjection.replay(events);
+    if (barrier) _undoStack.clear();
+    _projection = next;
+    _readCount = events.length;
+    _ownSinceRead.clear();
     _notify();
   });
+
+  /// How many lines the last full read of the log returned, and the ids
+  /// this store appended since — together, the cursor [reload] uses to
+  /// tell another writer's lines from its own.
+  var _readCount = 0;
+  final _ownSinceRead = <BlobRef>{};
+
+  static bool _isSystemTaskMutation(StoredEvent stored) =>
+      stored.event.actor == Actor.system &&
+      TaskEventTypes.all.contains(stored.event.type);
 
   /// Closes the [changes] stream and refuses further commands. The archive
   /// is not touched — its owner closes it.
@@ -117,10 +142,19 @@ final class TaskStore {
     }
   }
 
-  /// One entry per committed command: the event that reverses it, and
-  /// the id of the line it would reverse. Session-local — the stack dies
-  /// with the process and survives [reload] (entries name entities by id;
-  /// a stale inverse is refused by validation, not by forgetting it).
+  /// How many mutations a session keeps undoable; the oldest entry goes
+  /// first once the stack is full.
+  static const undoLimit = 100;
+
+  /// One entry per committed user or assistant command, newest last: the
+  /// event that reverses it, and the id of the line it would reverse.
+  /// Bounded to [undoLimit]. Session-local — the stack dies with the
+  /// process and survives [reload] (entries name entities by id; a stale
+  /// inverse is refused by validation, not by forgetting it) — except
+  /// across a **system** task mutation: one committed here, or one
+  /// another writer appended and a reload discovered, clears the stack
+  /// and records nothing, so an import (#18) neither leaves thousands of
+  /// entries nor lets an older inverse cross imported state.
   final _undoStack = <({TaskEvent inverse, BlobRef undone})>[];
 
   /// Whether [undo] has a mutation to reverse.
@@ -181,7 +215,9 @@ final class TaskStore {
   /// The unserialized commit body; [undo] and [_commit] wrap it in
   /// [_serialized] themselves (nesting would deadlock on [_queue]).
   /// With [record], pushes the committed event's inverse — computed
-  /// against the projection it was validated on — onto the undo stack.
+  /// against the projection it was validated on — onto the undo stack;
+  /// a system attribution is the undo barrier instead, whatever [record]
+  /// says (an undo issued as the system clears the rest of the stack).
   Future<StoredEvent> _apply(
     TaskEvent event,
     Attribution by, {
@@ -197,12 +233,16 @@ final class TaskStore {
       },
     );
     _projection = next;
+    _ownSinceRead.add(stored.id);
     try {
-      if (record) {
+      if (by.actor == Actor.system) {
+        _undoStack.clear();
+      } else if (record) {
         _undoStack.add((
           inverse: invertEvent(event, before, created: stored.id),
           undone: stored.id,
         ));
+        if (_undoStack.length > undoLimit) _undoStack.removeAt(0);
       }
     } finally {
       // The append is durable and applied; listeners are told even if

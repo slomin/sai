@@ -212,6 +212,192 @@ void main() {
       );
     });
 
+    group('every mutable edit field round-trips through its inverse', () {
+      const model = ModelRef(provider: 'anthropic', id: 'claude-fable-5');
+
+      test('task.edit: title, notes, when, deadline, tags', () async {
+        final t1 = await store.createTag(title: 't1');
+        final t2 = await store.createTag(title: 't2');
+        final id = await store.createTask(
+          title: 'old',
+          notes: 'old notes',
+          when: TaskWhen.someday,
+          deadline: const CalendarDate(2026, 9, 1),
+          tags: [t1],
+        );
+        final prior = store.projection.task(id)!;
+        await store.editTask(
+          id,
+          title: const Patch('new'),
+          notes: const Patch('new notes'),
+          when: const Patch(TaskWhen.date(CalendarDate(2026, 9, 2))),
+          deadline: const Patch(null),
+          tags: Patch([t2]),
+          by: const Attribution.assistant(model),
+        );
+        final edited = store.projection.task(id)!;
+        expect(edited.title, 'new');
+        expect(edited.tags, [t2]);
+        await store.undo();
+        final back = store.projection.task(id)!;
+        expect(back.title, prior.title);
+        expect(back.notes, prior.notes);
+        expect(back.when, prior.when);
+        expect(back.deadline, prior.deadline);
+        expect(back.tags, prior.tags);
+        expect(back.modifiedAt.isAfter(prior.modifiedAt), isTrue);
+      });
+
+      test('project.edit: title, notes, area, when, deadline, tags', () async {
+        final a1 = await store.createArea(title: 'a1');
+        final a2 = await store.createArea(title: 'a2');
+        final t1 = await store.createTag(title: 't1');
+        final id = await store.createProject(
+          title: 'old',
+          notes: 'old notes',
+          area: a1,
+          when: TaskWhen.date(const CalendarDate(2026, 9, 1)),
+          deadline: const CalendarDate(2026, 9, 3),
+          tags: [t1],
+        );
+        final prior = store.projection.projects[id]!;
+        await store.editProject(
+          id,
+          title: const Patch('new'),
+          notes: const Patch(''),
+          area: Patch(a2),
+          when: const Patch(TaskWhen.none),
+          deadline: const Patch(null),
+          tags: const Patch([]),
+        );
+        expect(store.projection.projects[id]!.area, a2);
+        await store.undo();
+        final back = store.projection.projects[id]!;
+        expect(back.title, prior.title);
+        expect(back.notes, prior.notes);
+        expect(back.area, prior.area);
+        expect(back.when, prior.when);
+        expect(back.deadline, prior.deadline);
+        expect(back.tags, prior.tags);
+      });
+
+      test('tag.edit: title, parent', () async {
+        final p1 = await store.createTag(title: 'p1');
+        final id = await store.createTag(title: 'old', parent: p1);
+        final prior = store.projection.tags[id]!;
+        await store.editTag(
+          id,
+          title: const Patch('new'),
+          parent: const Patch(null),
+        );
+        expect(store.projection.tags[id]!.parent, isNull);
+        await store.undo();
+        final back = store.projection.tags[id]!;
+        expect(back.title, prior.title);
+        expect(back.parent, prior.parent);
+      });
+
+      test('area.edit and heading.edit: title', () async {
+        final area = await store.createArea(title: 'Home');
+        final project = await store.createProject(title: 'P');
+        final heading = await store.createHeading(project: project, title: 'H');
+        await store.editArea(area, title: const Patch('Casa'));
+        await store.editHeading(heading, title: const Patch('Prep'));
+        expect(store.projection.areas[area]!.title, 'Casa');
+        expect(store.projection.headings[heading]!.title, 'Prep');
+        await store.undo();
+        await store.undo();
+        expect(store.projection.areas[area]!.title, 'Home');
+        expect(store.projection.headings[heading]!.title, 'H');
+      });
+    });
+
+    test('all 26 types invert to the type the model doc promises', () async {
+      final area = await store.createArea(title: 'A');
+      final project = await store.createProject(title: 'P');
+      final heading = await store.createHeading(project: project, title: 'H');
+      final tag = await store.createTag(title: 'T');
+      final task = await store.createTask(title: 'x');
+      final before = store.projection;
+      final cases = <String, (TaskEvent, Type)>{
+        TaskEventTypes.taskCreate: (TaskCreated(title: 'y'), TaskDeleted),
+        TaskEventTypes.taskEdit: (
+          TaskEdited(task, title: const Patch('y')),
+          TaskEdited,
+        ),
+        TaskEventTypes.taskMove: (TaskMoved(task, project: project), TaskMoved),
+        TaskEventTypes.taskReorder: (
+          TaskReordered(task, list: TaskList.today, after: null),
+          TaskReordered,
+        ),
+        TaskEventTypes.taskComplete: (TaskCompleted(task), TaskReopened),
+        TaskEventTypes.taskCancel: (TaskCancelled(task), TaskReopened),
+        TaskEventTypes.taskReopen: (TaskReopened(task), TaskReopened),
+        TaskEventTypes.taskDelete: (TaskDeleted(task), TaskRestored),
+        TaskEventTypes.taskRestore: (TaskRestored(task), TaskRestored),
+        TaskEventTypes.taskChecklist: (
+          TaskChecklistSet(task, const []),
+          TaskChecklistSet,
+        ),
+        TaskEventTypes.areaCreate: (AreaCreated(title: 'y'), AreaDeleted),
+        TaskEventTypes.areaEdit: (
+          AreaEdited(area, title: const Patch('y')),
+          AreaEdited,
+        ),
+        TaskEventTypes.areaDelete: (AreaDeleted(area), AreaRestored),
+        TaskEventTypes.areaRestore: (AreaRestored(area), AreaRestored),
+        TaskEventTypes.projectCreate: (
+          ProjectCreated(title: 'y'),
+          ProjectDeleted,
+        ),
+        TaskEventTypes.projectEdit: (
+          ProjectEdited(project, title: const Patch('y')),
+          ProjectEdited,
+        ),
+        TaskEventTypes.projectDelete: (
+          ProjectDeleted(project),
+          ProjectRestored,
+        ),
+        TaskEventTypes.projectRestore: (
+          ProjectRestored(project),
+          ProjectRestored,
+        ),
+        TaskEventTypes.headingCreate: (
+          HeadingCreated(project: project, title: 'y'),
+          HeadingDeleted,
+        ),
+        TaskEventTypes.headingEdit: (
+          HeadingEdited(heading, title: const Patch('y')),
+          HeadingEdited,
+        ),
+        TaskEventTypes.headingDelete: (
+          HeadingDeleted(heading),
+          HeadingRestored,
+        ),
+        TaskEventTypes.headingRestore: (
+          HeadingRestored(heading),
+          HeadingRestored,
+        ),
+        TaskEventTypes.tagCreate: (TagCreated(title: 'y'), TagDeleted),
+        TaskEventTypes.tagEdit: (
+          TagEdited(tag, title: const Patch('y')),
+          TagEdited,
+        ),
+        TaskEventTypes.tagDelete: (TagDeleted(tag), TagRestored),
+        TaskEventTypes.tagRestore: (TagRestored(tag), TagRestored),
+      };
+      expect(cases.keys, unorderedEquals(TaskEventTypes.all));
+      for (final MapEntry(key: type, value: (event, inverse))
+          in cases.entries) {
+        expect(event.type, type);
+        expect(
+          invertEvent(event, before, created: fakeId).runtimeType,
+          inverse,
+          reason: type,
+        );
+      }
+    });
+
     test('an unknown subject throws StateError', () {
       expect(
         () => invertEvent(
@@ -525,6 +711,150 @@ void main() {
         'b',
       });
       expect((await archive.verify()).count, 3);
+    });
+  });
+  group('the undo barrier and bound', () {
+    final fakeId = BlobRef.sha256OfBytes([1]);
+    const model = ModelRef(provider: 'anthropic', id: 'claude-fable-5');
+    const today = CalendarDate(2026, 8, 24);
+
+    test(
+      'the stack keeps the newest 100 entries, oldest dropped first',
+      () async {
+        for (var i = 0; i <= TaskStore.undoLimit; i++) {
+          await store.quickCapture('task $i', today: today);
+        }
+        expect(store.undoDepth, TaskStore.undoLimit);
+        while (store.canUndo) {
+          await store.undo();
+        }
+        final left = store.projection.tasks.values.where(
+          (t) => t.deletedAt == null,
+        );
+        expect(left.single.title, 'task 0');
+        expect(store.undoDepth, 0);
+      },
+    );
+
+    test('user and assistant mutations are undoable', () async {
+      final id = await store.createTask(title: 'x');
+      await store.editTask(
+        id,
+        title: const Patch('y'),
+        by: const Attribution.assistant(model),
+      );
+      expect(store.undoDepth, 2);
+      await store.undo();
+      expect(store.projection.task(id)!.title, 'x');
+    });
+
+    test(
+      'a committed system mutation clears the stack and adds nothing',
+      () async {
+        final id = await store.createTask(title: 'x');
+        await store.editTask(id, title: const Patch('y'));
+        expect(store.undoDepth, 2);
+        await store.createTask(
+          title: 'imported',
+          by: const Attribution.system(),
+        );
+        expect(store.undoDepth, 0);
+        expect(store.canUndo, isFalse);
+        expect(logLines(), hasLength(3));
+      },
+    );
+
+    test('a rejected system mutation changes nothing', () async {
+      final id = await store.createTask(title: 'x');
+      final before = store.projection;
+      await expectLater(
+        store.deleteTask(fakeId, by: const Attribution.system()),
+        throwsA(isA<TaskProjectionError>()),
+      );
+      expect(store.undoDepth, 1);
+      expect(identical(store.projection, before), isTrue);
+      expect(logLines(), hasLength(1));
+      await store.undo();
+      expect(store.projection.task(id)!.deletedAt, isNotNull);
+    });
+
+    test(
+      'a system mutation another writer appended clears on reload',
+      () async {
+        await store.createTask(title: 'x');
+        final other = await TaskStore.open(archive, source: 'sai/app');
+        await other.createTask(
+          title: 'imported',
+          by: const Attribution.system(),
+        );
+        other.dispose();
+        expect(store.undoDepth, 1);
+        await store.reload();
+        expect(store.undoDepth, 0);
+      },
+    );
+
+    test(
+      'a reload without a new system task mutation keeps the stack',
+      () async {
+        await store.createTask(title: 'x');
+        final other = await TaskStore.open(archive, source: 'sai/app');
+        await other.createTask(title: 'theirs');
+        other.dispose();
+        await archive.append(
+          EventDraft(
+            type: EventTypes.chatMessage,
+            actor: Actor.system,
+            source: 'sai/tui',
+            payload: {'text': 'hello'},
+          ),
+        );
+        await store.reload();
+        expect(store.undoDepth, 1);
+        await store.reload();
+        expect(store.undoDepth, 1);
+      },
+    );
+
+    test('a remote system line before a local commit still clears', () async {
+      await store.createTask(title: 'x');
+      final other = await TaskStore.open(archive, source: 'sai/app');
+      await other.createTask(title: 'imported', by: const Attribution.system());
+      other.dispose();
+      // The local commit lands after the import line and advances the
+      // projection past it without ever having seen it.
+      await store.createTask(title: 'y');
+      expect(store.undoDepth, 2);
+      await store.reload();
+      expect(store.undoDepth, 0);
+      expect(store.projection.tasks, hasLength(3));
+    });
+
+    test('a reload the reducer refuses keeps the stack', () async {
+      final project = await store.createProject(title: 'P');
+      final stale = await TaskStore.open(archive, source: 'sai/app');
+      await store.deleteProject(project);
+      // Valid against the stale projection, invalid in log order.
+      await stale.createTask(
+        title: 'imported',
+        project: project,
+        by: const Attribution.system(),
+      );
+      stale.dispose();
+      expect(store.undoDepth, 2);
+      await expectLater(store.reload(), throwsA(isA<TaskProjectionError>()));
+      expect(store.undoDepth, 2);
+      expect(store.projection.tasks, isEmpty);
+      await store.undo();
+      expect(store.projection.projects[project]!.deletedAt, isNull);
+    });
+
+    test('a system-attributed undo is a barrier too', () async {
+      await store.createTask(title: 'x');
+      await store.createTask(title: 'y');
+      await store.undo(by: const Attribution.system());
+      expect(store.projection.trash(), hasLength(1));
+      expect(store.canUndo, isFalse);
     });
   });
 }

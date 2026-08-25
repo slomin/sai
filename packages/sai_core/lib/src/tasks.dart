@@ -12,4 +12,5 @@ export 'tasks/projection.dart';
 export 'tasks/sidebar.dart';
 export 'tasks/store.dart';
 export 'tasks/undo.dart';
+export 'tasks/undo_state.dart';
 export 'tasks/views.dart';
