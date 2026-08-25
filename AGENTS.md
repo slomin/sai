@@ -31,6 +31,10 @@ the layout and the toolchain; this file has the rules.
   archive, never a log line, never an exception message, never the
   `security` command. Tests use `InMemorySecretStore` or a throwaway
   keychain file; nothing under `test/` touches the login keychain.
+- Outbound HTTP goes only through `OpenAiCompatibleProvider`'s transport
+  in `sai_core` (ADR 0009): no redirects, no proxy, no certificate
+  bypass, plaintext only to localhost, fixed failure text naming an
+  origin. Tests talk to a loopback stub, never the network.
 - `spikes/` are frozen evidence behind a decision. They stay out of the
   workspace and nothing imports them.
 - The archive (`sai_core`'s event log) is append-only: no API updates or

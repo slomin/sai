@@ -70,20 +70,38 @@ managed from the terminal client's subcommands and stored in
 to a file or the archive (ADR 0008, [settings v0](docs/settings/settings-v0.md)):
 
 ```sh
-dart run apps/sai_tui/bin/sai_tui.dart provider add demo --kind fake --model demo-1 --key
-dart run apps/sai_tui/bin/sai_tui.dart secret set demo    # hidden prompt
-dart run apps/sai_tui/bin/sai_tui.dart provider use demo
+# a local llama-server or LM Studio, keyless
+dart run apps/sai_tui/bin/sai_tui.dart provider add local --kind openai_compatible \
+  --endpoint http://127.0.0.1:1234/v1 --model <model-id>
+dart run apps/sai_tui/bin/sai_tui.dart provider use local
+# the LAN box, over TLS, with a key
+dart run apps/sai_tui/bin/sai_tui.dart provider add lan --kind openai_compatible \
+  --endpoint https://lan.local:8443/v1 --model <model-id> --key
+dart run apps/sai_tui/bin/sai_tui.dart secret set lan     # hidden prompt
 dart run apps/sai_tui/bin/sai_tui.dart provider list
 ```
 
-Only the `fake` kind can be built today; `openai_compatible` endpoints
-(`--endpoint https://…/v1`) are stored but stay "not available" until #22
-lands. Adding an existing id changes only the options given (`--no-key`
-drops the key reference); `secret clear <id>` removes a key whether or not
-its provider is still configured.
+Two kinds exist: `fake` (built in, offline) and `openai_compatible`
+(any `/v1` endpoint: `llama-server`, LM Studio, the LAN server). Plain
+`http://` is accepted only for localhost; anything else must be
+`https://` with a certificate this Mac trusts — sai follows no
+redirects, uses no proxy and bypasses no certificate (ADR 0009). A key
+is bound to the endpoint it was entered for: moving an endpoint to
+another host, port or scheme means entering its key again. Adding an
+existing id changes only the options given (`--no-key` drops the key
+reference); `secret clear <id>` removes a key whether or not its
+provider is still configured.
 
-The app reads the same settings and keys; `sai › Provider API Key…`
-enters or removes a key from there. `sai_tui help` lists every command.
+The app reads the same settings and keys: `sai › Providers…` lists every
+provider, switches the active one in a click, refreshes an endpoint's
+health, models and context window, runs a recorded streaming test (the
+result and llama.cpp tokens/s land in the archive), and enters or
+removes a key. `sai_tui help` lists every command.
+
+For a local test, LM Studio's server (default port 1234) or
+`llama-server -m <model.gguf> --port 8080` work as they are; give
+`llama-server` a key with `--api-key-file`, never `--api-key` (argv is
+visible to every process).
 
 Keychain items trust the binary that created them by its code-signing
 identity. Ad-hoc signed builds (the default) get a new identity on every
