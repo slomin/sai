@@ -99,10 +99,12 @@ final class ProviderConfig {
     return origin == endpointOrigin(uri) ? origin : null;
   }
 
-  /// The privacy tag a kind that has no fixed one takes from its
-  /// configuration — today the `fake` only, so the policy (#27) can be
-  /// exercised before a cloud kind exists. Real kinds ignore it: their
-  /// tag is a property of where the inference runs, not of a file.
+  /// The privacy tag, when the configuration states one (#27): where the
+  /// inference happens, `local` or `cloud`. Null leaves it to the kind —
+  /// the fake is local, an `openai_compatible` endpoint follows its host
+  /// (`defaultPrivacyFor`). A value this sai does not know is read as
+  /// null, never as a reason to refuse a file (a newer sai may write a
+  /// third tag); it is dropped on the next write.
   final LlmPrivacy? privacy;
 
   /// Keys this sai does not know, exactly as read.
@@ -211,11 +213,6 @@ final class ProviderConfig {
     final privacy = privacyName == null
         ? null
         : LlmPrivacy.values.asNameMap()[privacyName];
-    if (privacyName != null && privacy == null) {
-      throw SettingsFormatException(
-        'provider $id: privacy must be local or cloud',
-      );
-    }
     try {
       return ProviderConfig(
         id: id,

@@ -886,6 +886,63 @@ void main() {
         );
       });
 
+      test('an openai_compatible endpoint is tagged by its host', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        ProviderConfig at(String id, String endpoint, {LlmPrivacy? privacy}) =>
+            ProviderConfig(
+              id: id,
+              kind: 'openai_compatible',
+              endpoint: endpoint,
+              defaultModel: 'm',
+              privacy: privacy,
+            );
+        settings.upsertProvider(at('local', 'http://127.0.0.1:1234/v1'));
+        settings.upsertProvider(at('lan', 'https://potato.local:8443/v1'));
+        settings.upsertProvider(at('hosted', 'https://api.example.com/v1'));
+        settings.upsertProvider(
+          at('tunnel', 'https://10.0.0.9/v1', privacy: LlmPrivacy.cloud),
+        );
+        final registry = container.read(llmRegistryProvider);
+        expect(registry['local']!.privacy, LlmPrivacy.local);
+        expect(registry['lan']!.privacy, LlmPrivacy.local);
+        expect(registry['hosted']!.privacy, LlmPrivacy.cloud);
+        expect(registry['tunnel']!.privacy, LlmPrivacy.cloud);
+        settings.selectLlm('hosted');
+        expect(
+          container.read(llmStatusProvider),
+          'hosted @ https://api.example.com (m) — cloud · tasks withheld',
+        );
+        // Re-tagging rebuilds the provider with the new tag.
+        settings.upsertProvider(
+          at('hosted', 'https://api.example.com/v1', privacy: LlmPrivacy.local),
+        );
+        expect(
+          container.read(llmRegistryProvider)['hosted']!.privacy,
+          LlmPrivacy.local,
+        );
+      });
+
+      test('a recorder held across a rebuild still reads the policy', () async {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(cloudy);
+        final provider = container.read(llmRegistryProvider)['cloudy']!;
+        final recorder = await container.read(llmRecorderProvider.future);
+        container.invalidate(archiveProvider);
+        await container.read(archiveProvider.future);
+        settings.setShareTasksWithCloud(true);
+        final call = await recorder.start(
+          provider,
+          LlmRequest(
+            messages: [const LlmMessage(LlmRole.user, 'hi')],
+            taskContext: 'Today: x',
+          ),
+        );
+        await call.done;
+        expect(call.taskContextWithheld, isFalse);
+      });
+
       test('the status line and the warning say tasks are withheld', () {
         final container = make();
         final settings = container.read(settingsProvider.notifier);

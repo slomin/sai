@@ -41,6 +41,10 @@ case $1 in
   shot) shot "$2" ;;
   click)
     read wx wy ww wh <<< "$(frame)"
+    [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no sai window frame; not clicking" >&2; exit 1; }
+    if (( $2 < 0 || $3 < 0 || $2 >= ww || $3 >= wh )); then
+      echo "point ($2,$3) is outside the ${ww}x${wh} window; not clicking" >&2; exit 1
+    fi
     osascript -e 'tell application "System Events" to set frontmost of process "sai" to true'
     "$tools/click" $((wx + $2)) $((wy + $3))
     sleep 1

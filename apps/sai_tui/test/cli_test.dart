@@ -405,15 +405,39 @@ void main() {
     expect(await run('provider add cloudy --privacy lan'), cliUsageError);
     expect(err.toString(), contains('--privacy takes local or cloud'));
     err.clear();
+    // Any kind takes the tag; a public host is cloud unless told otherwise.
     expect(
       await run(
-        'provider add real --kind openai_compatible --privacy cloud '
+        'provider add hosted --kind openai_compatible '
+        '--endpoint https://api.example.com/v1 --model m',
+      ),
+      cliOk,
+    );
+    expect(await run('provider list'), cliOk);
+    expect(
+      out.toString(),
+      contains(
+        'hosted  openai_compatible @ https://api.example.com/v1  (m) · cloud',
+      ),
+    );
+    out.clear();
+    expect(await run('provider add hosted --privacy local'), cliOk);
+    expect(await run('provider list'), cliOk);
+    expect(out.toString(), contains('(m) · local'));
+    out.clear();
+    // Changing the kind of a tagged provider keeps the tag.
+    expect(
+      await run(
+        'provider add cloudy --kind openai_compatible '
         '--endpoint http://127.0.0.1:1 --model m',
       ),
-      cliUsageError,
+      cliOk,
     );
-    expect(err.toString(), contains('--privacy applies to the fake kind only'));
-    expect(container.read(settingsProvider).provider('real'), isNull);
+    expect(
+      container.read(settingsProvider).provider('cloudy')!.privacy,
+      LlmPrivacy.cloud,
+    );
+    expect(await run('provider add cloudy --kind fake'), cliOk);
     // An edit that names no --privacy keeps the tag.
     err.clear();
     expect(await run('provider add cloudy --model m2'), cliOk);

@@ -182,7 +182,10 @@ it (#29 keeps keys in the Keychain).
 ### Provider traffic (#21)
 
 One model call is **three lines, never more**: the request, then either
-the response or the failure, then the usage. Streamed deltas are not
+the response or the failure, then the usage. (A call to a `cloud`-tagged
+provider is additionally announced by a `policy.decision` line written
+before its request — [policy](#policy-27); that line belongs to the
+policy, and the call itself stays three.) Streamed deltas are not
 events — an append is a locked, fsynced line, and a paragraph is not
 worth five hundred of them (ADR
 [0007](../decisions/0007-provider-traffic-is-three-events-per-call.md)).
@@ -190,7 +193,8 @@ worth five hundred of them (ADR
 line's `model` carries the target `{provider, id}`, and the response adds
 `version` and `request_id` where the backend exposes them. `refs` on the
 response, failure and usage lines name the request line (usage also
-names the response, when there is one).
+names the response, when there is one); a request to a cloud provider
+names its decision line.
 
 | type | payload |
 | --- | --- |
@@ -210,13 +214,17 @@ a failure and is, by definition, not in the log.
 
 ### Policy (#27)
 
-A call to a `cloud`-tagged provider is preceded by exactly one
+Every call to a `cloud`-tagged provider writes exactly one
 `policy.decision` line (actor `system`, `model` naming the same target as
-the request); a call to a `local` provider has none (ADR
+the request) before its `provider.request`; a call to a `local` provider
+has none (ADR
 [0010](../decisions/0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md)).
-The `provider.request` that follows carries the decision's id in `refs`
-and records the messages **as sent** — withheld task context enters
-neither the wire nor the log.
+The pairing is the request's `refs`, which names its decision — not
+adjacency: two clients, or two calls in one, may interleave their lines.
+The request records the messages **as sent** — withheld task context
+enters neither the wire nor the log. A decision whose request never
+followed (the archive refused the request line) is a call that was not
+made.
 
 | type | payload |
 | --- | --- |

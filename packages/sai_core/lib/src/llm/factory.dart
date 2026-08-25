@@ -1,4 +1,5 @@
 import '../secrets/secret_store.dart';
+import '../settings/endpoint.dart';
 import '../settings/provider_config.dart';
 import 'fake.dart';
 import 'openai_compatible/provider.dart';
@@ -15,8 +16,8 @@ typedef LlmProviderFactory = LlmProvider Function(
 
 /// The `fake` kind: a configured fake, for offline demos and tests that
 /// want a provider to come from settings rather than from the built-ins.
-/// The only kind whose privacy tag comes from its configuration, so the
-/// policy (#27) can be tried without a cloud backend.
+/// Its privacy tag comes from its configuration, `local` by default, so
+/// the policy (#27) can be tried without a cloud backend.
 LlmProvider fakeProviderFactory(ProviderConfig config, SecretStore secrets) =>
     FakeLlmProvider(
       id: config.id,
@@ -45,6 +46,13 @@ String? missingForKind(ProviderConfig config) {
   return null;
 }
 
+/// The privacy tag an `openai_compatible` endpoint gets when its
+/// configuration names none: `local` for this machine and the LAN (#22),
+/// `cloud` for any other host — the safe default, since a `/v1` on a
+/// public name is as likely to be a hosted service as a home server.
+LlmPrivacy defaultPrivacyFor(Uri endpoint) =>
+    isPrivateHost(endpoint.host) ? LlmPrivacy.local : LlmPrivacy.cloud;
+
 /// The `openai_compatible` kind (#22). Throws [ArgumentError] when the
 /// configuration lacks what [llmKindNeeds] lists.
 LlmProvider openAiCompatibleFactory(
@@ -56,12 +64,14 @@ LlmProvider openAiCompatibleFactory(
   if (endpoint == null || model == null) {
     throw ArgumentError('openai_compatible needs ${missingForKind(config)}');
   }
+  final uri = Uri.parse(endpoint);
   return OpenAiCompatibleProvider(
     id: config.id,
-    endpoint: Uri.parse(endpoint),
+    endpoint: uri,
     defaultModel: model,
     secrets: secrets,
     credential: config.credential,
     credentialOrigin: config.credentialOrigin,
+    privacy: config.privacy ?? defaultPrivacyFor(uri),
   );
 }

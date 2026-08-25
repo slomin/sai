@@ -55,20 +55,14 @@ void main() {
       );
       expect(cloudy.copyWith(privacy: () => null).privacy, isNull);
       expect(cloudy.copyWith(kind: 'other').privacy, LlmPrivacy.cloud);
-      expect(
-        () => ProviderConfig.fromJson({
-          'id': 'x',
-          'kind': 'fake',
-          'privacy': 'lan',
-        }),
-        throwsA(
-          isA<SettingsFormatException>().having(
-            (e) => e.reason,
-            'reason',
-            'provider x: privacy must be local or cloud',
-          ),
-        ),
-      );
+      // A tag this sai does not know is not a reason to lose the file.
+      final unknown = ProviderConfig.fromJson({
+        'id': 'x',
+        'kind': 'fake',
+        'privacy': 'orbit',
+      });
+      expect(unknown.privacy, isNull);
+      expect(unknown.toJson(), isNot(contains('privacy')));
     });
 
     test('an empty provider list is not written', () {

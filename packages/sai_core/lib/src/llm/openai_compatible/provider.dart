@@ -28,6 +28,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     required this._secrets,
     this.credential,
     this.credentialOrigin,
+    this.privacy = LlmPrivacy.local,
     this.deadlines = const OpenAiDeadlines(),
     HttpClient Function()? clientFactory,
   }) : _endpoint = _trimSlash(endpoint),
@@ -50,10 +51,11 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   @override
   String get displayName => '$id @ $origin';
 
-  /// Every endpoint this provider reaches is on this machine or the LAN
-  /// (#22); the privacy policy (#27) reads this.
+  /// Where the inference happens, as the configuration says or the
+  /// endpoint's host suggests (`openAiCompatibleFactory`); the privacy
+  /// policy (#27) reads this. The transport itself has no opinion.
   @override
-  LlmPrivacy get privacy => LlmPrivacy.local;
+  final LlmPrivacy privacy;
 
   @override
   final String defaultModel;

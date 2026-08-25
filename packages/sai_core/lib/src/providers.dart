@@ -381,16 +381,19 @@ final endpointInfoProvider = FutureProvider.autoDispose
 /// A recorder bound to the archive and this client's source — how a
 /// caller obtains a call that records itself. Deliberately independent
 /// of [activeLlmProvider]: switching never disturbs a running call.
-final llmRecorderProvider = FutureProvider<LlmRecorder>(
-  (ref) async => LlmRecorder(
+final llmRecorderProvider = FutureProvider<LlmRecorder>((ref) async {
+  // The policy is read per call, through the container rather than this
+  // ref: a flipped switch governs the next call without rebuilding the
+  // recorder, and a recorder held across a rebuild (the archive
+  // reopened, say) keeps working instead of tripping on a stale ref.
+  final container = ref.container;
+  return LlmRecorder(
     archive: await ref.watch(archiveProvider.future),
     source: ref.watch(eventSourceProvider),
     clock: ref.watch(clockProvider),
-    // Read, not watched: a flipped switch governs the next call without
-    // rebuilding the recorder under a running one.
-    policy: () => ref.read(privacyPolicyProvider),
-  ),
-);
+    policy: () => container.read(privacyPolicyProvider),
+  );
+});
 
 /// Loads the settings file once and writes it on every change. One
 /// store per build: it remembers whether the file belongs to a newer sai.

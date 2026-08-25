@@ -147,4 +147,59 @@ void main() {
       );
     });
   });
+
+  group('the default tag of an endpoint', () {
+    test('this machine and the LAN are local', () {
+      for (final host in [
+        'localhost',
+        '127.0.0.1',
+        '::1',
+        '10.0.0.5',
+        '172.16.4.4',
+        '172.31.255.1',
+        '192.168.1.20',
+        '169.254.1.1',
+        '100.64.0.1',
+        'fd12::1',
+        'fe80::1',
+        'potato',
+        'potato.local',
+        'nas.lan',
+        'box.home',
+        'srv.internal',
+        'srv.home.arpa',
+      ]) {
+        expect(isPrivateHost(host), isTrue, reason: host);
+        expect(
+          defaultPrivacyFor(
+            Uri.parse(
+              'https://${host.contains(':') ? '[$host]' : host}:8443/v1',
+            ),
+          ),
+          LlmPrivacy.local,
+          reason: host,
+        );
+      }
+    });
+
+    test('anything else is cloud', () {
+      for (final host in [
+        'api.openai.com',
+        'openrouter.ai',
+        '8.8.8.8',
+        '172.32.0.1',
+        '2001:db8::1',
+        'lan.example',
+      ]) {
+        expect(isPrivateHost(host), isFalse, reason: host);
+        expect(
+          defaultPrivacyFor(
+            Uri.parse('https://${host.contains(':') ? '[$host]' : host}/v1'),
+          ),
+          LlmPrivacy.cloud,
+          reason: host,
+        );
+      }
+    });
+  });
 }

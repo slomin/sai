@@ -9,7 +9,7 @@ usage: sai_tui                       open the terminal client
        sai_tui provider list
        sai_tui provider add <id> --kind <kind> [--endpoint <url>]
                                     [--model <name>] [--key | --no-key]
-                                    [--privacy local|cloud]  (fake only)
+                                    [--privacy local|cloud]
        sai_tui provider remove <id>
        sai_tui provider use <id|none>
        sai_tui privacy               show the cloud-sharing switch
@@ -27,8 +27,10 @@ provider:<id>; adding an existing id changes only the options given
 entered for: after --endpoint moves a provider to another host, port or
 scheme, enter its key again. secret clear and status also work for a
 provider that is no longer configured. A cloud provider sees your tasks
-only while share-tasks is on (off by default); --privacy gives the fake
-kind a tag so the policy can be tried without a cloud backend.''';
+only while share-tasks is on (off by default). --privacy says where a
+provider's inference happens; without it the fake is local and an
+openai_compatible endpoint is local on this machine or the LAN and cloud
+on any other host.''';
 
 /// What `privacy` prints for each position of the switch.
 String privacyLine(PrivacyPolicy policy) => policy.shareTasksWithCloud
@@ -137,11 +139,6 @@ Future<int> runCli(
           }
         }
         if (kind == null) throw _Usage('provider add needs --kind');
-        // A real kind's tag is where its inference runs, not a flag; a
-        // file must never claim otherwise.
-        if (privacy != null && kind != 'fake') {
-          throw _Usage('--privacy applies to the fake kind only');
-        }
         final ProviderConfig config;
         try {
           // What a new entry must satisfy beyond what a stored one must.

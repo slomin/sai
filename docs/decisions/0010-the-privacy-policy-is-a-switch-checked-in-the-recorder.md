@@ -20,10 +20,14 @@ yes/no per provider.
 - **One switch.** `share_tasks_with_cloud` in `settings.json`, off by
   default. A `cloud` provider sees the task context only while it is
   on; a `local` provider always does. There is no per-provider switch:
-  the tag is the only input, and the tag is a property of where the
-  inference runs, not of a file — except for the `fake` kind, which
-  takes a `privacy` key so the policy can be exercised in both clients
-  before a cloud backend exists.
+  the tag is the only input. The tag is where the inference runs, which
+  a kind may know (the cloud kinds, #24–#26) and an `openai_compatible`
+  endpoint cannot — so that kind takes it from the endpoint's host by
+  default (loopback, private and LAN names are `local`, anything else
+  is `cloud`: a `/v1` on a public name is as likely a hosted service as
+  a home server) and from an explicit `privacy` key when the user knows
+  better. The `fake` takes the key too, so the policy can be exercised
+  in both clients before a cloud backend exists.
 - **One check, in the recorder.** ADR
   [0007](0007-provider-traffic-is-three-events-per-call.md) made
   `LlmRecorder` the single point where requests are assembled; the

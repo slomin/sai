@@ -26,7 +26,7 @@ and `test/no_secrets_test.dart` enforce that.
 | `endpoint` | no | absolute `http`/`https` URL with no userinfo, query or fragment. New entries take `http` only for `localhost` or a loopback address (ADR 0009); a stored one is read either way and refused at request time. `openai_compatible` needs it, and `default_model` |
 | `default_model` | no | the model used when a request names none |
 | `credential` | no | `^provider:[a-z0-9][a-z0-9_-]*$` — the secret-store *account* holding the key, by convention `provider:<id>`. Absent for keyless backends |
-| `privacy` | no | `local` \| `cloud` — the tag of a kind that has none of its own: honoured by `fake` only, so the policy can be tried before a cloud kind exists; other kinds keep their fixed tag and ignore it |
+| `privacy` | no | `local` \| `cloud` — where the inference happens (#27, ADR 0010). Absent: the fake is `local`; an `openai_compatible` endpoint is `local` for this machine and the LAN (loopback, private, link-local and unique-local addresses, `.local`/`.lan`/`.home`/`.internal` names, dotless names) and `cloud` for any other host. An unknown value is read as absent and dropped on write |
 | `credential_origin` | no | `scheme://host[:port]` of the endpoint the key was entered for; written when the key is stored. The key is sent only while it equals the endpoint's origin (ADR 0009); one that does not match, or names no credential, is dropped on read, and an edit that moves the endpoint drops it |
 
 ## Rules
