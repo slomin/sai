@@ -31,8 +31,8 @@ List<PlatformMenuItem> saiMenus({
       PlatformMenuItemGroup(
         members: [
           PlatformMenuItem(
-            label: 'Provider API Key…',
-            onSelected: commands.setApiKey,
+            label: 'Providers…',
+            onSelected: commands.showProviders,
           ),
         ],
       ),
