@@ -31,7 +31,7 @@ final _chatViewProvider = Provider(
 /// type; Tab moves to the chat, Esc back to capture (or stops a running
 /// answer first). With capture focused, ↑/↓ move the cursor over the
 /// task rows (a single-line field lets them through) and **Ctrl+D**
-/// completes the selected task. Ctrl+C quits (it bubbles through the
+/// completes the selected task; neither does anything in the chat. Ctrl+C quits (it bubbles through the
 /// field by design). **Ctrl+U** is undo — not Ctrl+Z, which stays
 /// `SIGTSTP` in a real terminal (`stdin.lineMode = false` clears ICANON
 /// only, ISIG stays on) and would suspend the TUI mid-alt-screen. Esc
@@ -96,7 +96,11 @@ class _TuiAppState extends State<TuiApp> {
       _undo();
       return true;
     }
-    if (event.logicalKey == LogicalKey.keyD && event.isControlPressed) {
+    // List keys belong to the capture pane: in the chat, Ctrl+D while
+    // typing to the assistant must not touch a task.
+    if (_pane == _Pane.capture &&
+        event.logicalKey == LogicalKey.keyD &&
+        event.isControlPressed) {
       _complete();
       return true;
     }
@@ -154,8 +158,11 @@ class _TuiAppState extends State<TuiApp> {
     final sections = _sections();
     if (sections == null) return;
     final rows = TaskListPane.rows(sections);
-    final next = TaskListPane.clamp(_selected + by, rows.length);
-    if (next < 0) return;
+    // Start from where the marker is, not where it was: a shrunken list
+    // may have clamped the rendered selection below the stored index.
+    final current = TaskListPane.clamp(_selected, rows.length);
+    if (current < 0) return;
+    final next = TaskListPane.clamp(current + by, rows.length);
     setState(() {
       _selected = next;
       _listScroll.ensureIndexVisible(

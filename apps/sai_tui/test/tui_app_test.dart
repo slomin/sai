@@ -448,6 +448,47 @@ void main() {
       }, size: size);
     });
 
+    test('Ctrl+D in the chat pane completes nothing', () async {
+      await testNocterm('chat ctrl-d', (tester) async {
+        final container = await pumpTwo(tester);
+        await tester.sendKey(LogicalKey.tab);
+        await tester.pump();
+        await tester.sendKeyEvent(ctrlD);
+        await pumpFor(tester, const Duration(milliseconds: 100));
+        expect(tester.terminalState, containsText('Today (2)'));
+        expect(tester.terminalState, isNot(containsText('done:')));
+        expect(
+          container
+              .read(tasksProvider)
+              .value!
+              .list(TaskList.logbook, today: container.read(todayProvider))
+              .length,
+          0,
+        );
+      }, size: size);
+    });
+
+    test('↑ after completing the last task moves from the marker', () async {
+      await testNocterm('stale cursor', (tester) async {
+        final container = await pumpTwo(tester);
+        final store = container.read(tasksProvider.notifier).store;
+        await store.createTask(
+          title: 'Three',
+          when: TaskWhen.date(container.read(todayProvider)),
+        );
+        await pumpUntilText(tester, 'Three @today');
+        await tester.sendKey(LogicalKey.arrowDown);
+        await tester.sendKey(LogicalKey.arrowDown);
+        await pumpUntilText(tester, '› Three @today');
+        await tester.sendKeyEvent(ctrlD);
+        await pumpUntilText(tester, 'done: Three');
+        expect(tester.terminalState, containsText('› Two @today'));
+        await tester.sendKey(LogicalKey.arrowUp);
+        await pumpUntilText(tester, '› One @today');
+        expect(tester.terminalState, containsText('  Two @today'));
+      }, size: size);
+    });
+
     test('arrows in the chat pane leave the cursor alone', () async {
       await testNocterm('chat arrows', (tester) async {
         await pumpTwo(tester);
