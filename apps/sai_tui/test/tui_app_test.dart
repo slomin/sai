@@ -66,6 +66,22 @@ void main() {
     }, size: size);
   });
 
+  test('the footer says when the cloud provider gets no tasks', () async {
+    await testNocterm('privacy footer', (tester) async {
+      final container = await pumpTui(tester);
+      final settings = container.read(settingsProvider.notifier);
+      settings.upsertProvider(
+        ProviderConfig(id: 'cloudy', kind: 'fake', privacy: LlmPrivacy.cloud),
+      );
+      settings.selectLlm('cloudy');
+      await pumpUntilText(tester, 'cloudy (fake-1) — cloud · tasks withheld');
+      settings.setShareTasksWithCloud(true);
+      await pumpUntilText(tester, 'cloudy (fake-1) — cloud');
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(tester.terminalState, isNot(containsText('tasks withheld')));
+    }, size: size);
+  });
+
   test('a long status line takes one row, not the list\'s', () async {
     await testNocterm('long status', (tester) async {
       final container = await pumpTui(tester);

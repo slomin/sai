@@ -48,7 +48,7 @@ void main() {
 
   test('provider add, list, use, remove', () async {
     expect(await run('provider list'), cliOk);
-    expect(out.toString(), contains('  fake  built-in  (fake-1)'));
+    expect(out.toString(), contains('  fake  built-in  (fake-1) · local'));
     expect(out.toString(), contains('(no provider selected)'));
     out.clear();
 
@@ -83,7 +83,7 @@ void main() {
     expect(await run('provider list'), cliOk);
     expect(
       out.toString(),
-      contains('* lan  fake @ https://lan.example/v1  (qwen) · no key'),
+      contains('* lan  fake @ https://lan.example/v1  (qwen) · local · no key'),
     );
     out.clear();
 
@@ -351,4 +351,75 @@ void main() {
       expect(settingsFile().existsSync(), isFalse);
     },
   );
+
+  test('the privacy switch: off by default, shown, flipped, warned', () async {
+    expect(await run('privacy'), cliOk);
+    expect(
+      out.toString().trim(),
+      'cloud sharing: off — cloud providers do not see your tasks',
+    );
+    out.clear();
+
+    expect(await run('provider add cloudy --kind fake --privacy cloud'), cliOk);
+    expect(
+      jsonDecode(settingsFile().readAsStringSync()),
+      containsPair('providers', [
+        {'id': 'cloudy', 'kind': 'fake', 'privacy': 'cloud'},
+      ]),
+    );
+    expect(await run('provider list'), cliOk);
+    expect(out.toString(), contains('  cloudy  fake  (fake-1) · cloud'));
+    out.clear();
+
+    expect(await run('provider use cloudy'), cliOk);
+    expect(out.toString().split('\n').where((l) => l.isNotEmpty), [
+      'cloudy (fake-1) — cloud · tasks withheld',
+      "cloud provider 'cloudy' will not see your tasks until sharing is on: "
+          'sai_tui privacy share-tasks on',
+    ]);
+    out.clear();
+
+    expect(await run('privacy share-tasks on'), cliOk);
+    expect(
+      out.toString().trim(),
+      'cloud sharing: on — cloud providers see your tasks',
+    );
+    expect(container.read(settingsProvider).shareTasksWithCloud, isTrue);
+    expect(container.read(llmStatusProvider), 'cloudy (fake-1) — cloud');
+    out.clear();
+    expect(await run('provider use cloudy'), cliOk);
+    expect(out.toString().trim(), 'cloudy (fake-1) — cloud');
+    out.clear();
+
+    expect(await run('privacy share-tasks off'), cliOk);
+    expect(out.toString().split('\n').where((l) => l.isNotEmpty), [
+      'cloud sharing: off — cloud providers do not see your tasks',
+      "cloud provider 'cloudy' will not see your tasks until sharing is on",
+    ]);
+    expect(container.read(settingsProvider).shareTasksWithCloud, isFalse);
+    out.clear();
+
+    expect(await run('privacy share-tasks sideways'), cliUsageError);
+    expect(err.toString(), contains('share-tasks takes on or off'));
+    err.clear();
+    expect(await run('provider add cloudy --privacy lan'), cliUsageError);
+    expect(err.toString(), contains('--privacy takes local or cloud'));
+    err.clear();
+    expect(
+      await run(
+        'provider add real --kind openai_compatible --privacy cloud '
+        '--endpoint http://127.0.0.1:1 --model m',
+      ),
+      cliUsageError,
+    );
+    expect(err.toString(), contains('--privacy applies to the fake kind only'));
+    expect(container.read(settingsProvider).provider('real'), isNull);
+    // An edit that names no --privacy keeps the tag.
+    err.clear();
+    expect(await run('provider add cloudy --model m2'), cliOk);
+    expect(
+      container.read(settingsProvider).provider('cloudy')!.privacy,
+      LlmPrivacy.cloud,
+    );
+  });
 }
