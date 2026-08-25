@@ -66,8 +66,8 @@ the layout and the toolchain; this file has the rules.
   keychain file; nothing under `test/` touches the login keychain.
 - Outbound HTTP goes only through `OpenAiCompatibleProvider`'s transport
   in `sai_core` (ADR 0009): no redirects, no proxy, no certificate
-  bypass, plaintext only to localhost, fixed failure text naming an
-  origin. Tests talk to a loopback stub, never the network.
+  bypass, plaintext only to this machine or the LAN (ADR 0012), fixed
+  failure text naming an origin. Tests talk to a loopback stub, never the network.
 - Task data reaches a provider only through `LlmRecorder`, which applies
   the privacy policy (ADR 0010): a caller puts the list in
   `LlmRequest.taskContext`, never in a message of its own, so a cloud

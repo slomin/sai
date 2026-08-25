@@ -1,6 +1,6 @@
 # 9. Provider transport is direct and bounded
 
-Date: 2026-08-25 · Status: accepted · Issue: #22 · Schema: [settings-v0](../settings/settings-v0.md)
+Date: 2026-08-25 · Status: accepted · Issue: #22 · Amended by: [0012](0012-plaintext-http-is-allowed-on-the-lan.md) · Schema: [settings-v0](../settings/settings-v0.md)
 
 ## Context
 
@@ -39,6 +39,8 @@ Every outbound provider request goes through one transport, in
   trust is an `unreachable` failure (`TLS handshake failed`).
 - **Plaintext only to this machine.** `http://` is accepted only for
   `localhost` and loopback addresses; anything else must be `https://`.
+  (Widened to the LAN by ADR
+  [0012](0012-plaintext-http-is-allowed-on-the-lan.md).)
   Refused at entry (the CLI and the dialogs, `checkEndpointForEntry`)
   and at request time (no socket is opened) — never on the read path, so
   a rule tightened later cannot make a stored file unreadable.
@@ -84,7 +86,8 @@ rather than rebuilding it, so a running call is never cut.
 - A LAN endpoint needs TLS. `llama-server` serves it natively
   (`--ssl-key-file`, `--ssl-cert-file`, built with `LLAMA_OPENSSL=ON`);
   the certificate must be one this Mac trusts, since nothing here
-  bypasses trust. #23 owns that setup.
+  bypasses trust. #23 owns that setup. (Superseded: ADR 0012 admits
+  plaintext on the LAN.)
 - Corporate proxies are not supported, and there is no setting to add
   one. If that changes, it is a visible setting, not an environment
   variable.

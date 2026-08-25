@@ -138,13 +138,13 @@ final class ProviderConfig {
     }
   }
 
-  /// [checkEndpoint] plus the entry-time rules: plaintext `http` only for
-  /// this machine (ADR 0009). Writers (the CLI, the dialogs) call this
-  /// before storing; the reader does not.
+  /// [checkEndpoint] plus the entry-time rules: plaintext `http` only on
+  /// this machine or the LAN (ADR 0009, 0012). Writers (the CLI, the
+  /// dialogs) call this before storing; the reader does not.
   static void checkEndpointForEntry(String url) {
     checkEndpoint(url);
     final uri = Uri.parse(url);
-    if (uri.scheme == 'http' && !isLoopbackHost(uri.host)) {
+    if (uri.scheme == 'http' && !isPrivateHost(uri.host)) {
       throw ArgumentError(plaintextRefused);
     }
   }

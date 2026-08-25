@@ -90,9 +90,12 @@ dart run apps/sai_tui/bin/sai_tui.dart provider list
 
 Two kinds exist: `fake` (built in, offline) and `openai_compatible`
 (any `/v1` endpoint: `llama-server`, LM Studio, the LAN server). Plain
-`http://` is accepted only for localhost; anything else must be
-`https://` with a certificate this Mac trusts — sai follows no
-redirects, uses no proxy and bypasses no certificate (ADR 0009). A key
+`http://` is accepted only on this machine or the LAN (loopback and
+private addresses, `.local`-style and dotless names — ADR 0012);
+anything else must be `https://` with a certificate this Mac trusts —
+sai follows no redirects, uses no proxy and bypasses no certificate
+(ADR 0009). A key entered for a plaintext LAN endpoint travels the LAN
+in the clear. A key
 is bound to the endpoint it was entered for: moving an endpoint to
 another host, port or scheme means entering its key again. Adding an
 existing id changes only the options given (`--no-key` drops the key

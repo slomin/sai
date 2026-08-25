@@ -11,7 +11,7 @@ abstract final class TransportText {
   static const redirected =
       'the endpoint redirected; redirects are not followed';
   static const plaintext =
-      'plaintext http is allowed only for localhost; '
+      'plaintext http is allowed only on this machine or the LAN; '
       'use https';
   static const noKey = 'no key stored for this endpoint';
   static const keyElsewhere =

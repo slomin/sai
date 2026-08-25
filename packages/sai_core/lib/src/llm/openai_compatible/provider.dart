@@ -16,7 +16,8 @@ import 'sse.dart';
 /// An OpenAI-compatible `/v1` backend — llama.cpp's `llama-server`, LM
 /// Studio, the LAN box — over a direct, bounded transport (ADR 0009):
 /// no redirects, no proxy, no certificate bypass, plaintext only to this
-/// machine, the key sent only to the origin it was entered for, and a
+/// machine or the LAN (ADR 0012), the key sent only to the origin it was
+/// entered for, and a
 /// deadline on every stage. Failures carry fixed text and the origin.
 ///
 /// The key is read from [secrets] at call time, never held.
@@ -104,7 +105,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     if (_closed) {
       return (refuse(LlmFailureKind.internal, TransportText.closed), null);
     }
-    if (_endpoint.scheme == 'http' && !isLoopbackHost(_endpoint.host)) {
+    if (_endpoint.scheme == 'http' && !isPrivateHost(_endpoint.host)) {
       return (
         refuse(LlmFailureKind.unreachable, TransportText.plaintext),
         null,

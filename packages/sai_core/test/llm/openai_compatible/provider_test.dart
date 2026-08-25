@@ -191,13 +191,15 @@ void main() {
     });
 
     test(
-      'refuses plaintext to anything but this machine, without connecting',
+      'refuses plaintext beyond this machine and the LAN, without connecting',
       () async {
-        final provider = make(endpoint: Uri.parse('http://lan.example:1/v1'));
-        final result = await provider.start(ask('x')).done;
-        expect(result.failure!.kind, LlmFailureKind.unreachable);
-        expect(result.failure!.message, TransportText.plaintext);
-        expect(result.failure!.endpoint, 'http://lan.example:1');
+        for (final host in ['lan.example', '203.0.113.1']) {
+          final provider = make(endpoint: Uri.parse('http://$host:1/v1'));
+          final result = await provider.start(ask('x')).done;
+          expect(result.failure!.kind, LlmFailureKind.unreachable);
+          expect(result.failure!.message, TransportText.plaintext);
+          expect(result.failure!.endpoint, 'http://$host:1');
+        }
       },
     );
 

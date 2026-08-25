@@ -1,6 +1,6 @@
 # Settings, v0
 
-Status: current · Issues: #21, #29, #22, #27 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md)
+Status: current · Issues: #21, #29, #22, #27, #23 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md), [0012](../decisions/0012-plaintext-http-is-allowed-on-the-lan.md)
 
 The non-secret preferences both clients share: one JSON object in
 `settings.json`, beside the default archive (`SAI_SETTINGS_FILE` moves it).
@@ -24,7 +24,7 @@ and `test/no_secrets_test.dart` enforce that.
 | --- | --- | --- |
 | `id` | yes | `^[a-z0-9][a-z0-9_-]*$`; what `llm` selects and the archive's `model.provider` carries |
 | `kind` | yes | which implementation builds it: `fake`, `openai_compatible` (#22). Open: an unknown kind is kept and shown as "not available" |
-| `endpoint` | no | absolute `http`/`https` URL with no userinfo, query or fragment. New entries take `http` only for `localhost` or a loopback address (ADR 0009); a stored one is read either way and refused at request time. `openai_compatible` needs it, and `default_model` |
+| `endpoint` | no | absolute `http`/`https` URL with no userinfo, query or fragment. New entries take `http` only for this machine or the LAN — the same hosts `privacy` calls `local` below (ADR 0009, 0012); a stored one is read either way and refused at request time. `openai_compatible` needs it, and `default_model` |
 | `default_model` | no | the model used when a request names none |
 | `credential` | no | `^provider:[a-z0-9][a-z0-9_-]*$` — the secret-store *account* holding the key, by convention `provider:<id>`. Absent for keyless backends |
 | `privacy` | no | `local` \| `cloud` — where the inference happens (#27, ADR 0010). Absent: the fake is `local`; an `openai_compatible` endpoint is `local` for this machine and the LAN (loopback, private, link-local and unique-local addresses, `.local`/`.lan`/`.home`/`.internal` names, dotless names) and `cloud` for any other host. An unknown value is read as absent and dropped on write |
