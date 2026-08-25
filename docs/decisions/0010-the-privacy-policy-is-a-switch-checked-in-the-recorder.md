@@ -54,8 +54,9 @@ yes/no per provider.
 
 ## Consequences
 
-- #34 fills `taskContext`; it never builds a system message with the
-  list itself, or the policy could not withhold it.
+- #34 fills `taskContext` (through `assembleContext`, ADR 0011); it
+  never builds a system message with the list itself, or the policy
+  could not withhold it.
 - #62 asks the same policy whether a cloud provider is *eligible*; a
   cloud provider with the switch off is skipped rather than fed an
   empty context, and that skip is its own decision event.

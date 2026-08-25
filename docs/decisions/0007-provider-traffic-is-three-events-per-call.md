@@ -59,7 +59,10 @@ type; `finish: cancelled` says how it stopped.
   before it is sent.
 - A reader reconstructing a conversation joins request → response by
   `refs`; there is no per-delta timing in the log, only tokens per
-  second where the backend reports it.
+  second where the backend reports it. Since #34 the conversation is
+  also written in its own words — `chat.message` lines around the call
+  (ADR 0011) — so the three provider lines remain the wire record and
+  nothing more.
 - Stored provider events pass through the task projection untouched
   (it counts foreign types and applies none), so the task store and
   the provider record share one chain.

@@ -37,6 +37,16 @@ the layout and the toolchain; this file has the rules.
   button without dialling anything.
 - Nothing in a smoke touches the login Keychain unless the ticket is
   about keys — and then say so before launching.
+- The TUI is driven the same way, through a pseudo-terminal:
+  `tool/smoke/tui.py <dir> <steps.json>` sends keys, waits for screen
+  text and saves screen snapshots (no tmux needed). A real terminal
+  delivers each key twice to nocterm and repaints cell by cell; the
+  driver matches text with whitespace stripped.
+- Two app quirks worth knowing: the first click after a launch or a
+  burst of typing is often swallowed — click again and verify by the
+  evidence, not by the click; synthetic ⌘-chords from System Events do
+  not reach Flutter, so drive menu commands through the menu item
+  (`click menu item "Show Reasoning" of menu "View" …`).
 
 ## Boundaries
 
@@ -59,6 +69,9 @@ the layout and the toolchain; this file has the rules.
   the privacy policy (ADR 0010): a caller puts the list in
   `LlmRequest.taskContext`, never in a message of its own, so a cloud
   provider can be denied it while the switch is off.
+- A request is built by `assembleContext` and nowhere else (ADR 0011):
+  profile, memory, lists and conversation in one deterministic, hashed
+  shape. A client sends what it is given; it never assembles a prompt.
 - `spikes/` are frozen evidence behind a decision. They stay out of the
   workspace and nothing imports them.
 - The archive (`sai_core`'s event log) is append-only: no API updates or

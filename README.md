@@ -135,6 +135,24 @@ SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/sai_tui
 Build a debug app bundle (what CI does): `cd apps/sai_app && flutter build
 macos --debug` → `apps/sai_app/build/macos/Build/Products/Debug/sai.app`.
 
+## Chat
+
+Both clients carry the conversation (#34): the pane in the app (⌘J
+shows and hides it; Enter sends, Esc or **Stop** ends an answer) and
+the lower pane in the TUI (Tab moves between capture and chat; Enter
+sends, Esc stops). The assistant sees Today and Upcoming as you see
+them, rendered by one function in `sai_core` and carried apart from the
+messages so the privacy policy can withhold them (ADR 0011, 0010); it
+reads the list and cannot change it. Every turn is in the archive — the
+user's `chat.message`, the call's `provider.*` lines with a
+`context_hash` of exactly what the model saw, and the assistant's
+`chat.message` naming the model that answered. With a cloud provider
+and sharing off, the answer is marked `tasks withheld`. A model that
+thinks before it answers (LM Studio's reasoning models do) streams its
+thinking too; it is recorded on the response line and shown only while
+View › **Show Reasoning** (⌘R) or `sai_tui reasoning on` says so —
+until then the pane says `thinking…` while it waits for the answer.
+
 ## Verify
 
 Same commands CI runs, from the repository root:
