@@ -1,7 +1,14 @@
 {
   "sandbox": {
     "enabled": true,
-    "excludedCommands": ["gh", "open", "osascript", "screencapture"],
+    "excludedCommands": [
+      "dart *",
+      "flutter *",
+      "gh *",
+      "open *",
+      "osascript *",
+      "screencapture *"
+    ],
     "filesystem": {
       "allowWrite": [
         "~/.pub-cache",
