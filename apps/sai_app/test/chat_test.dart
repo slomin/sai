@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/chat_pane.dart';
 import 'package:sai_app/commands.dart';
@@ -9,6 +12,7 @@ import 'package:sai_app/shell.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
+import 'stub_server.dart';
 
 Future<void> chord(WidgetTester tester, LogicalKeyboardKey key) async {
   await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
@@ -183,13 +187,267 @@ void main() {
     expect(find.text(noProviderStatus), findsNothing);
   });
 
-  testWidgets('submitting in the chat field says it is not wired up', (
-    tester,
-  ) async {
-    await pumpApp(tester);
-    await tester.enterText(find.byKey(chatFieldKey), 'hello?');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pump();
-    expect(find.textContaining('chat is not wired up'), findsOneWidget);
+  group('the conversation (#34)', () {
+    late FakeLlmProvider fake;
+
+    setUp(() => fake = FakeLlmProvider(script: echo));
+
+    Future<ProviderContainer> ready(
+      WidgetTester tester, {
+      String select = 'fake',
+    }) async {
+      final container = await pumpApp(
+        tester,
+        overrides: [
+          builtinLlmsProvider.overrideWithValue([() => fake]),
+        ],
+      );
+      await tester.runAsync(
+        () => container
+            .read(tasksProvider.notifier)
+            .store
+            .createTask(
+              title: 'Call mom',
+              when: TaskWhen.date(container.read(todayProvider)),
+            ),
+      );
+      container.read(settingsProvider.notifier).selectLlm(select);
+      await tester.pump();
+      return container;
+    }
+
+    Future<void> ask(WidgetTester tester, String line) async {
+      await tester.enterText(find.byKey(chatFieldKey), line);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+    }
+
+    testWidgets('a question streams its answer into the pane', (tester) async {
+      final container = await ready(tester);
+      await ask(tester, 'what is due?');
+      await until(tester, () => container.read(chatProvider).turns.length == 2);
+      expect(find.byKey(chatSendKey), findsOneWidget);
+      // The pane followed the answer; the question is above the fold.
+      await tester.drag(find.byKey(chatTranscriptKey), const Offset(0, 5000));
+      await tester.pump();
+      expect(find.text('what is due?'), findsOneWidget, reason: screen());
+      expect(find.text('you'), findsOneWidget);
+      // The fake echoed what it saw: the list was in the context.
+      expect(
+        find.descendant(
+          of: find.byKey(chatTranscriptKey),
+          matching: find.textContaining('Call mom @today'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<TextField>(find.byKey(chatFieldKey)).controller!.text,
+        '',
+      );
+      final log = archiveLines(container.read(archiveRootProvider));
+      expect(log.where((l) => l.contains('"chat.message"')), hasLength(2));
+      expect(log.where((l) => l.contains('"provider.request"')), hasLength(1));
+      expect(
+        log.singleWhere((l) => l.contains('"provider.request"')),
+        contains('"context_hash":"sha256-'),
+      );
+    });
+
+    testWidgets('Stop cancels a slow answer', (tester) async {
+      fake = FakeLlmProvider(
+        script: (_) => List.filled(200, 'x').join(' '),
+        delta: const Duration(milliseconds: 20),
+      );
+      final container = await ready(tester);
+      await ask(tester, 'go');
+      await until(
+        tester,
+        () => find.textContaining('x x').evaluate().isNotEmpty,
+      );
+      await tester.tap(find.byKey(chatStopKey));
+      await until(tester, () => container.read(chatProvider).turns.length == 2);
+      expect(find.text('sai · cancelled'), findsOneWidget);
+      expect(find.byKey(chatSendKey), findsOneWidget);
+    });
+
+    testWidgets('Esc stops the answer too', (tester) async {
+      fake = FakeLlmProvider(
+        script: (_) => List.filled(200, 'x').join(' '),
+        delta: const Duration(milliseconds: 20),
+      );
+      final container = await ready(tester);
+      await ask(tester, 'go');
+      await until(
+        tester,
+        () => find.textContaining('x x').evaluate().isNotEmpty,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await until(tester, () => container.read(chatProvider).turns.length == 2);
+      expect(find.text('sai · cancelled'), findsOneWidget);
+    }, variant: macOS);
+
+    testWidgets('a failed call is named by kind, message and origin', (
+      tester,
+    ) async {
+      fake = FakeLlmProvider(
+        failWith: const LlmFailure(
+          LlmFailureKind.unreachable,
+          'nothing answered at the endpoint',
+          endpoint: 'http://localhost:1',
+        ),
+      );
+      final container = await ready(tester);
+      await ask(tester, 'go');
+      await until(tester, () => container.read(chatProvider).turns.length == 2);
+      expect(
+        find.text(
+          'failed: unreachable — nothing answered at the endpoint '
+          '(http://localhost:1)',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a cloud provider with sharing off answers without the list', (
+      tester,
+    ) async {
+      fake = FakeLlmProvider(
+        id: 'cloudy',
+        privacy: LlmPrivacy.cloud,
+        script: echo,
+      );
+      final container = await ready(tester, select: 'cloudy');
+      expect(find.textContaining(tasksWithheldSuffix), findsOneWidget);
+      await ask(tester, 'due?');
+      await until(tester, () => container.read(chatProvider).turns.length == 2);
+      expect(find.text('sai · tasks withheld'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(chatTranscriptKey),
+          matching: find.textContaining('Call mom'),
+        ),
+        findsNothing,
+      );
+      final log = archiveLines(container.read(archiveRootProvider));
+      expect(log.where((l) => l.contains('"policy.decision"')), hasLength(1));
+    });
+
+    testWidgets('⌘R shows and hides the reasoning, and remembers it', (
+      tester,
+    ) async {
+      fake = FakeLlmProvider(
+        script: (_) => 'ready.',
+        reasoning: (_) => 'let me think',
+      );
+      final container = await ready(tester);
+      await ask(tester, 'go');
+      await until(tester, () => container.read(chatProvider).turns.length == 2);
+      expect(find.byKey(chatReasoningKey), findsNothing);
+      expect(find.text('ready.'), findsOneWidget);
+      await chord(tester, LogicalKeyboardKey.keyR);
+      expect(find.byKey(chatReasoningKey), findsOneWidget);
+      expect(find.text('let me think'), findsOneWidget);
+      expect(find.text('reasoning shown'), findsOneWidget);
+      expect(container.read(settingsProvider).showReasoning, isTrue);
+      expect(
+        menuItem(menuDelegate.menus, ['View', 'Hide Reasoning']),
+        isNotNull,
+      );
+      await chord(tester, LogicalKeyboardKey.keyR);
+      expect(find.byKey(chatReasoningKey), findsNothing);
+      expect(container.read(settingsProvider).showReasoning, isFalse);
+    }, variant: macOS);
+
+    testWidgets('a refused send keeps the draft and says why', (tester) async {
+      final container = await ready(tester);
+      container.read(settingsProvider.notifier).selectLlm(null);
+      await tester.pump();
+      await ask(tester, 'anyone there?');
+      expect(find.text(noProviderStatus), findsNWidgets(2));
+      expect(
+        tester.widget<TextField>(find.byKey(chatFieldKey)).controller!.text,
+        'anyone there?',
+      );
+      expect(container.read(chatProvider).turns, isEmpty);
+    });
+  });
+
+  group('against a stub endpoint', () {
+    late StubServer stub;
+    HttpOverrides? blocked;
+    setUp(() async {
+      blocked = HttpOverrides.current;
+      HttpOverrides.global = null;
+      stub = await StubServer.start();
+    });
+    tearDown(() async {
+      await stub.close();
+      HttpOverrides.global = blocked;
+    });
+
+    testWidgets('one turn goes over the wire and is hashed', (tester) async {
+      stub.words = const ['Call ', 'mom ', 'is ', 'due.'];
+      final container = await pumpApp(tester);
+      final settings = container.read(settingsProvider.notifier);
+      settings.upsertProvider(
+        ProviderConfig(
+          id: 'local',
+          kind: 'openai_compatible',
+          endpoint: stub.v1,
+          defaultModel: 'qwen',
+        ),
+      );
+      settings.selectLlm('local');
+      await tester.pump();
+      await tester.enterText(find.byKey(chatFieldKey), 'what is due?');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      await until(tester, () => container.read(chatProvider).turns.length == 2);
+      expect(find.textContaining('Call mom is due.'), findsOneWidget);
+      expect(stub.requests, contains('POST /v1/chat/completions'));
+      final log = archiveLines(container.read(archiveRootProvider));
+      final request = log.singleWhere((l) => l.contains('"provider.request"'));
+      expect(request, contains('"context_hash":"sha256-'));
+      expect(request, contains(defaultProfile.split('\n').first));
+      final said = log.last;
+      expect(said, contains('"chat.message"'));
+      expect(said, contains('"actor":"assistant"'));
+      expect(said, contains('"finish":"stop"'));
+      await container.read(llmRegistryProvider)['local']!.close();
+      await tester.pump();
+    });
   });
 }
+
+String screen() => find
+    .byType(Text)
+    .evaluate()
+    .map((e) => (e.widget as Text).data)
+    .join(' / ');
+
+/// A fake that answers with what it was shown, so a test can see whether
+/// the list reached the model.
+String echo(LlmRequest r) =>
+    r.messages.map((m) => '${m.role.name}:${m.text}').join(' | ');
+
+/// Pumps until [ready]: the archive writes are real I/O (hence
+/// `runAsync`) while the fake's delays are timers on the test clock
+/// (hence pumping with a duration) — both have to move.
+Future<void> until(
+  WidgetTester tester,
+  bool Function() ready, {
+  Duration timeout = const Duration(seconds: 10),
+}) => tester.runAsync(() async {
+  final deadline = DateTime.now().add(timeout);
+  while (!ready()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail(
+        'timed out — ${find.byType(Text).evaluate().map((e) => (e.widget as Text).data).join(' / ')}',
+      );
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 20));
+  }
+  // One more frame so the screen shows the state that satisfied [ready].
+  await tester.pump();
+});

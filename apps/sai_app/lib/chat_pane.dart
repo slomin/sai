@@ -1,50 +1,221 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:sai_core/sai_core.dart';
 
 import 'commands.dart';
 
 /// The chat pane's input, so tests and Cmd+J can find it.
 const chatFieldKey = Key('chat-field');
 
-/// The collapsible pane the assistant will live in. Chrome only: the
-/// conversation itself is #34 and its rendering #39, so for now the
-/// input owns up to doing nothing.
-class ChatPane extends ConsumerWidget {
+/// The transcript list.
+const chatTranscriptKey = Key('chat-transcript');
+
+/// A reasoning block, when shown.
+const chatReasoningKey = Key('chat-reasoning');
+
+/// The button that sends the draft, and the one that stops an answer.
+const chatSendKey = Key('chat-send');
+const chatStopKey = Key('chat-stop');
+
+/// What the empty pane says.
+const chatEmptyHint =
+    'Ask about your list — what is due, what is coming up, how the day '
+    'looks. The assistant reads Today and Upcoming; it cannot change them.';
+
+/// The conversation (#34): the transcript from [chatProvider], the answer
+/// as it streams, and the composer. Plain text for now — rendering is
+/// #39. The draft and focus live in `commands.dart` so they survive the
+/// pane unmounting below its breakpoint; the transcript lives in core.
+class ChatPane extends ConsumerStatefulWidget {
   const ChatPane({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ChatPane> createState() => _ChatPaneState();
+}
+
+class _ChatPaneState extends ConsumerState<ChatPane> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Keeps the newest text in view as it arrives, once laid out.
+  void _follow() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(chatProvider, (_, _) => _follow());
+    final state = ref.watch(chatProvider);
+    final showReasoning = ref.watch(showReasoningProvider);
+    final commands = AppCommands.of(context);
+    final theme = Theme.of(context);
     return Column(
       children: [
         Expanded(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'The assistant will answer here once a provider is set up.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall,
+          child: state.turns.isEmpty && !state.busy
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      chatEmptyHint,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                )
+              : ListView(
+                  key: chatTranscriptKey,
+                  controller: _scroll,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  children: [
+                    for (final turn in state.turns)
+                      _TurnRow(turn, showReasoning: showReasoning),
+                    if (state.busy)
+                      _Row(
+                        who: 'sai',
+                        reasoning: showReasoning ? state.reasoning : null,
+                        text: state.streaming!.isEmpty
+                            ? (state.reasoning == null ? '…' : 'thinking…')
+                            : '${state.streaming!}▌',
+                        note: state.tasksWithheld ? tasksWithheldWord : null,
+                      ),
+                  ],
+                ),
+        ),
+        if (state.error case final error?)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              error,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
               ),
             ),
           ),
-        ),
         Padding(
           padding: const EdgeInsets.all(12),
-          child: TextField(
-            key: chatFieldKey,
-            controller: ref.watch(chatDraftProvider),
-            focusNode: ref.watch(chatFocusProvider),
-            onSubmitted: (_) => ref
-                .read(noticeProvider.notifier)
-                .show('chat is not wired up yet'),
-            decoration: const InputDecoration(
-              hintText: 'Ask sai…',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  key: chatFieldKey,
+                  controller: ref.watch(chatDraftProvider),
+                  focusNode: ref.watch(chatFocusProvider),
+                  onSubmitted: (_) => commands.sendChat(),
+                  decoration: const InputDecoration(
+                    hintText: 'Ask sai…',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (state.busy)
+                TextButton(
+                  key: chatStopKey,
+                  onPressed: commands.cancelChat,
+                  child: const Text('Stop'),
+                )
+              else
+                TextButton(
+                  key: chatSendKey,
+                  onPressed: commands.sendChat,
+                  child: const Text('Send'),
+                ),
+            ],
           ),
         ),
       ],
     );
   }
 }
+
+class _TurnRow extends StatelessWidget {
+  const _TurnRow(this.turn, {required this.showReasoning});
+
+  final ChatTurn turn;
+  final bool showReasoning;
+
+  @override
+  Widget build(BuildContext context) {
+    final failure = turn.failure;
+    final notes = [
+      if (turn.finish == LlmFinish.cancelled) 'cancelled',
+      if (turn.finish == LlmFinish.length) 'cut short',
+      if (turn.tasksWithheld) tasksWithheldWord,
+    ];
+    return _Row(
+      who: turn.role == ChatRole.user ? 'you' : 'sai',
+      reasoning: showReasoning ? turn.reasoning : null,
+      text: turn.text,
+      note: notes.isEmpty ? null : notes.join(' · '),
+      error: failure == null ? null : chatFailureLine(failure),
+    );
+  }
+}
+
+class _Row extends StatelessWidget {
+  const _Row({
+    required this.who,
+    required this.text,
+    this.reasoning,
+    this.note,
+    this.error,
+  });
+
+  final String who;
+  final String text;
+
+  /// The model's thinking, shown dimmed above the answer when the
+  /// setting is on; null hides it.
+  final String? reasoning;
+  final String? note;
+  final String? error;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final label = theme.textTheme.labelSmall?.copyWith(
+      color: theme.colorScheme.primary,
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(note == null ? who : '$who · $note', style: label),
+          if (reasoning case final reasoning?)
+            Text(
+              reasoning,
+              key: chatReasoningKey,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          if (text.isNotEmpty) Text(text),
+          if (error case final error?)
+            Text(
+              error,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The failed turn's line, in the words the Providers dialog uses.
+String chatFailureLine(LlmFailure failure) =>
+    'failed: ${failure.kind.name} — ${failure.message}'
+    '${failure.endpoint == null ? '' : ' (${failure.endpoint})'}';
