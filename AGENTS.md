@@ -35,6 +35,10 @@ the layout and the toolchain; this file has the rules.
   in `sai_core` (ADR 0009): no redirects, no proxy, no certificate
   bypass, plaintext only to localhost, fixed failure text naming an
   origin. Tests talk to a loopback stub, never the network.
+- Task data reaches a provider only through `LlmRecorder`, which applies
+  the privacy policy (ADR 0010): a caller puts the list in
+  `LlmRequest.taskContext`, never in a message of its own, so a cloud
+  provider can be denied it while the switch is off.
 - `spikes/` are frozen evidence behind a decision. They stay out of the
   workspace and nothing imports them.
 - The archive (`sai_core`'s event log) is append-only: no API updates or
