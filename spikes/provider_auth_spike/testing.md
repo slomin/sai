@@ -51,7 +51,7 @@ Evidence: the archive's `provider.request`/`provider.response` lines
 (model lineage from `system/init`, `apiKeySource: none`), `claude`'s
 `/usage` before and after showing the plan pool moved, and the Console
 usage page showing **no** API spend for the window. Then set
-`ANTHROPIC_API_KEY=sk-ant-placeholder` in the shell, relaunch, send —
+`ANTHROPIC_API_KEY=not-a-real-key` in the shell, relaunch, send —
 expect a `credential` failure, no request, no spend.
 
 **ChatGPT subscription (G).** Preconditions: sai's dedicated
