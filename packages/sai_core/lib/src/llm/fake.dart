@@ -96,7 +96,9 @@ final class FakeLlmProvider implements LlmProvider {
     final cut = limit != null && limit < words.length;
     final reply = cut ? words.sublist(0, limit) : words;
     var emitted = 0;
-    final thought = reasoning?.call(request);
+    final thought = request.reasoning == false
+        ? null
+        : reasoning?.call(request);
     for (final word in _chunks(thought ?? '')) {
       await Future<void>.delayed(delta);
       if (controller.isDone) return;

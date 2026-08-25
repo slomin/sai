@@ -88,8 +88,8 @@ class AppCommands {
   /// Stops the answer being streamed; a no-op when none is.
   final VoidCallback cancelChat;
 
-  /// Shows or hides the model's reasoning in the chat pane
-  /// (`show_reasoning` in settings).
+  /// Lets the model think before it answers, or not (`reasoning` in
+  /// settings); the thinking shows in the chat pane while it is on.
   final VoidCallback toggleReasoning;
   final VoidCallback showShortcuts;
 
@@ -140,12 +140,12 @@ class AppCommands {
 
   static void _toggleReasoning(ProviderContainer container) {
     final settings = container.read(settingsProvider.notifier);
-    final next = !container.read(showReasoningProvider);
+    final next = !container.read(reasoningProvider);
     try {
-      settings.setShowReasoning(next);
+      settings.setReasoning(next);
       container
           .read(noticeProvider.notifier)
-          .show(next ? 'reasoning shown' : 'reasoning hidden');
+          .show(next ? 'reasoning on' : 'reasoning off');
     } on Object catch (error) {
       container
           .read(noticeProvider.notifier)

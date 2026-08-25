@@ -245,6 +245,7 @@ void main() {
         delta: const Duration(milliseconds: 5),
       );
       final container = await make();
+      container.read(settingsProvider.notifier).setReasoning(true);
       final thoughts = <String>[];
       final answers = <String>[];
       container.listen(chatProvider, (_, next) {
@@ -261,9 +262,30 @@ void main() {
       expect(turn.text, 'ready.');
       expect(turn.reasoning, 'let me think');
       expect(container.read(chatProvider).reasoning, isNull);
-      expect(container.read(showReasoningProvider), isFalse);
-      container.read(settingsProvider.notifier).setShowReasoning(true);
-      expect(container.read(showReasoningProvider), isTrue);
+      expect(
+        lines().singleWhere((l) => l['type'] == 'provider.request')['payload'],
+        isNot(containsPair('reasoning', false)),
+      );
+    },
+  );
+
+  test(
+    'with reasoning off the request says so and the fake stays quiet',
+    () async {
+      fake = FakeLlmProvider(
+        script: (_) => 'ready.',
+        reasoning: (_) => 'let me think',
+      );
+      final container = await make();
+      expect(container.read(reasoningProvider), isFalse);
+      await container.read(chatProvider.notifier).send('go');
+      final turn = container.read(chatProvider).turns.last;
+      expect(turn.text, 'ready.');
+      expect(turn.reasoning, isNull);
+      expect(
+        lines().singleWhere((l) => l['type'] == 'provider.request')['payload'],
+        containsPair('reasoning', false),
+      );
     },
   );
 

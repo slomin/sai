@@ -22,7 +22,7 @@ List<PlatformMenuItem> saiMenus({
   required bool canUndo,
   required bool chatShown,
   required bool chatFits,
-  required bool reasoningShown,
+  required bool reasoningOn,
 }) => [
   PlatformMenu(
     label: 'sai',
@@ -96,11 +96,11 @@ List<PlatformMenuItem> saiMenus({
         shortcut: const SingleActivator(LogicalKeyboardKey.keyJ, meta: true),
         onSelected: chatFits ? commands.toggleChat : null,
       ),
-      // The model's thinking beside its answer; a setting until #40
-      // gives it a screen. Platform items carry no checked state (ADR
+      // Whether the model thinks before it answers (and shows it); the
+      // same switch as the Providers dialog's, until #40 gives it a screen. Platform items carry no checked state (ADR
       // 0005), so the label says which way it goes.
       PlatformMenuItem(
-        label: reasoningShown ? 'Hide Reasoning' : 'Show Reasoning',
+        label: reasoningOn ? 'Disable Reasoning' : 'Enable Reasoning',
         shortcut: const SingleActivator(LogicalKeyboardKey.keyR, meta: true),
         onSelected: commands.toggleReasoning,
       ),
@@ -190,7 +190,7 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
     final canUndo = ref.watch(canUndoProvider);
     final fits = chatFits(context);
     final shown = ref.watch(chatVisibleProvider) && fits;
-    final reasoning = ref.watch(showReasoningProvider);
+    final reasoning = ref.watch(reasoningProvider);
     final state = (canUndo, shown, fits, reasoning);
     if (state != _menuState) {
       _menuState = state;
@@ -199,7 +199,7 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
         canUndo: canUndo,
         chatShown: shown,
         chatFits: fits,
-        reasoningShown: reasoning,
+        reasoningOn: reasoning,
       );
     }
     return PlatformMenuBar(

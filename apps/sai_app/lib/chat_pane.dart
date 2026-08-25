@@ -54,7 +54,7 @@ class _ChatPaneState extends ConsumerState<ChatPane> {
   Widget build(BuildContext context) {
     ref.listen(chatProvider, (_, _) => _follow());
     final state = ref.watch(chatProvider);
-    final showReasoning = ref.watch(showReasoningProvider);
+    final reasoningOn = ref.watch(reasoningProvider);
     final commands = AppCommands.of(context);
     final theme = Theme.of(context);
     return Column(
@@ -77,11 +77,11 @@ class _ChatPaneState extends ConsumerState<ChatPane> {
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   children: [
                     for (final turn in state.turns)
-                      _TurnRow(turn, showReasoning: showReasoning),
+                      _TurnRow(turn, reasoningOn: reasoningOn),
                     if (state.busy)
                       _Row(
                         who: 'sai',
-                        reasoning: showReasoning ? state.reasoning : null,
+                        reasoning: reasoningOn ? state.reasoning : null,
                         text: state.streaming!.isEmpty
                             ? (state.reasoning == null ? '…' : 'thinking…')
                             : '${state.streaming!}▌',
@@ -139,10 +139,10 @@ class _ChatPaneState extends ConsumerState<ChatPane> {
 }
 
 class _TurnRow extends StatelessWidget {
-  const _TurnRow(this.turn, {required this.showReasoning});
+  const _TurnRow(this.turn, {required this.reasoningOn});
 
   final ChatTurn turn;
-  final bool showReasoning;
+  final bool reasoningOn;
 
   @override
   Widget build(BuildContext context) {
@@ -155,7 +155,7 @@ class _TurnRow extends StatelessWidget {
     ];
     return _Row(
       who: turn.role == ChatRole.user ? 'you' : 'sai',
-      reasoning: showReasoning ? turn.reasoning : null,
+      reasoning: reasoningOn ? turn.reasoning : null,
       text: turn.text,
       note: notes.isEmpty ? null : notes.join(' · '),
       error: failure == null ? null : chatFailureLine(failure),

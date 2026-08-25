@@ -14,7 +14,7 @@ final _listStateProvider = Provider(
 final _chatViewProvider = Provider(
   (ref) => (
     chat: ref.watch(chatProvider),
-    showReasoning: ref.watch(showReasoningProvider),
+    reasoningOn: ref.watch(reasoningProvider),
   ),
 );
 
@@ -148,7 +148,7 @@ class _TuiAppState extends State<TuiApp> {
             final chatFocused = _pane == _Pane.chat;
             final pane = ChatPane(
               state: chat,
-              showReasoning: view.showReasoning,
+              reasoningOn: view.reasoningOn,
               focused: chatFocused,
               scroll: _chatScroll,
               input: _chatInput,

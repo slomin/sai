@@ -35,8 +35,10 @@ final class ContextBudget {
 }
 
 /// Where no endpoint says otherwise: a window every local model of
-/// interest has, with a quarter kept for the answer.
-const defaultContextBudget = ContextBudget(maxTokens: 8000, replyReserve: 1024);
+/// interest has, with half kept for the answer — a model that thinks
+/// before it answers spends its reasoning from the same `max_tokens`,
+/// and a reserve of 1 024 was seen to run out before the first word.
+const defaultContextBudget = ContextBudget(maxTokens: 8000, replyReserve: 4096);
 
 /// A conservative estimate: one token per four bytes of UTF-8, rounded
 /// up. There is no tokenizer in the repository; the budget is a guard,
@@ -156,6 +158,7 @@ AssembledContext assembleContext({
   required List<LlmMessage> history,
   required String draft,
   ContextBudget budget = defaultContextBudget,
+  bool? reasoning,
 }) {
   final message = draft.trim();
   if (message.isEmpty) throw ArgumentError('draft must not be blank');
@@ -186,6 +189,7 @@ AssembledContext assembleContext({
       ],
       maxTokens: budget.replyReserve,
       taskContext: tasks,
+      reasoning: reasoning,
     );
     final estimate = request.sent.fold(0, (n, m) => n + estimateTokens(m.text));
     return (request, estimate);

@@ -36,7 +36,7 @@ void main() {
       canUndo: canUndo,
       chatShown: chat && fits,
       chatFits: fits,
-      reasoningShown: false,
+      reasoningOn: false,
     );
 
     setUp(calls.clear);

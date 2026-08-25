@@ -29,6 +29,7 @@ final class LlmRequest {
     this.maxTokens,
     this.temperature,
     this.taskContext,
+    this.reasoning,
   }) : messages = List.unmodifiable(messages) {
     if (messages.isEmpty) {
       throw ArgumentError('a request needs at least one message');
@@ -58,12 +59,18 @@ final class LlmRequest {
   /// Personal data the policy may withhold; see the class note.
   final String? taskContext;
 
+  /// Whether the model may think before it answers: false asks the
+  /// backend not to (`reasoning_effort: none` on an OpenAI-compatible
+  /// wire); null leaves it to the backend's default.
+  final bool? reasoning;
+
   /// The same request without its task context.
   LlmRequest withoutTaskContext() => LlmRequest(
     messages: messages,
     model: model,
     maxTokens: maxTokens,
     temperature: temperature,
+    reasoning: reasoning,
   );
 
   /// The messages as they go on the wire: [taskContext], when present, as
@@ -90,6 +97,7 @@ final class LlmRequest {
     model: model,
     maxTokens: maxTokens,
     temperature: temperature,
+    reasoning: reasoning,
   );
 }
 

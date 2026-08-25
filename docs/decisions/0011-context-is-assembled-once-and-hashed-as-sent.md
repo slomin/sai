@@ -41,8 +41,10 @@ put the privacy check in the recorder and asked #34 to carry the list on
   name data, not the prompt.
 - **A budget with a fixed cut order.** With no tokenizer in the
   repository the estimate is one token per four bytes, against a
-  default 8 000-token window with 1 024 kept for the answer (also the
-  request's `max_tokens`). Over budget, cuts go: the oldest turns (in
+  default 8 000-token window with 4 096 kept for the answer (also the
+  request's `max_tokens` — a reasoning model spends its thinking from
+  the same allowance, and 1 024 ran out before the first word in the
+  smoke). Over budget, cuts go: the oldest turns (in
   pairs), then Upcoming days from the farthest back (the text says how
   many were cut), then memory. Today and the profile are never cut;
   past that the send is refused and the client says so. What was cut is
@@ -61,10 +63,14 @@ put the privacy check in the recorder and asked #34 to carry the list on
   stream it on the same connection; the transport keeps it apart from
   the answer (`LlmDelta.reasoning`, `LlmResult.reasoning`), the
   recorder writes it on `provider.response` as `reasoning` (capped at
-  128 KiB, marked when cut), and a `show_reasoning` setting — off by
-  default, View › Show Reasoning (⌘R) in the app, `sai_tui reasoning
-  on|off` — decides whether the clients show it. It is never part of
-  the conversation history sent back, and never in `chat.message`.
+  128 KiB, marked when cut). One `reasoning` setting — off by default;
+  the Providers dialog and View › Enable Reasoning (⌘R) in the app,
+  `sai_tui reasoning on|off` — decides whether the model may think at
+  all: off goes on the request as `reasoning_effort: none` (the one
+  switch LM Studio honours for Qwen-family models) and nothing shows;
+  on leaves the model to it and the clients show what it thought. The
+  thinking is never part of the history sent back, and never in
+  `chat.message`.
 
 - **History is governed like the list.** An assistant turn that saw the
   list may quote it, so when the policy withholds the list from the

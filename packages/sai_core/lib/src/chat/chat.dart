@@ -169,6 +169,8 @@ class ChatNotifier extends Notifier<ChatState> {
         ],
         draft: message,
         budget: budget,
+        // Off asks the backend not to think; on leaves it to the model.
+        reasoning: container.read(reasoningProvider) ? null : false,
       );
     } on ContextBudgetError catch (error) {
       return _refuse(error.toString());

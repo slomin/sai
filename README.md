@@ -148,10 +148,11 @@ user's `chat.message`, the call's `provider.*` lines with a
 `context_hash` of exactly what the model saw, and the assistant's
 `chat.message` naming the model that answered. With a cloud provider
 and sharing off, the answer is marked `tasks withheld`. A model that
-thinks before it answers (LM Studio's reasoning models do) streams its
-thinking too; it is recorded on the response line and shown only while
-View › **Show Reasoning** (⌘R) or `sai_tui reasoning on` says so —
-until then the pane says `thinking…` while it waits for the answer.
+thinks before it answers (LM Studio's reasoning models do) is asked not
+to unless the reasoning switch is on — in the Providers dialog, View ›
+**Enable Reasoning** (⌘R), or `sai_tui reasoning on`; off is faster and
+the default. On, the thinking streams too, is recorded on the response
+line, and shows dimmed above the answer (`thinking…` while it waits).
 
 ## Verify
 

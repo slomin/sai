@@ -11,7 +11,7 @@ class ChatPane extends StatelessComponent {
   const ChatPane({
     super.key,
     required this.state,
-    required this.showReasoning,
+    required this.reasoningOn,
     required this.focused,
     required this.scroll,
     required this.input,
@@ -27,7 +27,7 @@ class ChatPane extends StatelessComponent {
   final ChatState state;
 
   /// Whether the model's thinking is shown, dimmed, above its answer.
-  final bool showReasoning;
+  final bool reasoningOn;
   final bool focused;
   final AutoScrollController scroll;
   final TextEditingController input;
@@ -45,7 +45,7 @@ class ChatPane extends StatelessComponent {
     final rows = <Component>[
       for (final turn in state.turns) ..._turn(turn),
       if (state.busy) ...[
-        if (showReasoning && state.reasoning != null)
+        if (reasoningOn && state.reasoning != null)
           Text(
             'sai thinks › ${state.reasoning!}',
             style: TextStyle(color: Colors.gray),
@@ -84,7 +84,7 @@ class ChatPane extends StatelessComponent {
     final label = notes.isEmpty ? who : '$who · ${notes.join(' · ')}';
     final failure = turn.failure;
     return [
-      if (showReasoning && turn.reasoning != null)
+      if (reasoningOn && turn.reasoning != null)
         Text(
           'sai thinks › ${turn.reasoning!}',
           style: TextStyle(color: Colors.gray),

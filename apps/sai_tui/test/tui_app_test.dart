@@ -451,7 +451,9 @@ void main() {
         await ask(tester, 'go');
         await pumpUntilText(tester, 'sai › ready.');
         expect(tester.terminalState, isNot(containsText('let me think')));
-        container.read(settingsProvider.notifier).setShowReasoning(true);
+        container.read(settingsProvider.notifier).setReasoning(true);
+        await tester.enterText('again');
+        await tester.sendEnter();
         await pumpUntilText(tester, 'sai thinks › let me think');
       }, size: big);
     });

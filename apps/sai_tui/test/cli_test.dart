@@ -453,14 +453,14 @@ void main() {
     out.clear();
     expect(await run('reasoning on'), cliOk);
     expect(out.toString().trim(), reasoningLine(true));
-    expect(container.read(settingsProvider).showReasoning, isTrue);
+    expect(container.read(settingsProvider).reasoningOn, isTrue);
     expect(
       jsonDecode(settingsFile().readAsStringSync()),
-      containsPair('show_reasoning', true),
+      containsPair('reasoning', true),
     );
     out.clear();
     expect(await run('reasoning off'), cliOk);
-    expect(container.read(settingsProvider).showReasoning, isFalse);
+    expect(container.read(settingsProvider).reasoningOn, isFalse);
     expect(await run('reasoning maybe'), cliUsageError);
     expect(err.toString(), contains('reasoning takes on or off'));
   });

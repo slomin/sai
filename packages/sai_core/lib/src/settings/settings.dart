@@ -35,7 +35,7 @@ final class Settings {
     this.llm,
     this.providers = const [],
     this.shareTasksWithCloud = false,
-    this.showReasoning = false,
+    this.reasoningOn = false,
     this.problem,
     this.extra = const {},
   });
@@ -56,9 +56,11 @@ final class Settings {
   /// task list. Off by default; the recorder reads it before every call.
   final bool shareTasksWithCloud;
 
-  /// Whether the clients show a model's reasoning beside its answer
-  /// (#34). Off by default; the archive records it either way.
-  final bool showReasoning;
+  /// Whether a model may think before it answers (#34): off asks the
+  /// backend not to (`reasoning_effort: none`) and the clients show no
+  /// thinking; on lets it, and the clients show what it thought. Off by
+  /// default: faster, and the answer is what matters.
+  final bool reasoningOn;
 
   /// The configured provider with [id], or null.
   ProviderConfig? provider(String id) {
@@ -81,17 +83,17 @@ final class Settings {
     llm: id,
     providers: providers,
     shareTasksWithCloud: shareTasksWithCloud,
-    showReasoning: showReasoning,
+    reasoningOn: reasoningOn,
     extra: extra,
   );
 
   /// The same settings with the reasoning display set. Clears
   /// [problem] like [withLlm].
-  Settings withShowReasoning(bool show) => Settings(
+  Settings withReasoning(bool show) => Settings(
     llm: llm,
     providers: providers,
     shareTasksWithCloud: shareTasksWithCloud,
-    showReasoning: show,
+    reasoningOn: show,
     extra: extra,
   );
 
@@ -101,7 +103,7 @@ final class Settings {
     llm: llm,
     providers: providers,
     shareTasksWithCloud: share,
-    showReasoning: showReasoning,
+    reasoningOn: reasoningOn,
     extra: extra,
   );
 
@@ -117,7 +119,7 @@ final class Settings {
       llm: llm,
       providers: next,
       shareTasksWithCloud: shareTasksWithCloud,
-      showReasoning: showReasoning,
+      reasoningOn: reasoningOn,
       extra: extra,
     );
   }
@@ -131,7 +133,7 @@ final class Settings {
         if (p.id != id) p,
     ],
     shareTasksWithCloud: shareTasksWithCloud,
-    showReasoning: showReasoning,
+    reasoningOn: reasoningOn,
     extra: extra,
   );
 
@@ -166,9 +168,9 @@ final class Settings {
         'share_tasks_with_cloud must be a boolean',
       );
     }
-    final reasoning = json['show_reasoning'];
+    final reasoning = json['reasoning'];
     if (reasoning != null && reasoning is! bool) {
-      throw const SettingsFormatException('show_reasoning must be a boolean');
+      throw const SettingsFormatException('reasoning must be a boolean');
     }
     final rawProviders = json['providers'];
     if (rawProviders != null && rawProviders is! List) {
@@ -188,7 +190,7 @@ final class Settings {
       llm: llm as String?,
       providers: providers,
       shareTasksWithCloud: share as bool? ?? false,
-      showReasoning: reasoning as bool? ?? false,
+      reasoningOn: reasoning as bool? ?? false,
       extra: {
         for (final e in json.entries)
           if (!_known.contains(e.key)) e.key: e.value,
@@ -201,7 +203,7 @@ final class Settings {
     'llm',
     'providers',
     'share_tasks_with_cloud',
-    'show_reasoning',
+    'reasoning',
   };
 
   /// The file's text: compact JSON, keys sorted, unknown keys included.
@@ -233,7 +235,7 @@ final class Settings {
       // Off is the default and is not written: an untouched file stays
       // byte-identical across sai versions.
       if (shareTasksWithCloud) 'share_tasks_with_cloud': true,
-      if (showReasoning) 'show_reasoning': true,
+      if (reasoningOn) 'reasoning': true,
     }),
   );
 }

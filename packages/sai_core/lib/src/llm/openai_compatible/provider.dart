@@ -165,6 +165,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       'stream_options': {'include_usage': true},
       if (request.maxTokens != null) 'max_tokens': request.maxTokens,
       if (request.temperature != null) 'temperature': request.temperature,
+      if (request.reasoning == false) 'reasoning_effort': 'none',
     });
 
     final HttpClientResponse response;

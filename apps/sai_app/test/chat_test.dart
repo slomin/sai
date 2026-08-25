@@ -332,7 +332,7 @@ void main() {
       expect(log.where((l) => l.contains('"policy.decision"')), hasLength(1));
     });
 
-    testWidgets('⌘R shows and hides the reasoning, and remembers it', (
+    testWidgets('⌘R lets the model think, shows it, and remembers it', (
       tester,
     ) async {
       fake = FakeLlmProvider(
@@ -340,22 +340,30 @@ void main() {
         reasoning: (_) => 'let me think',
       );
       final container = await ready(tester);
+      // Off by default: the request says so and nothing is shown.
       await ask(tester, 'go');
       await until(tester, () => container.read(chatProvider).turns.length == 2);
       expect(find.byKey(chatReasoningKey), findsNothing);
       expect(find.text('ready.'), findsOneWidget);
-      await chord(tester, LogicalKeyboardKey.keyR);
-      expect(find.byKey(chatReasoningKey), findsOneWidget);
-      expect(find.text('let me think'), findsOneWidget);
-      expect(find.text('reasoning shown'), findsOneWidget);
-      expect(container.read(settingsProvider).showReasoning, isTrue);
       expect(
-        menuItem(menuDelegate.menus, ['View', 'Hide Reasoning']),
-        isNotNull,
+        archiveLines(container.read(archiveRootProvider))
+            .singleWhere((l) => l.contains('"provider.request"')),
+        contains('"reasoning":false'),
       );
       await chord(tester, LogicalKeyboardKey.keyR);
+      expect(find.text('reasoning on'), findsOneWidget);
+      expect(container.read(settingsProvider).reasoningOn, isTrue);
+      expect(
+        menuItem(menuDelegate.menus, ['View', 'Disable Reasoning']),
+        isNotNull,
+      );
+      await ask(tester, 'again');
+      await until(tester, () => container.read(chatProvider).turns.length == 4);
+      expect(find.byKey(chatReasoningKey), findsOneWidget);
+      expect(find.text('let me think'), findsOneWidget);
+      await chord(tester, LogicalKeyboardKey.keyR);
       expect(find.byKey(chatReasoningKey), findsNothing);
-      expect(container.read(settingsProvider).showReasoning, isFalse);
+      expect(container.read(settingsProvider).reasoningOn, isFalse);
     }, variant: macOS);
 
     testWidgets('a refused send keeps the draft and says why', (tester) async {

@@ -143,10 +143,11 @@ final canUndoProvider = Provider<bool>((ref) {
 final selectedSectionProvider =
     NotifierProvider<SelectedSection, SidebarSection>(SelectedSection.new);
 
-/// Whether the clients show a model's reasoning beside its answer, as
-/// settings hold it (`show_reasoning`, off by default).
-final showReasoningProvider = Provider<bool>(
-  (ref) => ref.watch(settingsProvider.select((s) => s.showReasoning)),
+/// Whether a model may think before it answers, as settings hold it
+/// (`reasoning`, off by default): off is sent to the backend as
+/// `reasoning_effort: none`, on is the model's default and shown.
+final reasoningProvider = Provider<bool>(
+  (ref) => ref.watch(settingsProvider.select((s) => s.reasoningOn)),
 );
 
 /// The conversation (#34): transcript, the answer as it streams, and
@@ -442,7 +443,7 @@ class SettingsNotifier extends Notifier<Settings> {
   void setShareTasksWithCloud(bool share) =>
       _commit(state.withShareTasksWithCloud(share));
 
-  void setShowReasoning(bool show) => _commit(state.withShowReasoning(show));
+  void setReasoning(bool show) => _commit(state.withReasoning(show));
 
   void _commit(Settings next) {
     _store.save(next);

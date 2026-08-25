@@ -263,6 +263,7 @@ final class LlmRecorder {
     'messages': [for (final m in request.messages) m.toJson()],
     if (request.maxTokens != null) 'max_tokens': request.maxTokens,
     if (request.temperature != null) 'temperature': request.temperature,
+    if (request.reasoning != null) 'reasoning': request.reasoning,
     'context_hash': hash.toString(),
   };
 

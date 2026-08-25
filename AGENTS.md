@@ -46,7 +46,7 @@ the layout and the toolchain; this file has the rules.
   burst of typing is often swallowed — click again and verify by the
   evidence, not by the click; synthetic ⌘-chords from System Events do
   not reach Flutter, so drive menu commands through the menu item
-  (`click menu item "Show Reasoning" of menu "View" …`).
+  (`click menu item "Enable Reasoning" of menu "View" …`).
 
 ## Boundaries
 
