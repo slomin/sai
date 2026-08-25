@@ -22,7 +22,10 @@ void main() {
   });
   tearDown(() => tmp.deleteSync(recursive: true));
 
-  Future<ProviderContainer> make({List<Override> overrides = const []}) async {
+  Future<ProviderContainer> make({
+    List<Override> overrides = const [],
+    List<LlmProvider> extraLlms = const [],
+  }) async {
     final container = ProviderContainer.test(
       overrides: [
         archiveRootProvider.overrideWithValue(Directory('${tmp.path}/archive')),
@@ -31,7 +34,10 @@ void main() {
         ),
         eventSourceProvider.overrideWithValue('sai/test'),
         secretStoreProvider.overrideWithValue(InMemorySecretStore()),
-        builtinLlmsProvider.overrideWithValue([() => fake]),
+        builtinLlmsProvider.overrideWithValue([
+          () => fake,
+          for (final llm in extraLlms) () => llm,
+        ]),
         todayProvider.overrideWith(_FixedToday.new),
         ...overrides,
       ],
@@ -123,6 +129,33 @@ void main() {
       expect(said['refs'], [responseId.toString()]);
     },
   );
+
+  test('what the budget cut is on the answer for the client', () async {
+    final container = await make();
+    // A window that fits the profile, the draft and Today, but not the
+    // Upcoming day.
+    final chat = container.read(chatProvider.notifier);
+    final projection = container.read(tasksProvider).value!;
+    final fits =
+        estimateTokens(defaultProfile) +
+        estimateTokens('go') +
+        estimateTokens(
+          taskContextFor(
+            projection,
+            const CalendarDate(2026, 8, 25),
+            upcomingDays: 0,
+          ),
+        );
+    chat.budget = ContextBudget(maxTokens: fits + 100, replyReserve: 100);
+    await chat.send('go');
+    final answer = container.read(chatProvider).turns.last;
+    expect(answer.dropped, ['upcoming:2026-08-26']);
+    expect(
+      AssembledContext.cutNote(answer.dropped),
+      'context cut: upcoming:2026-08-26',
+    );
+    expect(answer.text, isNot(contains('Ring dentist')));
+  });
 
   test('the conversation carries forward', () async {
     final container = await make();
@@ -274,6 +307,43 @@ void main() {
       expect(container.read(chatProvider).tasksWithheld, isFalse);
       await next;
       expect(container.read(chatProvider).turns.last.tasksWithheld, isFalse);
+    });
+
+    test('an answer that saw the list stays out of a withheld call', () async {
+      // Turn 1 on the local fake quotes the list; turn 2 goes to the
+      // cloud fake with sharing off and must not carry that answer.
+      final local = FakeLlmProvider(id: 'homely', script: echo);
+      final container = await make(extraLlms: [local]);
+      final settings = container.read(settingsProvider.notifier);
+      settings.selectLlm('homely');
+      final chat = container.read(chatProvider.notifier);
+      await chat.send('due?');
+      expect(container.read(chatProvider).turns.last.sawTasks, isTrue);
+      expect(
+        container.read(chatProvider).turns.last.text,
+        contains('Call mom'),
+      );
+      settings.selectLlm('cloudy');
+      await chat.send('and then?');
+      final answer = container.read(chatProvider).turns.last;
+      expect(answer.tasksWithheld, isTrue);
+      expect(answer.text, contains('user:due?'));
+      expect(answer.text, contains('user:and then?'));
+      expect(answer.text, isNot(contains('Call mom')));
+      expect(
+        jsonEncode(lines()).split('Call mom @today').length - 1,
+        3,
+        reason:
+            'the first request, its response and its chat line — '
+            'nothing of the second call',
+      );
+      // Sharing on: the earlier answer comes back into the history.
+      settings.setShareTasksWithCloud(true);
+      await chat.send('again?');
+      expect(
+        container.read(chatProvider).turns.last.text,
+        contains('assistant:system:'),
+      );
     });
 
     test('sharing on sends it', () async {

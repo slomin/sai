@@ -151,6 +151,7 @@ class _TurnRow extends StatelessWidget {
       if (turn.finish == LlmFinish.cancelled) 'cancelled',
       if (turn.finish == LlmFinish.length) 'cut short',
       if (turn.tasksWithheld) tasksWithheldWord,
+      ?AssembledContext.cutNote(turn.dropped),
     ];
     return _Row(
       who: turn.role == ChatRole.user ? 'you' : 'sai',

@@ -113,6 +113,11 @@ final class AssembledContext {
   /// `upcoming:YYYY-MM-DD` (farthest days), `memory`.
   final List<String> dropped;
 
+  /// The note a client shows beside an answer that went without part of
+  /// its context; null when nothing was cut.
+  static String? cutNote(List<String> dropped) =>
+      dropped.isEmpty ? null : 'context cut: ${dropped.join(' · ')}';
+
   /// The estimate for the prompt as built.
   final int estimatedTokens;
 }

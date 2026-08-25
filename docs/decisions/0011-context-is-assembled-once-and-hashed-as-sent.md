@@ -66,6 +66,12 @@ put the privacy check in the recorder and asked #34 to carry the list on
   on|off` — decides whether the clients show it. It is never part of
   the conversation history sent back, and never in `chat.message`.
 
+- **History is governed like the list.** An assistant turn that saw the
+  list may quote it, so when the policy withholds the list from the
+  target provider those turns are left out of the history too (the
+  user's own words stay). The recorder remains the check on the wire;
+  this is assembly applying the same answer one step earlier.
+
 ## Consequences
 
 - `chat.message` gets its first producer (`ChatNotifier`), a payload

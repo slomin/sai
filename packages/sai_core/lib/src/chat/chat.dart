@@ -27,10 +27,15 @@ final class ChatTurn {
     this.finish,
     this.failure,
     this.tasksWithheld = false,
+    this.dropped = const [],
   });
 
   final ChatRole role;
   final String text;
+
+  /// What the budget left out of this turn's request
+  /// ([AssembledContext.dropped]); empty when nothing was cut.
+  final List<String> dropped;
 
   /// What the model thought before [text], where the backend sent it.
   final String? reasoning;
@@ -48,6 +53,10 @@ final class ChatTurn {
   final bool tasksWithheld;
 
   bool get failed => failure != null;
+
+  /// An assistant turn whose call carried the list: its words may quote
+  /// task titles, so it is history a withholding provider must not see.
+  bool get sawTasks => role == ChatRole.assistant && !tasksWithheld;
 
   @override
   String toString() => 'ChatTurn(${role.name}, ${text.length} chars)';
@@ -121,6 +130,10 @@ class ChatNotifier extends Notifier<ChatState> {
   RecordedCall? _call;
   var _generation = 0;
 
+  /// The window a turn is assembled for. A constant until the budget
+  /// follows the endpoint's context window (ADR 0011); tests set it.
+  ContextBudget budget = defaultContextBudget;
+
   /// Sends [draft] as the next user turn. Returns once the answer is
   /// complete and recorded, or once the send was refused (see
   /// [ChatState.error]). Never throws.
@@ -134,6 +147,12 @@ class ChatNotifier extends Notifier<ChatState> {
     final projection = container.read(tasksProvider).value;
     if (projection == null) return _refuse(chatNotReadyError);
 
+    // The recorder withholds the list from a cloud provider (ADR 0010);
+    // an earlier answer that quoted it is history the same policy must
+    // withhold, or the list leaks back in through the conversation.
+    final withholds = container
+        .read(privacyPolicyProvider)
+        .withholdsFrom(provider.privacy);
     final AssembledContext assembled;
     try {
       assembled = assembleContext(
@@ -142,13 +161,14 @@ class ChatNotifier extends Notifier<ChatState> {
         today: container.read(todayProvider),
         history: [
           for (final turn in state.turns)
-            if (turn.text.isNotEmpty)
+            if (turn.text.isNotEmpty && !(withholds && turn.sawTasks))
               LlmMessage(switch (turn.role) {
                 ChatRole.user => LlmRole.user,
                 ChatRole.assistant => LlmRole.assistant,
               }, turn.text),
         ],
         draft: message,
+        budget: budget,
       );
     } on ContextBudgetError catch (error) {
       return _refuse(error.toString());
@@ -228,6 +248,7 @@ class ChatNotifier extends Notifier<ChatState> {
         finish: result.finish,
         failure: result.failure,
         tasksWithheld: call.taskContextWithheld,
+        dropped: assembled.dropped,
       );
     } else {
       BlobRef? event;
@@ -253,6 +274,7 @@ class ChatNotifier extends Notifier<ChatState> {
         event: event,
         finish: result.finish,
         tasksWithheld: call.taskContextWithheld,
+        dropped: assembled.dropped,
       );
     }
     state = state.copyWith(

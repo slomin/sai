@@ -21,7 +21,7 @@ the rendered rows, whitespace collapsed. nocterm paints the rows below
 the list only after the first key arrives, so wait for the list, send
 a key (Tab is harmless), then wait for the footer.
 """
-import fcntl, json, os, pty, re, select, signal, struct, sys, termios, time
+import codecs, fcntl, json, os, pty, re, select, signal, struct, sys, termios, time
 
 ROWS, COLS = 30, 100
 SEQ = re.compile(r'\x1b\[([0-9;?]*)([ -/]*)([@-~])|\x1b[()][A-Z0-9]|\x1b[=>78]|\x1b\][^\x07]*\x07')
@@ -34,9 +34,11 @@ class Screen:
         self.rows = [[' '] * COLS for _ in range(ROWS)]
         self.r = self.c = 0
         self.pending = ''
+        # A read can split a multibyte character; decode across chunks.
+        self.decoder = codecs.getincrementaldecoder('utf-8')('replace')
 
     def feed(self, data):
-        text = self.pending + data.decode('utf-8', 'replace')
+        text = self.pending + self.decoder.decode(data)
         self.pending = ''
         i = 0
         while i < len(text):

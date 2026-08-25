@@ -79,6 +79,7 @@ class ChatPane extends StatelessComponent {
       if (turn.finish == LlmFinish.cancelled) 'cancelled',
       if (turn.finish == LlmFinish.length) 'cut short',
       if (turn.tasksWithheld) tasksWithheldWord,
+      ?AssembledContext.cutNote(turn.dropped),
     ];
     final label = notes.isEmpty ? who : '$who · ${notes.join(' · ')}';
     final failure = turn.failure;
