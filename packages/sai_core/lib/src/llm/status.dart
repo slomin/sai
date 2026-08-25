@@ -22,6 +22,11 @@ String unavailableKindStatus(String id, String kind) =>
     "provider '$id' has kind '$kind', which this sai cannot build — "
     'local only';
 
+/// What it shows when the selected provider's kind is known but its
+/// configuration lacks what the kind needs (an endpoint, a model).
+String misconfiguredStatus(String id, String missing) =>
+    "provider '$id' is missing its $missing — local only";
+
 /// Appended to the status line when the provider names a credential the
 /// secret store does not hold.
 const missingCredentialSuffix = ' · no key';

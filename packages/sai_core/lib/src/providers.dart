@@ -10,6 +10,7 @@ import 'archive/archive_root.dart';
 import 'archive/event.dart';
 import 'llm/factory.dart';
 import 'llm/fake.dart';
+import 'llm/probe.dart';
 import 'llm/provider.dart';
 import 'llm/recorder.dart';
 import 'llm/status.dart';
@@ -201,10 +202,44 @@ final credentialStatusProvider = Provider.family<CredentialStatus, String>((
 });
 
 /// The factories this build can turn a [ProviderConfig] into, by kind.
-/// #22 adds `openai_compatible`.
 final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>(
-  (ref) => const {'fake': fakeProviderFactory},
+  (ref) => const {
+    'fake': fakeProviderFactory,
+    'openai_compatible': openAiCompatibleFactory,
+  },
 );
+
+/// Configured providers whose kind is known but whose configuration the
+/// factory refused, by id, with what is missing. Not built, not in the
+/// registry; the status line and the dialogs name them.
+final misconfiguredLlmsProvider = Provider<Map<String, String>>((ref) {
+  final configs = ref.watch(settingsProvider.select((s) => s.providers));
+  final factories = ref.watch(llmFactoriesProvider);
+  final secrets = ref.watch(secretStoreProvider);
+  final out = <String, String>{};
+  for (final config in configs) {
+    final factory = factories[config.kind];
+    if (factory == null) continue;
+    final missing = _refusal(factory, config, secrets);
+    if (missing != null) out[config.id] = missing;
+  }
+  return out;
+});
+
+/// What a factory says is missing, or null when it would build.
+String? _refusal(
+  LlmProviderFactory factory,
+  ProviderConfig config,
+  SecretStore secrets,
+) {
+  try {
+    factory(config, secrets).close();
+    return null;
+  } on ArgumentError catch (e) {
+    final message = '${e.message}';
+    return message.split(' needs ').last;
+  }
+}
 
 /// The providers that ship with every build, needing no configuration,
 /// as constructors: the cache below decides when one is built. A
@@ -234,9 +269,10 @@ final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
   final cache = ref.watch(_llmCacheProvider);
   final wanted = <String, LlmProvider Function()>{};
   final configured = <String>[];
+  final misconfigured = ref.watch(misconfiguredLlmsProvider);
   for (final config in configs) {
     final factory = factories[config.kind];
-    if (factory == null) continue;
+    if (factory == null || misconfigured.containsKey(config.id)) continue;
     wanted['config:${jsonEncode(config.toJson())}'] = () =>
         factory(config, secrets);
     configured.add(config.id);
@@ -295,6 +331,8 @@ final llmStatusProvider = Provider<String>((ref) {
   if (active == null) {
     final config = settings.provider(id);
     if (config == null) return missingProviderStatus(id);
+    final missing = ref.watch(misconfiguredLlmsProvider)[id];
+    if (missing != null) return misconfiguredStatus(id, missing);
     return unavailableKindStatus(id, config.kind);
   }
   return llmStatusLine(active) +
@@ -304,6 +342,17 @@ final llmStatusProvider = Provider<String>((ref) {
         CredentialStatus.none || CredentialStatus.set => '',
       };
 });
+
+/// What the endpoint of provider [id] says about itself, asked once per
+/// registry build and again on `ref.invalidate`. A provider that cannot
+/// be probed (the fake, an unknown id) answers [EndpointHealth.unknown].
+/// Not a call: nothing is recorded.
+final endpointInfoProvider = FutureProvider.autoDispose
+    .family<EndpointInfo, String>((ref, id) async {
+      final provider = ref.watch(llmRegistryProvider)[id];
+      if (provider case final LlmEndpointProbe probe) return probe.probe();
+      return const EndpointInfo();
+    });
 
 /// A recorder bound to the archive and this client's source — how a
 /// caller obtains a call that records itself. Deliberately independent
@@ -363,6 +412,15 @@ class CredentialsNotifier extends Notifier<int> {
   void set(String id, String value) {
     ref.read(secretStoreProvider).write(_account(id), value);
     state++;
+    // The key is now good for the endpoint as configured this moment:
+    // record its origin, so a later endpoint change stops sending it.
+    final config = ref.read(settingsProvider).provider(id)!;
+    final origin = config.origin;
+    if (origin != null && config.credentialOrigin != origin) {
+      ref
+          .read(settingsProvider.notifier)
+          .upsertProvider(config.copyWith(credentialOrigin: () => origin));
+    }
   }
 
   /// Removes the credential of [id]; returns whether there was one.

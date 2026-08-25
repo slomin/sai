@@ -1,6 +1,7 @@
 import '../secrets/secret_store.dart';
 import '../settings/provider_config.dart';
 import 'fake.dart';
+import 'openai_compatible/provider.dart';
 import 'provider.dart';
 
 /// Builds an [LlmProvider] from its configuration. The secret store is
@@ -20,3 +21,29 @@ LlmProvider fakeProviderFactory(ProviderConfig config, SecretStore secrets) =>
       displayName: config.id,
       defaultModel: config.defaultModel ?? 'fake-1',
     );
+
+/// The `openai_compatible` kind (#22). Throws [ArgumentError] when the
+/// configuration lacks the endpoint or the default model the transport
+/// needs — the registry then leaves the provider out and the status line
+/// says so, rather than building one that can only fail.
+LlmProvider openAiCompatibleFactory(
+  ProviderConfig config,
+  SecretStore secrets,
+) {
+  final endpoint = config.endpoint;
+  final model = config.defaultModel;
+  if (endpoint == null) {
+    throw ArgumentError('openai_compatible needs endpoint');
+  }
+  if (model == null) {
+    throw ArgumentError('openai_compatible needs default_model');
+  }
+  return OpenAiCompatibleProvider(
+    id: config.id,
+    endpoint: Uri.parse(endpoint),
+    defaultModel: model,
+    secrets: secrets,
+    credential: config.credential,
+    credentialOrigin: config.credentialOrigin,
+  );
+}

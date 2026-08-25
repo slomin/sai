@@ -6,6 +6,8 @@ import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
 
+import 'llm/stub_server.dart';
+
 /// The promise ADR 0006 and ADR 0008 make, checked from the outside: a
 /// credential enters through the secret store, a provider that holds it
 /// fails in every way a provider can, and afterwards the key is in no
@@ -175,6 +177,141 @@ void main() {
     expect(container.read(llmStatusProvider), 'lan (qwen) — local');
     // And the key is still where it belongs.
     expect(secrets.read('provider:lan'), canary);
+  });
+
+  test('the HTTP provider fails every way it can and the key goes only to '
+      'its origin', () async {
+    final stub = await StubServer.start();
+    final elsewhere = await StubServer.start();
+    addTearDown(stub.close);
+    addTearDown(elsewhere.close);
+    elsewhere.routes['POST /v1/chat/completions'] = (req) =>
+        StubServer.stream(req, ['leaked']);
+    const deadlines = OpenAiDeadlines(
+      firstResponse: Duration(milliseconds: 300),
+      interToken: Duration(milliseconds: 300),
+    );
+    final results = <LlmResult>[];
+    await capturing(() async {
+      final settings = container.read(settingsProvider.notifier);
+      settings.upsertProvider(
+        ProviderConfig(
+          id: 'lan',
+          kind: 'openai_compatible',
+          endpoint: stub.v1.toString(),
+          defaultModel: 'qwen',
+          credential: 'provider:lan',
+        ),
+      );
+      settings.selectLlm('lan');
+      container.read(credentialsProvider.notifier).set('lan', canary);
+      final config = container.read(settingsProvider).provider('lan')!;
+      expect(config.keyBound, isTrue);
+      OpenAiCompatibleProvider provider() => OpenAiCompatibleProvider(
+        id: 'lan',
+        endpoint: stub.v1,
+        defaultModel: 'qwen',
+        secrets: secrets,
+        credential: 'provider:lan',
+        credentialOrigin: config.credentialOrigin,
+        deadlines: deadlines,
+      );
+      final recorder = await container.read(llmRecorderProvider.future);
+      final request = LlmRequest(
+        messages: [const LlmMessage(LlmRole.user, 'hello')],
+      );
+      Future<void> run() async {
+        final call = await recorder.start(provider(), request);
+        results.add(await call.done);
+      }
+
+      // 401 quoting the key back, a redirect elsewhere, a stall, a body
+      // that is not a stream, an unreadable chunk — then cancel and success.
+      stub.routes['POST /v1/chat/completions'] = (req) =>
+          StubServer.json(req, {'error': 'bad key $canary'}, status: 401);
+      await run();
+      stub.routes['POST /v1/chat/completions'] = (req) async {
+        req.response
+          ..statusCode = 307
+          ..headers.set(
+            'location',
+            '${elsewhere.origin}/v1/chat/completions?k=$canary',
+          );
+        await req.response.close();
+      };
+      await run();
+      stub.routes['POST /v1/chat/completions'] = (req) async {
+        final r = StubServer.sse(req);
+        StubServer.event(r, StubServer.chunk('partial '));
+        await Future<void>.delayed(const Duration(seconds: 2));
+        await r.close();
+      };
+      await run();
+      stub.routes['POST /v1/chat/completions'] = (req) =>
+          StubServer.json(req, {'echo': canary});
+      await run();
+      stub.routes['POST /v1/chat/completions'] = (req) async {
+        final r = StubServer.sse(req);
+        StubServer.event(r, 'garbage $canary', json: false);
+        await r.close();
+      };
+      await run();
+      stub.routes['POST /v1/chat/completions'] = (req) => StubServer.stream(
+        req,
+        ['slow', 'er'],
+        gap: const Duration(seconds: 2),
+      );
+      final cancelled = await recorder.start(provider(), request);
+      await cancelled.deltas.first;
+      cancelled.cancel();
+      results.add(await cancelled.done);
+      stub.routes['POST /v1/chat/completions'] = (req) =>
+          StubServer.stream(req, ['ready']);
+      final ok = await recorder.start(
+        container.read(activeLlmProvider)!,
+        request,
+      );
+      results.add(await ok.done);
+      for (final r in results) {
+        print('result: $r');
+      }
+    });
+    expect(results.map((r) => r.finish), [
+      LlmFinish.failed,
+      LlmFinish.failed,
+      LlmFinish.failed,
+      LlmFinish.failed,
+      LlmFinish.failed,
+      LlmFinish.cancelled,
+      LlmFinish.stop,
+    ]);
+    expect(results.last.text, 'ready');
+    expect(
+      elsewhere.requests,
+      isEmpty,
+      reason: 'nothing followed the redirect',
+    );
+    // The key went out exactly as a bearer token, to the configured origin
+    // and nowhere else — not in a URL, not in a body.
+    for (final sent in stub.requests) {
+      expect(sent.header('authorization'), 'Bearer $canary');
+      expect(sent.path, '/v1/chat/completions');
+      expect(sent.body, isNot(contains(canary)));
+    }
+    final files = allBytes();
+    final lines = [
+      for (final k in files.keys.where((k) => k.startsWith('archive/events/')))
+        ...utf8.decode(files[k]!).split('\n').where((l) => l.isNotEmpty),
+    ];
+    expect(lines, hasLength(21));
+    expect(lines.where((l) => l.contains('"provider.failure"')), hasLength(5));
+    for (final line in lines.where((l) => l.contains('"endpoint"'))) {
+      expect(line, contains('"endpoint":"${stub.origin}"'));
+    }
+    expectNoCanary(files);
+    for (final r in results) {
+      expect(r.toString(), isNot(contains(canary)));
+    }
   });
 
   test('a key written into settings by hand is refused and not repeated', () {
