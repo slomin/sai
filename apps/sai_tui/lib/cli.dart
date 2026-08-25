@@ -20,7 +20,9 @@ usage: sai_tui                       open the terminal client
 Provider settings go to settings.json; keys go to the Keychain and are
 never written to a file or printed. --key files the key under
 provider:<id>; adding an existing id changes only the options given
-(docs/settings/settings-v0.md). secret clear and status also work for a
+(docs/settings/settings-v0.md). A key is bound to the endpoint it was
+entered for: after --endpoint moves a provider to another host, port or
+scheme, enter its key again. secret clear and status also work for a
 provider that is no longer configured.''';
 
 /// Exit codes, as a shell expects them.
@@ -64,7 +66,10 @@ Future<int> runCli(
             credentialStatusProvider(provider.id),
           )) {
             CredentialStatus.none => '',
-            CredentialStatus.set => ' · key set',
+            CredentialStatus.set =>
+              config != null && config.endpoint != null && !config.keyBound
+                  ? ' · key needs re-entry'
+                  : ' · key set',
             CredentialStatus.missing => ' · no key',
             CredentialStatus.unavailable => ' · keychain unavailable',
           };
@@ -75,12 +80,14 @@ Future<int> runCli(
             '$mark ${provider.id}  $where  (${provider.defaultModel})$key',
           );
         }
+        final misconfigured = container.read(misconfiguredLlmsProvider);
         for (final config in settings.providers) {
           if (registry.containsKey(config.id)) continue;
           final mark = settings.llm == config.id ? '*' : ' ';
+          final why = misconfigured[config.id];
           out.writeln(
-            "$mark ${config.id}  ${config.kind}  — kind not available in "
-            'this build',
+            '$mark ${config.id}  ${config.kind}  — '
+            '${why == null ? 'kind not available in this build' : 'missing its $why'}',
           );
         }
         if (settings.llm == null) out.writeln('  (no provider selected)');
@@ -121,15 +128,22 @@ Future<int> runCli(
         if (kind == null) throw _Usage('provider add needs --kind');
         final ProviderConfig config;
         try {
-          config = ProviderConfig(
+          // The key binding survives only while the origin does; the
+          // copy drops it otherwise (settings-v0, ADR 0009).
+          final base = ProviderConfig(
             id: id,
             kind: kind,
-            endpoint: endpoint,
-            defaultModel: model,
-            credential: key
+            endpoint: existing?.endpoint,
+            credential: existing?.credential,
+            credentialOrigin: existing?.credentialOrigin,
+            extra: existing?.extra ?? const {},
+          );
+          config = base.copyWith(
+            endpoint: () => endpoint,
+            defaultModel: () => model,
+            credential: () => key
                 ? (existing?.credential ?? ProviderConfig.credentialFor(id))
                 : null,
-            extra: existing?.extra ?? const {},
           );
         } on ArgumentError catch (e) {
           throw _Usage('${e.message}');
@@ -139,6 +153,7 @@ Future<int> runCli(
             existing != null &&
             container.read(credentialStatusProvider(id)) ==
                 CredentialStatus.set;
+        final wasBound = existing?.keyBound ?? false;
         notifier.upsertProvider(config);
         out.writeln('${existing != null ? 'updated' : 'added'} provider $id');
         if (hadKey && !key) {
@@ -153,7 +168,18 @@ Future<int> runCli(
             'provider is stored but cannot be used yet',
           );
         }
-        if (key) {
+        final missing = container.read(misconfiguredLlmsProvider)[id];
+        if (missing != null) {
+          err.writeln(
+            "sai_tui: provider '$id' is missing its $missing; add it with "
+            '--${missing == 'default_model' ? 'model' : missing}',
+          );
+        }
+        if (key && wasBound && !config.keyBound) {
+          out.writeln(
+            'the endpoint moved; enter its key again: sai_tui secret set $id',
+          );
+        } else if (key && !hadKey) {
           out.writeln('set its key with: sai_tui secret set $id');
         }
         return cliOk;
