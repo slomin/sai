@@ -427,6 +427,25 @@ void main() {
       answered.complete();
     });
 
+    test('mid-stream on a loaded model: the reported id is kept', () async {
+      stub.routes['POST /v1/chat/completions'] = (req) => StubServer.stream(
+        req,
+        ['a', 'b', 'c'],
+        model: 'what-is-loaded',
+        gap: const Duration(seconds: 1),
+      );
+      final provider = make(
+        deadlines: const OpenAiDeadlines(),
+        defaultModel: OpenAiCompatibleProvider.loadedModel,
+      );
+      final call = provider.start(ask('x'));
+      await call.deltas.first;
+      call.cancel();
+      final result = await call.done;
+      expect(result.finish, LlmFinish.cancelled);
+      expect(result.model.id, 'what-is-loaded');
+    });
+
     test('mid-stream: the text so far is kept', () async {
       stub.routes['POST /v1/chat/completions'] = (req) => StubServer.stream(
         req,
@@ -515,33 +534,57 @@ void main() {
     await provider.close();
   });
 
-  test('a 400 to reasoning_effort is retried without it, once', () async {
+  /// Which reasoning switches each request carried: `e` for
+  /// `reasoning_effort`, `t` for `chat_template_kwargs`.
+  List<String> switchesSent() => [
+    for (final r in stub.requests)
+      [
+        if ((jsonDecode(r.body) as Map).containsKey('reasoning_effort')) 'e',
+        if ((jsonDecode(r.body) as Map).containsKey('chat_template_kwargs'))
+          't',
+      ].join(),
+  ];
+
+  /// A stub that answers 400 to any request carrying one of [refused].
+  void refuse(Set<String> refused) {
     stub.routes['POST /v1/chat/completions'] = (req) async {
       final body = jsonDecode(stub.requests.last.body) as Map<String, Object?>;
-      if (body.containsKey('reasoning_effort')) {
+      if (refused.any(body.containsKey)) {
         req.response.statusCode = 400;
         await req.response.close();
         return;
       }
       await StubServer.stream(req, ['ok']);
     };
+  }
+
+  test('a 400 drops the switches one at a time, and remembers', () async {
+    refuse({'reasoning_effort', 'chat_template_kwargs'});
     final provider = make();
     final first = await provider.start(ask('a', reasoning: false)).done;
     expect(first.text, 'ok', reason: '$first ${first.failure}');
     final second = await provider.start(ask('b', reasoning: false)).done;
     expect(second.text, 'ok');
-    expect(
-      stub.requests.map(
-        (r) => (jsonDecode(r.body) as Map).containsKey('reasoning_effort'),
-      ),
-      [true, false, false],
-    );
-    expect(
-      stub.requests.map(
-        (r) => (jsonDecode(r.body) as Map).containsKey('chat_template_kwargs'),
-      ),
-      [true, false, false],
-    );
+    expect(switchesSent(), ['et', 'e', '', '']);
+    await provider.close();
+  });
+
+  test('an endpoint that knows reasoning_effort keeps it', () async {
+    refuse({'chat_template_kwargs'});
+    final provider = make();
+    expect((await provider.start(ask('a', reasoning: false)).done).text, 'ok');
+    expect((await provider.start(ask('b', reasoning: false)).done).text, 'ok');
+    expect(switchesSent(), ['et', 'e', 'e']);
+    await provider.close();
+  });
+
+  test('a 400 with no switch sent is a rejection, not a retry', () async {
+    refuse({'messages'});
+    final provider = make();
+    final result = await provider.start(ask('a')).done;
+    expect(result.failure!.kind, LlmFailureKind.rejected);
+    expect(result.failure!.status, 400);
+    expect(stub.requests, hasLength(1));
     await provider.close();
   });
 

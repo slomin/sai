@@ -600,6 +600,33 @@ void main() {
         );
       });
 
+      test('a configured id hides its built-in even when it cannot be '
+          'built', () {
+        final container = make(shipped: true);
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          ProviderConfig(id: lanProviderId, kind: 'future'),
+        );
+        settings.selectLlm(lanProviderId);
+        expect(container.read(llmRegistryProvider).keys, [
+          'fake',
+          lmStudioProviderId,
+        ]);
+        expect(container.read(activeLlmProvider), isNull);
+        expect(
+          container.read(llmStatusProvider),
+          unavailableKindStatus(lanProviderId, 'future'),
+        );
+        settings.upsertProvider(
+          ProviderConfig(id: lanProviderId, kind: 'openai_compatible'),
+        );
+        expect(container.read(activeLlmProvider), isNull);
+        expect(
+          container.read(llmStatusProvider),
+          misconfiguredStatus(lanProviderId, 'endpoint'),
+        );
+      });
+
       test('a first run selects LM Studio and writes nothing (#23)', () {
         final file = File('${tmp.path}/settings.json');
         final container = make(shipped: true);

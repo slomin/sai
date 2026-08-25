@@ -232,7 +232,11 @@ final class LlmCallController {
     call = _Call(this);
   }
 
-  final ModelRef model;
+  /// The call's lineage: what was asked for, until a provider learns
+  /// what the backend answered with (a loaded-model request) and replaces
+  /// it — so a cancelled call is archived under the model that produced
+  /// its partial text, too.
+  ModelRef model;
 
   /// Runs once, after [cancel] has finished the call — the provider's
   /// chance to abort its transport.

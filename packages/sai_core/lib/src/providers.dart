@@ -287,7 +287,6 @@ final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
   final secrets = ref.watch(secretStoreProvider);
   final cache = ref.watch(_llmCacheProvider);
   final wanted = <String, LlmProvider Function()>{};
-  final configured = <String>[];
   final misconfigured = ref.watch(misconfiguredLlmsProvider);
   final bindings = <String, String?>{};
   for (final config in configs) {
@@ -298,7 +297,6 @@ final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
     final key = 'config:${jsonEncode(config.unbound.toJson())}';
     wanted[key] = () => factory(config, secrets);
     bindings[key] = config.credentialOrigin;
-    configured.add(config.id);
   }
   final builtins = ref.watch(builtinLlmsProvider);
   for (var i = 0; i < builtins.length; i++) {
@@ -310,7 +308,10 @@ final installedLlmsProvider = Provider<List<LlmProvider>>((ref) {
       p.credentialOrigin = e.value;
     }
   }
-  final taken = configured.toSet();
+  // A configured id hides the built-in with that id whether or not the
+  // configuration can be built: a misconfigured or unknown-kind `lan`
+  // must read as such, never route to the shipped endpoint.
+  final taken = {for (final c in configs) c.id};
   return [
     for (final key in wanted.keys)
       if (key.startsWith('builtin:') && !taken.contains(providers[key]!.id))
