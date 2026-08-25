@@ -4,6 +4,7 @@ import 'dart:convert';
 import '../archive/archive.dart';
 import '../archive/blobref.dart';
 import '../archive/event.dart';
+import '../settings/endpoint.dart';
 import 'call.dart';
 import 'failure.dart';
 import 'provider.dart';
@@ -119,6 +120,8 @@ final class LlmRecorder {
             {
               ...failure!.toJson(),
               'message': _clipBytes(failure.message, maxRecordedMessageBytes),
+              if (failure.endpoint != null)
+                'endpoint': normalisedEndpoint(failure.endpoint!),
             },
             result.text,
             omitEmpty: true,
@@ -179,6 +182,18 @@ final class LlmRecorder {
               ),
             ),
     );
+  }
+
+  /// The origin of [endpoint] — `scheme://host[:port]` — and nothing
+  /// else: a path, userinfo, query or fragment can carry a key, and a
+  /// failure line is permanent. What does not parse as a URL is written
+  /// as a fixed placeholder rather than verbatim.
+  static String normalisedEndpoint(String endpoint) {
+    final uri = Uri.tryParse(endpoint);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      return 'unparseable endpoint';
+    }
+    return endpointOrigin(uri);
   }
 
   static Map<String, Object?> _requestPayload(LlmRequest request) => {

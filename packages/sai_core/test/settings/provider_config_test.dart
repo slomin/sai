@@ -118,6 +118,144 @@ void main() {
       expect(make(endpoint: 'http://127.0.0.1:8080/v1').endpoint, isNotNull);
     });
 
+    test('plaintext http is refused for anything but this machine', () {
+      for (final ok in [
+        'http://localhost:8080/v1',
+        'http://127.0.0.1/v1',
+        'http://127.5.5.5:1/v1',
+        'http://[::1]:8080/v1',
+        'https://lan.example/v1',
+        'https://192.168.1.20:8443/v1',
+      ]) {
+        expect(() => ProviderConfig.checkEndpointForEntry(ok), returnsNormally);
+      }
+      for (final bad in [
+        'http://lan.example/v1',
+        'http://192.168.1.20:8080/v1',
+        'http://0.0.0.0:8080/v1',
+        'http://[fe80::1]:8080/v1',
+      ]) {
+        expect(
+          () => ProviderConfig.checkEndpointForEntry(bad),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              plaintextRefused,
+            ),
+          ),
+          reason: bad,
+        );
+        // Entry-time only: a stored file with such an endpoint stays
+        // readable, and the transport refuses at request time.
+        expect(() => ProviderConfig.checkEndpoint(bad), returnsNormally);
+      }
+      final stored = Settings.decode(
+        '{"version":0,"llm":"lan","providers":[{"id":"lan","kind":'
+        '"openai_compatible","endpoint":"http://192.168.1.5:8080/v1",'
+        '"default_model":"m"},{"id":"f","kind":"fake"}]}',
+      );
+      expect(stored.providers.map((p) => p.id), ['lan', 'f']);
+      expect(stored.llm, 'lan');
+    });
+
+    test('a malformed endpoint is an ArgumentError from every entry point', () {
+      final lan = ProviderConfig(
+        id: 'lan',
+        kind: 'openai_compatible',
+        endpoint: 'https://lan.example/v1',
+        credential: 'provider:lan',
+      );
+      for (final bad in ['http://[::1', 'http://', '://x']) {
+        expect(() => lan.copyWith(endpoint: () => bad), throwsArgumentError);
+        expect(
+          () => ProviderConfig.checkEndpointForEntry(bad),
+          throwsArgumentError,
+        );
+      }
+    });
+
+    test('a key is bound to the origin it was entered for', () {
+      expect(
+        endpointOrigin(Uri.parse('https://lan.example:8443/v1')),
+        'https://lan.example:8443',
+      );
+      expect(
+        endpointOrigin(Uri.parse('http://[::1]:8080/v1')),
+        'http://[::1]:8080',
+      );
+      expect(
+        endpointOrigin(Uri.parse('https://lan.example/v1/')),
+        'https://lan.example',
+      );
+      final lan = ProviderConfig(
+        id: 'lan',
+        kind: 'openai_compatible',
+        endpoint: 'https://lan.example:8443/v1',
+        credential: 'provider:lan',
+      );
+      expect(lan.origin, 'https://lan.example:8443');
+      expect(lan.keyBound, isFalse, reason: 'no key entered yet');
+      final bound = lan.copyWith(credentialOrigin: () => lan.origin);
+      expect(bound.keyBound, isTrue);
+      expect(bound.toJson()['credential_origin'], 'https://lan.example:8443');
+      expect(
+        Settings.decode(Settings.empty.withProvider(bound).encode())
+            .provider('lan')!
+            .keyBound,
+        isTrue,
+      );
+      // A path change keeps the binding; a port, host or scheme change drops it.
+      expect(
+        bound.copyWith(endpoint: () => 'https://lan.example:8443/v2').keyBound,
+        isTrue,
+      );
+      expect(
+        bound.copyWith(endpoint: () => 'https://lan.example:9443/v1').keyBound,
+        isFalse,
+      );
+      expect(bound.copyWith(endpoint: () => null).credentialOrigin, isNull);
+      expect(bound.copyWith(credential: () => null).credentialOrigin, isNull);
+      // A binding that does not fit is not a binding — never a refusal:
+      // a rule tightened later must not make a stored file unreadable.
+      expect(
+        ProviderConfig(
+          id: 'lan',
+          kind: 'openai_compatible',
+          endpoint: 'https://lan.example:8443/v1',
+          credential: 'provider:lan',
+          credentialOrigin: 'https://lan.example',
+        ).credentialOrigin,
+        isNull,
+      );
+      expect(
+        ProviderConfig(
+          id: 'lan',
+          kind: 'fake',
+          credential: 'provider:lan',
+          credentialOrigin: 'https://lan.example',
+        ).credentialOrigin,
+        isNull,
+      );
+      expect(
+        ProviderConfig(
+          id: 'lan',
+          kind: 'openai_compatible',
+          endpoint: 'https://lan.example/v1',
+          credentialOrigin: 'https://lan.example',
+        ).credentialOrigin,
+        isNull,
+        reason: 'no credential to bind',
+      );
+      final edited = Settings.decode(
+        '{"version":0,"providers":[{"id":"lan","kind":"openai_compatible",'
+        '"endpoint":"https://lan.example/v1","credential":"provider:lan",'
+        '"credential_origin":"https://other.example"}]}',
+      ).provider('lan')!;
+      expect(edited.keyBound, isFalse);
+      expect(edited.toJson().containsKey('credential_origin'), isFalse);
+    });
+
     test('malformed providers are a format error', () {
       for (final bad in [
         '{"version":0,"providers":{}}',

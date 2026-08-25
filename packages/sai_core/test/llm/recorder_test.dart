@@ -160,6 +160,35 @@ void main() {
     expect((log[2]['payload'] as Map)['finish'], 'failed');
   });
 
+  test('a failure endpoint is written as its origin, nothing more', () async {
+    for (final (given, written) in [
+      (
+        'https://u:sk-x@lan.example:8443/v1?key=sk-x#f',
+        'https://lan.example:8443',
+      ),
+      ('http://[::1]:8080/v1/chat', 'http://[::1]:8080'),
+      ('http://localhost/v1', 'http://localhost'),
+      ('not a url', 'unparseable endpoint'),
+    ]) {
+      final fake = FakeLlmProvider(
+        failWith: LlmFailure(
+          LlmFailureKind.credential,
+          'no key stored for this endpoint',
+          endpoint: given,
+        ),
+      );
+      final call = await recorder.start(fake, ask('x'));
+      await call.done;
+      final line = lines().last;
+      expect(line['type'], 'provider.usage');
+      final failure = lines()[lines().length - 2];
+      expect(failure['type'], 'provider.failure');
+      expect((failure['payload'] as Map)['endpoint'], written);
+      expect((failure['payload'] as Map)['kind'], 'credential');
+      expect(jsonEncode(failure), isNot(contains('sk-x')));
+    }
+  });
+
   test('a provider that throws from start is recorded as internal', () async {
     final call = await recorder.start(_ThrowingProvider(), ask('x'));
     final result = await call.done;

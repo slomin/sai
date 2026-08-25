@@ -23,6 +23,22 @@ final class FakeLlmProvider implements LlmProvider {
     this.delta = Duration.zero,
   }) : script = script ?? _echo;
 
+  /// A fake whose reply is [words] of lorem ipsum, for a demo or a test
+  /// that wants something to stream that is not the prompt.
+  FakeLlmProvider.lorem({
+    int words = 24,
+    String id = 'fake',
+    String displayName = 'fake',
+    String defaultModel = 'fake-1',
+    Duration delta = const Duration(milliseconds: 40),
+  }) : this(
+         id: id,
+         displayName: displayName,
+         defaultModel: defaultModel,
+         delta: delta,
+         script: (_) => loremIpsum(words),
+       );
+
   @override
   final String id;
 
@@ -142,4 +158,15 @@ final class FakeLlmProvider implements LlmProvider {
       _word.allMatches(text).map((m) => m[0]!).toList();
 
   static final _word = RegExp(r'\S+\s*');
+}
+
+/// The first [words] words of lorem ipsum, cycling past its length.
+String loremIpsum(int words) {
+  const source =
+      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do '
+      'eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim '
+      'ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut '
+      'aliquip ex ea commodo consequat.';
+  final pool = source.split(' ');
+  return [for (var i = 0; i < words; i++) pool[i % pool.length]].join(' ');
 }

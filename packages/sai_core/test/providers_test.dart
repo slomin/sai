@@ -8,6 +8,8 @@ import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
 
+import 'llm/stub_server.dart';
+
 void main() {
   test('appInfoProvider exposes the workspace version', () {
     final container = ProviderContainer.test();
@@ -559,6 +561,129 @@ void main() {
         expect(make().read(settingsProvider).provider('cloud')?.kind, 'future');
       });
 
+      test(
+        'an openai_compatible provider is built from its endpoint',
+        () async {
+          final stub = await StubServer.start();
+          addTearDown(stub.close);
+          stub.routes['POST /v1/chat/completions'] = (req) =>
+              StubServer.stream(req, ['ready'], tokensPerSecond: 30);
+          stub.routes['GET /v1/models'] = (req) => StubServer.json(req, {
+            'data': [
+              {'id': 'qwen'},
+            ],
+          });
+          final container = make();
+          final settings = container.read(settingsProvider.notifier);
+          settings.upsertProvider(
+            ProviderConfig(
+              id: 'local',
+              kind: 'openai_compatible',
+              endpoint: stub.v1.toString(),
+              defaultModel: 'qwen',
+            ),
+          );
+          settings.selectLlm('local');
+          final active = container.read(activeLlmProvider);
+          expect(active, isA<OpenAiCompatibleProvider>());
+          // Storing a key binds it without rebuilding the provider a call
+          // may be running on: the binding is pushed into the live one.
+          settings.upsertProvider(
+            container
+                .read(settingsProvider)
+                .provider('local')!
+                .copyWith(credential: () => 'provider:local'),
+          );
+          final keyed = container.read(activeLlmProvider);
+          expect(
+            identical(keyed, active),
+            isFalse,
+            reason: 'credential changed',
+          );
+          container.read(credentialsProvider.notifier).set('local', 'k');
+          expect(
+            identical(container.read(activeLlmProvider), keyed),
+            isTrue,
+            reason: 'a key save is not a rebuild',
+          );
+          expect(
+            (container.read(
+              activeLlmProvider,
+            ) as OpenAiCompatibleProvider).credentialOrigin,
+            stub.origin,
+          );
+          container.read(credentialsProvider.notifier).clear('local');
+          settings.upsertProvider(
+            container
+                .read(settingsProvider)
+                .provider('local')!
+                .copyWith(credential: () => null),
+          );
+          expect(
+            container.read(llmStatusProvider),
+            'local @ ${stub.origin} (qwen) — local',
+          );
+          final info = await container.read(
+            endpointInfoProvider('local').future,
+          );
+          expect(info.health, EndpointHealth.ok);
+          expect(info.models, ['qwen']);
+          expect(
+            await container.read(endpointInfoProvider('fake').future),
+            isA<EndpointInfo>().having(
+              (i) => i.health,
+              'health',
+              EndpointHealth.unknown,
+            ),
+          );
+          final recorder = await container.read(llmRecorderProvider.future);
+          final call = await recorder.start(
+            container.read(activeLlmProvider)!,
+            providerTestRequest(),
+          );
+          final result = await call.done;
+          expect(result.text, 'ready');
+          expect(result.usage!.tokensPerSecond, 30);
+          expect(stub.requests.last.body, contains(providerTestPrompt));
+        },
+      );
+
+      test('an openai_compatible provider without what it needs is named', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          ProviderConfig(id: 'bare', kind: 'openai_compatible'),
+        );
+        settings.selectLlm('bare');
+        expect(container.read(llmRegistryProvider).keys, ['fake']);
+        expect(container.read(misconfiguredLlmsProvider), {'bare': 'endpoint'});
+        expect(misconfiguredNote('endpoint'), 'missing its endpoint');
+        expect(
+          container.read(llmStatusProvider),
+          "provider 'bare' is missing its endpoint — local only",
+        );
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'bare',
+            kind: 'openai_compatible',
+            endpoint: 'http://127.0.0.1:1/v1',
+          ),
+        );
+        expect(container.read(misconfiguredLlmsProvider), {
+          'bare': 'default_model',
+        });
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'bare',
+            kind: 'openai_compatible',
+            endpoint: 'http://127.0.0.1:1/v1',
+            defaultModel: 'm',
+          ),
+        );
+        expect(container.read(misconfiguredLlmsProvider), isEmpty);
+        expect(container.read(llmRegistryProvider).keys, ['fake', 'bare']);
+      });
+
       test('removing a provider clears its selection', () {
         final container = make();
         final settings = container.read(settingsProvider.notifier);
@@ -626,6 +751,78 @@ void main() {
         expect(container.read(settingsProvider).llm, 'lan');
       });
 
+      test('storing a key binds it to the endpoint origin of the moment', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'lan',
+            kind: 'fake',
+            endpoint: 'https://lan.example:8443/v1',
+            credential: 'provider:lan',
+          ),
+        );
+        expect(
+          container.read(settingsProvider).provider('lan')!.keyBound,
+          isFalse,
+        );
+        // The binding is written before the secret: a store that refuses
+        // leaves "no key", never a key that can never be sent.
+        final refusing = make(store: _RefusingStore());
+        refusing
+            .read(settingsProvider.notifier)
+            .upsertProvider(
+              ProviderConfig(
+                id: 'lan',
+                kind: 'fake',
+                endpoint: 'https://lan.example:8443/v1',
+                credential: 'provider:lan',
+              ),
+            );
+        expect(
+          () => refusing.read(credentialsProvider.notifier).set('lan', 'k'),
+          throwsA(isA<SecretStoreException>()),
+        );
+        expect(
+          refusing.read(settingsProvider).provider('lan')!.credentialOrigin,
+          'https://lan.example:8443',
+        );
+        container.read(credentialsProvider.notifier).set('lan', 'k1');
+        final bound = container.read(settingsProvider).provider('lan')!;
+        expect(bound.credentialOrigin, 'https://lan.example:8443');
+        expect(bound.keyBound, isTrue);
+        expect(
+          File('${tmp.path}/settings.json').readAsStringSync(),
+          contains('"credential_origin":"https://lan.example:8443"'),
+        );
+        // Moving the endpoint unbinds; entering the key again rebinds.
+        settings.upsertProvider(
+          bound.copyWith(endpoint: () => 'https://other.example/v1'),
+        );
+        expect(
+          container.read(settingsProvider).provider('lan')!.keyBound,
+          isFalse,
+        );
+        expect(
+          container.read(credentialStatusProvider('lan')),
+          CredentialStatus.set,
+        );
+        container.read(credentialsProvider.notifier).set('lan', 'k2');
+        expect(
+          container.read(settingsProvider).provider('lan')!.credentialOrigin,
+          'https://other.example',
+        );
+        // A provider without an endpoint records nothing.
+        settings.upsertProvider(
+          ProviderConfig(id: 'f', kind: 'fake', credential: 'provider:f'),
+        );
+        container.read(credentialsProvider.notifier).set('f', 'k');
+        expect(
+          container.read(settingsProvider).provider('f')!.credentialOrigin,
+          isNull,
+        );
+      });
+
       test('a keyless or unknown provider refuses a credential', () {
         final container = make();
         final credentials = container.read(credentialsProvider.notifier);
@@ -687,4 +884,16 @@ final class _BrokenStore implements SecretStore {
 
   @override
   bool delete(String account) => read(account) != null;
+}
+
+final class _RefusingStore implements SecretStore {
+  @override
+  String? read(String account) => null;
+  @override
+  bool has(String account) => false;
+  @override
+  void write(String account, String value) =>
+      throw const SecretStoreException('refused');
+  @override
+  bool delete(String account) => false;
 }

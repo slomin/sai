@@ -21,7 +21,7 @@ void main() {
       undo: () => calls.add('undo'),
       toggleChat: () => calls.add('chat'),
       showShortcuts: () => calls.add('shortcuts'),
-      setApiKey: () => calls.add('api key'),
+      showProviders: () => calls.add('providers'),
       select: (section) => calls.add('select $section'),
     );
     List<PlatformMenuItem> menus({
@@ -52,10 +52,10 @@ void main() {
         appItems
             .where((i) => i is! PlatformProvidedMenuItem)
             .map((i) => i.label),
-        ['Provider API Key…'],
+        ['Providers…'],
         reason: 'the one custom item',
       );
-      expect(appItems[1].label, 'Provider API Key…', reason: 'after About');
+      expect(appItems[1].label, 'Providers…', reason: 'after About');
       expect(appItems.whereType<PlatformProvidedMenuItem>().map(typeOf), [
         PlatformProvidedMenuItemType.about,
         PlatformProvidedMenuItemType.servicesSubmenu,
@@ -156,9 +156,9 @@ void main() {
       expect(calls, ['shortcuts']);
     });
 
-    test('sai > Provider API Key…', () {
-      menuItem(menus(), ['sai', 'Provider API Key…']).onSelected!();
-      expect(calls, ['api key']);
+    test('sai > Providers…', () {
+      menuItem(menus(), ['sai', 'Providers…']).onSelected!();
+      expect(calls, ['providers']);
     });
   });
 

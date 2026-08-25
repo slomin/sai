@@ -87,7 +87,7 @@ keys, spend limits, rotation.
   name, and a secret-looking key or value makes the file unreadable
   rather than readable.
 - Keys are entered from the terminal (`sai_tui secret set <id>`, hidden
-  prompt) or the app (`sai › Provider API Key…`, masked field). Removing
+  prompt) or the app (`sai › Providers…`, masked field). Removing
   a provider does not remove its key; `secret clear` does.
 - `SecKeychainCreate`, `kSecUseKeychain` and `kSecMatchSearchList` are
   deprecated but exported on macOS 26; if they go, the tests move to a

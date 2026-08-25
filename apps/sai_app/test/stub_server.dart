@@ -1,0 +1,84 @@
+import 'dart:convert';
+import 'dart:io';
+
+/// A loopback OpenAI-compatible stub for the dialog tests: a fixed model
+/// list and a scripted streamed answer. The transport itself is tested
+/// in `sai_core`; here it only has to look like a server.
+final class StubServer {
+  StubServer._(this._server);
+
+  final HttpServer _server;
+  final requests = <String>[];
+  List<String> words = const ['ready'];
+  double? tokensPerSecond = 33.3;
+  int chatStatus = 200;
+
+  static Future<StubServer> start() async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final stub = StubServer._(server);
+    server.listen(stub._serve);
+    return stub;
+  }
+
+  String get origin => 'http://127.0.0.1:${_server.port}';
+  String get v1 => '$origin/v1';
+
+  Future<void> _serve(HttpRequest request) async {
+    await utf8.decoder.bind(request).join();
+    requests.add('${request.method} ${request.uri.path}');
+    final response = request.response;
+    switch ('${request.method} ${request.uri.path}') {
+      case 'GET /v1/models':
+        response
+          ..headers.contentType = ContentType.json
+          ..write(
+            jsonEncode({
+              'data': [
+                {'id': 'qwen'},
+                {'id': 'embed'},
+              ],
+            }),
+          );
+      case 'POST /v1/chat/completions' when chatStatus != 200:
+        response
+          ..statusCode = chatStatus
+          ..write('{"error":"no"}');
+      case 'POST /v1/chat/completions':
+        response
+          ..headers.contentType = ContentType('text', 'event-stream')
+          ..bufferOutput = false;
+        for (final w in words) {
+          response.write(
+            'data: ${jsonEncode({
+              'id': 'chatcmpl-1',
+              'choices': [
+                {
+                  'index': 0,
+                  'delta': {'content': w},
+                  'finish_reason': null,
+                },
+              ],
+            })}\n\n',
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        response.write(
+          'data: ${jsonEncode({
+            'id': 'chatcmpl-1',
+            'choices': [
+              {'index': 0, 'delta': <String, Object?>{}, 'finish_reason': 'stop'},
+            ],
+            if (tokensPerSecond != null) 'timings': {'predicted_per_second': tokensPerSecond},
+          })}\n\n',
+        );
+        response.write('data: [DONE]\n\n');
+      default:
+        response.statusCode = HttpStatus.notFound;
+    }
+    try {
+      await response.close();
+    } catch (_) {}
+  }
+
+  Future<void> close() => _server.close(force: true);
+}

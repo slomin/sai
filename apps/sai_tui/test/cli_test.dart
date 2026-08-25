@@ -108,6 +108,124 @@ void main() {
     expect(err.toString(), contains("no configured provider 'lan'"));
   });
 
+  test('an openai_compatible provider needs an endpoint and a model', () async {
+    expect(await run('provider add local --kind openai_compatible'), cliOk);
+    expect(
+      err.toString(),
+      contains(
+        "provider 'local' is missing its endpoint; add it with --endpoint",
+      ),
+    );
+    err.clear();
+    expect(
+      await run('provider add local --endpoint http://127.0.0.1:1234/v1'),
+      cliOk,
+    );
+    expect(
+      err.toString(),
+      contains('missing its default_model; add it with --model'),
+    );
+    expect(await run('provider use local'), cliFailed);
+    out.clear();
+    expect(await run('provider list'), cliOk);
+    expect(
+      out.toString(),
+      contains('local  openai_compatible  — missing its default_model'),
+    );
+    err.clear();
+    out.clear();
+    expect(await run('provider add local --model qwen'), cliOk);
+    expect(err.toString(), isEmpty);
+    expect(await run('provider use local'), cliOk);
+    expect(
+      out.toString(),
+      contains('local @ http://127.0.0.1:1234 (qwen) — local'),
+    );
+    // Plaintext to another machine is refused at entry.
+    expect(
+      await run(
+        'provider add lan --kind openai_compatible --endpoint http://lan.example/v1 --model m',
+      ),
+      cliUsageError,
+    );
+    expect(err.toString(), contains(plaintextRefused));
+  });
+
+  test(
+    'moving an endpoint unbinds the key until it is entered again',
+    () async {
+      expect(
+        await run(
+          'provider add lan --kind openai_compatible --endpoint https://lan.example:8443/v1 --model qwen --key',
+        ),
+        cliOk,
+      );
+      expect(await run('secret set lan'), cliOk);
+      expect(
+        container.read(settingsProvider).provider('lan')!.credentialOrigin,
+        'https://lan.example:8443',
+      );
+      out.clear();
+      expect(await run('provider list'), cliOk);
+      expect(out.toString(), contains('· key set'));
+      out.clear();
+      // Same origin, new path: still bound, no nagging.
+      expect(
+        await run('provider add lan --endpoint https://lan.example:8443/v2'),
+        cliOk,
+      );
+      expect(out.toString(), isNot(contains('enter its key again')));
+      expect(
+        container.read(settingsProvider).provider('lan')!.keyBound,
+        isTrue,
+      );
+      out.clear();
+      // New port: unbound, said so, and the list shows it.
+      expect(
+        await run('provider add lan --endpoint https://lan.example:9443/v1'),
+        cliOk,
+      );
+      expect(
+        out.toString(),
+        contains(
+          'the endpoint moved; enter its key again: sai_tui secret set lan',
+        ),
+      );
+      expect(
+        container.read(settingsProvider).provider('lan')!.keyBound,
+        isFalse,
+      );
+      expect(
+        jsonDecode(settingsFile().readAsStringSync())['providers'][0],
+        isNot(contains('credential_origin')),
+      );
+      out.clear();
+      expect(await run('provider list'), cliOk);
+      expect(out.toString(), contains('· key needs re-entry'));
+      out.clear();
+      expect(await run('secret set lan'), cliOk);
+      expect(
+        container.read(settingsProvider).provider('lan')!.credentialOrigin,
+        'https://lan.example:9443',
+      );
+      expect(secrets.read('provider:lan'), canary);
+    },
+  );
+
+  test('a malformed endpoint is a usage error, not a crash', () async {
+    expect(
+      await run(
+        'provider add lan --kind openai_compatible --endpoint http://[::1 --model m --key',
+      ),
+      cliUsageError,
+    );
+    expect(
+      err.toString(),
+      contains('endpoint must be an absolute http(s) URL'),
+    );
+    expect(container.read(settingsProvider).provider('lan'), isNull);
+  });
+
   test('provider add rejects what settings would reject', () async {
     expect(await run('provider add Lan --kind fake'), cliUsageError);
     expect(await run('provider add lan'), cliUsageError);

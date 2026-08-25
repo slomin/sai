@@ -195,7 +195,7 @@ names the response, when there is one).
 | --- | --- |
 | `provider.request` | `messages` — `[{role, text}]`, `role` ∈ `system` \| `user` \| `assistant`; optional `max_tokens`, `temperature`. The request as sent, so it never holds a key, header or URL. |
 | `provider.response` | `text`, `finish` ∈ `stop` \| `length` \| `cancelled` — a cancelled call's partial text is still what the assistant said; optional `truncated` (below) |
-| `provider.failure` | `kind` ∈ `unreachable` \| `timeout` \| `rejected` \| `protocol` \| `internal`, `message`; optional `endpoint`, `status`, `text` (partial output), `truncated` |
+| `provider.failure` | `kind` ∈ `unreachable` \| `timeout` \| `rejected` \| `credential` \| `protocol` \| `internal`, `message` (fixed text, never an exception's); optional `endpoint` (an origin, `scheme://host[:port]`, never more), `status`, `text` (partial output), `truncated` |
 | `provider.usage` | `finish` ∈ `stop` \| `length` \| `cancelled` \| `failed`, `duration_ms`; optional `prompt_tokens`, `completion_tokens`, `total_tokens`, `tokens_per_second` |
 
 The 1 MiB line cap applies asymmetrically. A request that cannot be

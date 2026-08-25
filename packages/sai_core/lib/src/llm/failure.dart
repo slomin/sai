@@ -9,6 +9,11 @@ enum LlmFailureKind {
   /// The backend answered with an error; [LlmFailure.status] where HTTP.
   rejected,
 
+  /// The call could not be made because of its key: none stored where
+  /// the endpoint takes one, one entered for another origin, or a secret
+  /// store that could not be read. Nothing was sent.
+  credential,
+
   /// The answer was not something this provider can read — a truncated
   /// stream, an unparseable chunk, streaming refused.
   protocol,
@@ -32,7 +37,9 @@ final class LlmFailure implements Exception {
   final LlmFailureKind kind;
   final String message;
 
-  /// Which endpoint failed — connection errors must name it (#22).
+  /// Which endpoint failed — connection errors must name it (#22). An
+  /// origin (`scheme://host[:port]`), never a path, userinfo, query or
+  /// fragment; the recorder cuts anything more before writing.
   final String? endpoint;
 
   /// The HTTP status where the backend answered with one.
