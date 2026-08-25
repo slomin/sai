@@ -294,8 +294,12 @@ are unchanged; only the medium is deferred, tracked in
 query needs earn it (#12 measured replay at microseconds per line).
 
 Consequences: one store per process; a concurrent writer's appends
-become visible on `reload()` or reopen, not live. Date-derived providers do
-roll over at local midnight, independently of archive writes.
+become visible on `reload()` or reopen, not live. The terminal client
+(#41) drives `reload()` from a poll of the archive's `HEAD` count
+(`Archive.head()`, a lock-free read of one small file, every two
+seconds); the app still reads the log at open — its poll is a follow-up.
+Date-derived providers do roll over at local midnight, independently of
+archive writes.
 
 ## Repeating tasks are deferred
 

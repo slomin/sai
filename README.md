@@ -51,9 +51,16 @@ dart run apps/sai_tui/bin/sai_tui.dart
 cd apps/sai_tui && dart run
 ```
 
-Both clients read and write the same archive; a client picks up the
-other's writes when it opens (live cross-client updates are not in
-yet). To try one against a scratch archive instead of the real one,
+Both clients read and write the same archive. The terminal client
+follows the app's writes as they land (it polls the archive head every
+two seconds); the app picks up the terminal's when it opens.
+
+In the terminal client, the top line captures (Enter saves, `@today`,
+`!2026-09-01`), `↑`/`↓` move the cursor over the tasks below, `^D`
+completes the selected one and `^U` undoes; the last two rows name the
+active provider with its `local`/`cloud` tag and the keys. It ships as
+one binary — `dart compile exe apps/sai_tui/bin/sai_tui.dart -o
+build/sai_tui`, or signed via `tool/sign-tui.sh` (below). To try one against a scratch archive instead of the real one,
 point `SAI_ARCHIVE_ROOT` at a throwaway directory, e.g.
 `SAI_ARCHIVE_ROOT=/tmp/sai-demo/archive`. Non-secret settings live in
 `settings.json` in the same data directory as the default archive;

@@ -39,9 +39,12 @@ the layout and the toolchain; this file has the rules.
   about keys — and then say so before launching.
 - The TUI is driven the same way, through a pseudo-terminal:
   `tool/smoke/tui.py <dir> <steps.json>` sends keys, waits for screen
-  text and saves screen snapshots (no tmux needed). A real terminal
-  delivers each key twice to nocterm and repaints cell by cell; the
-  driver matches text with whitespace stripped.
+  text and saves screen snapshots (no tmux needed). Keys are not
+  doubled in a real pty (one `^U` is one undo, measured in #41) — but a
+  string and its Enter written in one chunk parse differently, so the
+  driver writes one key per write; the screen repaints cell by cell,
+  so the driver matches text with whitespace stripped. The first key
+  after launch is swallowed: send a Tab and an Esc before typing.
 - Two app quirks worth knowing: the first click after a launch or a
   burst of typing is often swallowed — click again and verify by the
   evidence, not by the click; synthetic ⌘-chords from System Events do
