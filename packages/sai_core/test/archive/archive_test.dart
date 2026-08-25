@@ -41,6 +41,19 @@ void main() {
     expect(report.head, stored.id);
   });
 
+  test('head() is the cheap read of HEAD and follows another writer', () async {
+    final archive = await Archive.open(tmp, clock: clock);
+    expect((await archive.head()).count, 0);
+    await archive.append(draft());
+    final other = await Archive.open(tmp, clock: clock);
+    await other.append(draft('from another process'));
+    final head = await archive.head();
+    final report = await archive.verify();
+    expect(head.count, 2);
+    expect(head.head, report.head);
+    await other.close();
+  });
+
   test('pre-write validation sees the final event and is atomic', () async {
     final archive = await Archive.open(tmp, clock: clock);
     final first = await archive.append(draft('first'));

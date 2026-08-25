@@ -52,6 +52,13 @@ jobs:
       - name: Test sai_tui
         working-directory: apps/sai_tui
         run: dart test
+      - name: Compile sai_tui
+        # The terminal client ships as one binary (#41); prove it builds
+        # and starts. The settings path keeps the run off any real file.
+        run: |
+          mkdir -p build
+          dart compile exe apps/sai_tui/bin/sai_tui.dart -o build/sai_tui
+          SAI_SETTINGS_FILE="$RUNNER_TEMP/settings.json" build/sai_tui reasoning
 
   macos:
     name: Test and build (app)

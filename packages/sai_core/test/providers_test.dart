@@ -127,6 +127,34 @@ void main() {
       );
     });
 
+    test('reload() surfaces appends made behind the store', () async {
+      final tmp = Directory.systemTemp.createTempSync('sai_providers_test');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final container = ProviderContainer.test(
+        overrides: [
+          archiveRootProvider.overrideWithValue(tmp),
+          eventSourceProvider.overrideWithValue('sai/test'),
+        ],
+      );
+      final notifier = container.read(tasksProvider.notifier);
+      expect(notifier.reload, throwsStateError);
+      await container.read(tasksProvider.future);
+
+      // Another process: its own archive handle and store over the root.
+      final other = await Archive.open(tmp);
+      final otherStore = await TaskStore.open(other, source: 'sai/app');
+      await otherStore.createTask(title: 'from the app');
+      otherStore.dispose();
+      await other.close();
+
+      expect(container.read(tasksProvider).requireValue.tasks, isEmpty);
+      await notifier.reload();
+      expect(
+        container.read(tasksProvider).requireValue.tasks.values.single.title,
+        'from the app',
+      );
+    });
+
     test('tasksProvider opens the store and reflects its commands', () async {
       final tmp = Directory.systemTemp.createTempSync('sai_providers_test');
       addTearDown(() => tmp.deleteSync(recursive: true));

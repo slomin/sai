@@ -631,4 +631,10 @@ class TasksNotifier extends AsyncNotifier<TaskProjection> {
     );
     return store.projection;
   }
+
+  /// Replays the log again so appends made by another process become
+  /// visible ([TaskStore.reload]); the new projection lands in the state
+  /// through the same change stream as a command. Throws the [store]'s
+  /// [StateError] until [build] has settled.
+  Future<void> reload() => store.reload();
 }
