@@ -22,10 +22,10 @@ and `test/no_secrets_test.dart` enforce that.
 | --- | --- | --- |
 | `id` | yes | `^[a-z0-9][a-z0-9_-]*$`; what `llm` selects and the archive's `model.provider` carries |
 | `kind` | yes | which implementation builds it: `fake`, `openai_compatible` (#22). Open: an unknown kind is kept and shown as "not available" |
-| `endpoint` | no | absolute `http`/`https` URL with no userinfo, query or fragment; `http` only for `localhost` or a loopback address (ADR 0009). `openai_compatible` needs it, and `default_model` |
+| `endpoint` | no | absolute `http`/`https` URL with no userinfo, query or fragment. New entries take `http` only for `localhost` or a loopback address (ADR 0009); a stored one is read either way and refused at request time. `openai_compatible` needs it, and `default_model` |
 | `default_model` | no | the model used when a request names none |
 | `credential` | no | `^provider:[a-z0-9][a-z0-9_-]*$` — the secret-store *account* holding the key, by convention `provider:<id>`. Absent for keyless backends |
-| `credential_origin` | no | `scheme://host[:port]` of the endpoint the key was entered for; written when the key is stored, always equal to the endpoint's origin while present. The key is sent only while they match (ADR 0009); a mismatch on disk is a format error, an edit that moves the endpoint drops it |
+| `credential_origin` | no | `scheme://host[:port]` of the endpoint the key was entered for; written when the key is stored. The key is sent only while it equals the endpoint's origin (ADR 0009); one that does not match, or names no credential, is dropped on read, and an edit that moves the endpoint drops it |
 
 ## Rules
 

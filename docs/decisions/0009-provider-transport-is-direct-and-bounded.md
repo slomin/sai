@@ -39,8 +39,9 @@ Every outbound provider request goes through one transport, in
   trust is an `unreachable` failure (`TLS handshake failed`).
 - **Plaintext only to this machine.** `http://` is accepted only for
   `localhost` and loopback addresses; anything else must be `https://`.
-  Refused twice: at entry (the settings writer) and at request time (no
-  socket is opened).
+  Refused at entry (the CLI and the dialogs, `checkEndpointForEntry`)
+  and at request time (no socket is opened) — never on the read path, so
+  a rule tightened later cannot make a stored file unreadable.
 - **Clean URLs.** An endpoint carries no userinfo, query or fragment
   (settings v0), and no key is ever put in one.
 - **Keys are bound to an origin.** Storing a key records the endpoint's
@@ -49,16 +50,21 @@ Every outbound provider request goes through one transport, in
   still has that origin; after the endpoint moves, the call fails with
   kind `credential` until the key is entered again. A path change is
   not a move.
-- **Three deadlines.** Connect (10 s), first response (30 s), and
-  between stream events (30 s). There is no total deadline: a long
-  answer that keeps arriving is fine. Every deadline aborts the request.
+- **Four deadlines.** Connect (10 s), first response headers (30 s),
+  first token (5 min — prompt evaluation on a large context), and
+  between later stream events (30 s); an SSE comment (`: ping`) resets
+  the clock. There is no total deadline: a long answer that keeps
+  arriving is fine. Every deadline aborts the request. Discovery answers
+  are capped at 1 MiB.
 - **Cancellation** finishes the call first (the controller's rule), then
   aborts the socket, so the recorder's three lines are always written.
 - **Fixed failure text.** A failure names its kind, a message from a
   fixed set (`policy.dart`), the endpoint's *origin*, and an HTTP status
   where there was one — never an exception's text, a response body, a
-  header, or a URL path. The recorder normalises `endpoint` to an origin
-  again before writing, as a second guard.
+  header, or a URL path. An OpenAI-style `error` object inside the
+  stream is a `rejected` failure, not an empty answer. The recorder
+  normalises `endpoint` to an origin again before writing, as a second
+  guard.
 - **Discovery is not a call.** `GET /v1/models`, llama.cpp `/health` and
   `/props`, LM Studio `/api/v1/models` go through the same transport and
   policy but are not recorded: they carry no user content, and what an
@@ -66,7 +72,12 @@ Every outbound provider request goes through one transport, in
 
 `LlmFailureKind` gains `credential` for the three ways a key stops a
 call before a socket opens: none stored where the endpoint takes one,
-bound to another origin, the store unreadable.
+bound to another origin, the store unreadable. A binding on disk that
+does not match its endpoint is simply not a binding — dropped on read,
+not a format error. Storing a key writes the binding first and the
+secret second, so a half-failed store leaves "no key", never a key that
+can never be sent; and the binding is pushed into the live provider
+rather than rebuilding it, so a running call is never cut.
 
 ## Consequences
 
