@@ -239,10 +239,7 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
 
   static String _outcome(LlmResult result) {
     final failure = result.failure;
-    if (failure != null) {
-      return 'failed: ${failure.kind.name} — ${failure.message}'
-          '${failure.endpoint == null ? '' : ' (${failure.endpoint})'}';
-    }
+    if (failure != null) return chatFailureLine(failure);
     final tps = result.usage?.tokensPerSecond;
     return '${result.finish.name}'
         '${tps == null ? ' · tokens/s unavailable' : ' · ${tps.toStringAsFixed(1)} tokens/s'}';
@@ -365,7 +362,12 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
     final RecordedCall call;
     try {
       final recorder = await ref.read(llmRecorderProvider.future);
-      call = await recorder.start(provider, providerTestRequest());
+      call = await recorder.start(
+        provider,
+        providerTestRequest(
+          reasoning: ref.read(reasoningProvider) ? null : false,
+        ),
+      );
     } on Object catch (error) {
       if (!current()) return;
       setState(() => _starting = false);

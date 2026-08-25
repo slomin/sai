@@ -27,7 +27,8 @@ final _chatViewProvider = Provider(
 /// teardown belongs in [onQuit], before that call).
 ///
 /// Key map: one of the two fields is always focused, so printable keys
-/// type; Tab moves between them. Ctrl+C quits (it bubbles through the
+/// type; Tab moves to the chat, Esc back to capture (or stops a running
+/// answer first). Ctrl+C quits (it bubbles through the
 /// field by design). **Ctrl+U** is undo — not Ctrl+Z, which stays
 /// `SIGTSTP` in a real terminal (`stdin.lineMode = false` clears ICANON
 /// only, ISIG stays on) and would suspend the TUI mid-alt-screen. Esc
@@ -67,14 +68,19 @@ class _TuiAppState extends State<TuiApp> {
       _undo();
       return true;
     }
+    // Directional, not toggles: a real terminal can deliver a key twice
+    // (see tool/smoke/tui.py), and a toggle fired twice goes nowhere.
     if (event.logicalKey == LogicalKey.tab) {
-      setState(() {
-        _pane = _pane == _Pane.capture ? _Pane.chat : _Pane.capture;
-      });
+      if (_pane != _Pane.chat) setState(() => _pane = _Pane.chat);
       return true;
     }
     if (event.logicalKey == LogicalKey.escape) {
-      context.container.read(chatProvider.notifier).cancel();
+      final chat = context.container.read(chatProvider);
+      if (chat.busy) {
+        context.container.read(chatProvider.notifier).cancel();
+      } else if (_pane != _Pane.capture) {
+        setState(() => _pane = _Pane.capture);
+      }
       return true;
     }
     return false;
@@ -83,12 +89,19 @@ class _TuiAppState extends State<TuiApp> {
   void _ask(String line) {
     if (line.trim().isEmpty) return;
     final chat = context.container.read(chatProvider.notifier);
-    // A refusal is set before the first await; only an accepted line
-    // clears the field, so nothing typed is lost.
-    unawaited(chat.send(line));
-    if (context.container.read(chatProvider).error == null) {
-      setState(_chatInput.clear);
-    }
+    // A refusal before the first await keeps the line where it is; one
+    // after it (the archive would not take the message) gives it back,
+    // unless something newer has been typed meanwhile.
+    final sending = chat.send(line);
+    if (context.container.read(chatProvider).error != null) return;
+    setState(_chatInput.clear);
+    unawaited(
+      sending.then((sent) {
+        if (!sent && mounted && _chatInput.text.isEmpty) {
+          setState(() => _chatInput.text = line);
+        }
+      }),
+    );
   }
 
   void _setNotice(String notice) {
@@ -193,7 +206,7 @@ class _TuiAppState extends State<TuiApp> {
                   ),
                 ),
                 Text(
-                  '^C quit · ^U undo · Tab chat · Esc stop',
+                  '^C quit · ^U undo · Tab chat · Esc stop/back',
                   style: TextStyle(color: Colors.gray),
                 ),
               ],

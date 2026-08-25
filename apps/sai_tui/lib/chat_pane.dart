@@ -75,12 +75,7 @@ class ChatPane extends StatelessComponent {
 
   List<Component> _turn(ChatTurn turn) {
     final who = turn.role == ChatRole.user ? 'you' : 'sai';
-    final notes = [
-      if (turn.finish == LlmFinish.cancelled) 'cancelled',
-      if (turn.finish == LlmFinish.length) 'cut short',
-      if (turn.tasksWithheld) tasksWithheldWord,
-      ?AssembledContext.cutNote(turn.dropped),
-    ];
+    final notes = turnNotes(turn);
     final label = notes.isEmpty ? who : '$who · ${notes.join(' · ')}';
     final failure = turn.failure;
     return [
@@ -93,8 +88,7 @@ class ChatPane extends StatelessComponent {
         Text('$label › ${turn.text}'),
       if (failure != null)
         Text(
-          '$label › failed: ${failure.kind.name} — ${failure.message}'
-          '${failure.endpoint == null ? '' : ' (${failure.endpoint})'}',
+          '$label › ${chatFailureLine(failure)}',
           style: TextStyle(color: Colors.red),
         ),
     ];

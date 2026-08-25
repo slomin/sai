@@ -131,11 +131,19 @@ class AppCommands {
     final text = draft.text;
     if (text.trim().isEmpty) return;
     final chat = container.read(chatProvider.notifier);
-    // A refusal (busy, no provider, over budget) is set before the first
-    // await, so it is visible right here; only an accepted line clears.
-    unawaited(chat.send(text));
-    if (container.read(chatProvider).error == null) draft.clear();
+    // A refusal before the first await (busy, no provider, over budget)
+    // shows right here and keeps the line. A refusal after it — the
+    // archive would not take the message — gives the line back, unless
+    // the user has typed something newer meanwhile.
+    final sending = chat.send(text);
+    if (container.read(chatProvider).error != null) return;
+    draft.clear();
     container.read(chatFocusProvider).requestFocus();
+    unawaited(
+      sending.then((sent) {
+        if (!sent && draft.text.isEmpty) draft.text = text;
+      }),
+    );
   }
 
   static void _toggleReasoning(ProviderContainer container) {
@@ -169,7 +177,7 @@ class AppCommands {
           '⌘N  New task (focus quick capture)\n'
           '⌘J  Show or hide the chat pane\n'
           '⌘Z  Undo the last change\n'
-          '⌘R  Show or hide the model\'s reasoning\n'
+          '⌘R  Let the model think before it answers, or not\n'
           'Esc  Stop the assistant\'s answer',
         ),
         actions: [

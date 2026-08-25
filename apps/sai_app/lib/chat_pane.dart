@@ -42,9 +42,18 @@ class _ChatPaneState extends ConsumerState<ChatPane> {
     super.dispose();
   }
 
-  /// Keeps the newest text in view as it arrives, once laid out.
+  var _followPending = false;
+
+  /// Keeps the newest text in view as it arrives — but only while the
+  /// reader is at the bottom; someone who scrolled up to re-read stays
+  /// there. One jump per frame, however many deltas landed in it.
   void _follow() {
+    if (_followPending || !_scroll.hasClients) return;
+    final position = _scroll.position;
+    if (position.pixels < position.maxScrollExtent - 48) return;
+    _followPending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _followPending = false;
       if (!_scroll.hasClients) return;
       _scroll.jumpTo(_scroll.position.maxScrollExtent);
     });
@@ -147,12 +156,7 @@ class _TurnRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final failure = turn.failure;
-    final notes = [
-      if (turn.finish == LlmFinish.cancelled) 'cancelled',
-      if (turn.finish == LlmFinish.length) 'cut short',
-      if (turn.tasksWithheld) tasksWithheldWord,
-      ?AssembledContext.cutNote(turn.dropped),
-    ];
+    final notes = turnNotes(turn);
     return _Row(
       who: turn.role == ChatRole.user ? 'you' : 'sai',
       reasoning: reasoningOn ? turn.reasoning : null,
@@ -215,8 +219,3 @@ class _Row extends StatelessWidget {
     );
   }
 }
-
-/// The failed turn's line, in the words the Providers dialog uses.
-String chatFailureLine(LlmFailure failure) =>
-    'failed: ${failure.kind.name} — ${failure.message}'
-    '${failure.endpoint == null ? '' : ' (${failure.endpoint})'}';

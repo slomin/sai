@@ -289,6 +289,83 @@ void main() {
     },
   );
 
+  test('Stop before the call exists ends the turn with nothing sent', () async {
+    fake = FakeLlmProvider(script: (_) => 'never');
+    final container = await make();
+    final chat = container.read(chatProvider.notifier);
+    final sending = chat.send('go');
+    expect(container.read(chatProvider).busy, isTrue);
+    chat.cancel();
+    expect(await sending, isFalse);
+    final state = container.read(chatProvider);
+    expect(state.busy, isFalse);
+    expect(fake.requests, 0);
+    expect(lines().where((l) => l['type'] == 'provider.request'), isEmpty);
+    // A later send works as usual.
+    expect(await chat.send('now'), isTrue);
+    expect(fake.requests, 1);
+  });
+
+  test('a refusal raised during a turn ends with the turn', () async {
+    fake = FakeLlmProvider(
+      script: (_) => 'a b c',
+      delta: const Duration(milliseconds: 10),
+    );
+    final container = await make();
+    final chat = container.read(chatProvider.notifier);
+    final first = chat.send('one');
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    await chat.send('two');
+    expect(container.read(chatProvider).error, chatBusyError);
+    await first;
+    expect(container.read(chatProvider).error, isNull);
+  });
+
+  test(
+    'a disposed container mid-answer neither throws nor streams on',
+    () async {
+      fake = FakeLlmProvider(
+        script: (_) => List.filled(50, 'x').join(' '),
+        delta: const Duration(milliseconds: 10),
+      );
+      final container = await make();
+      final chat = container.read(chatProvider.notifier);
+      final sending = chat.send('go');
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      container.dispose();
+      // Settles quietly, whichever side of done the dispose landed on:
+      // nothing throws into the zone from the dead notifier.
+      await sending;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    },
+  );
+
+  test('history goes in pairs; an unanswered question stays out', () async {
+    final flaky = FakeLlmProvider(
+      id: 'flaky',
+      failWith: const LlmFailure(LlmFailureKind.internal, 'boom'),
+    );
+    final roles = FakeLlmProvider(
+      id: 'roles',
+      script: (r) => r.messages.map((m) => m.role.name).join(','),
+    );
+    final container = await make(extraLlms: [flaky, roles]);
+    final settings = container.read(settingsProvider.notifier);
+    final chat = container.read(chatProvider.notifier);
+    settings.selectLlm('flaky');
+    await chat.send('first');
+    expect(container.read(chatProvider).turns.last.failed, isTrue);
+    settings.selectLlm('roles');
+    await chat.send('second');
+    // The failed pair is gone as a whole: no two user lines in a row.
+    expect(container.read(chatProvider).turns.last.text, 'system,system,user');
+    await chat.send('third');
+    expect(
+      container.read(chatProvider).turns.last.text,
+      'system,system,user,assistant,user',
+    );
+  });
+
   group('with a cloud provider', () {
     setUp(() {
       fake = FakeLlmProvider(

@@ -444,6 +444,44 @@ void main() {
     expect(fake.linesAtStart, 1);
     await call.done;
   });
+  test('a withholding call drops task-bearing history too', () async {
+    policy = const PrivacyPolicy();
+    final call = await recorder.start(
+      FakeLlmProvider(
+        id: 'cloudy',
+        privacy: LlmPrivacy.cloud,
+        script: (r) =>
+            r.messages.map((m) => '${m.role.name}:${m.text}').join(' '),
+      ),
+      LlmRequest(
+        messages: const [
+          LlmMessage(LlmRole.user, 'due?'),
+          LlmMessage(LlmRole.assistant, 'Call mom @today', taskData: true),
+          LlmMessage(LlmRole.user, 'and?'),
+        ],
+        taskContext: 'Today: Call mom',
+      ),
+    );
+    final result = await call.done;
+    expect(result.text, 'user:due? user:and?');
+    expect(jsonEncode(lines()), isNot(contains('Call mom')));
+    expect(call.taskContextWithheld, isTrue);
+  });
+
+  test('a failed call still records the reasoning that came', () async {
+    final call = await recorder.start(
+      FakeLlmProvider(
+        reasoning: (_) => 'hmm',
+        failWith: const LlmFailure(LlmFailureKind.internal, 'boom'),
+      ),
+      ask('go'),
+    );
+    await call.done;
+    final failure = lines()[1];
+    expect(failure['type'], 'provider.failure');
+    expect(failure['payload'], containsPair('reasoning', 'hmm'));
+  });
+
   test('reasoning is recorded beside the answer, apart from it', () async {
     final call = await recorder.start(
       FakeLlmProvider(

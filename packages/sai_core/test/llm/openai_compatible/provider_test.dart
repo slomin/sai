@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:sai_core/sai_core.dart';
@@ -9,8 +10,10 @@ import 'package:test/test.dart';
 import '../provider_contract.dart';
 import '../stub_server.dart';
 
-LlmRequest ask(String text) =>
-    LlmRequest(messages: [LlmMessage(LlmRole.user, text)]);
+LlmRequest ask(String text, {bool? reasoning}) => LlmRequest(
+  messages: [LlmMessage(LlmRole.user, text)],
+  reasoning: reasoning,
+);
 
 const canary = 'sk-canary-3c9e1a7b5d2f4e6a8c0b1d3f5a7c9e2b';
 
@@ -487,6 +490,43 @@ void main() {
     ]);
     expect(result.text, 'ready.');
     expect(result.reasoning, 'let me think');
+    await provider.close();
+  });
+
+  test('a 400 to reasoning_effort is retried without it, once', () async {
+    stub.routes['POST /v1/chat/completions'] = (req) async {
+      final body = jsonDecode(stub.requests.last.body) as Map<String, Object?>;
+      if (body.containsKey('reasoning_effort')) {
+        req.response.statusCode = 400;
+        await req.response.close();
+        return;
+      }
+      await StubServer.stream(req, ['ok']);
+    };
+    final provider = make();
+    final first = await provider.start(ask('a', reasoning: false)).done;
+    expect(first.text, 'ok', reason: '$first ${first.failure}');
+    final second = await provider.start(ask('b', reasoning: false)).done;
+    expect(second.text, 'ok');
+    expect(
+      stub.requests.map(
+        (r) => (jsonDecode(r.body) as Map).containsKey('reasoning_effort'),
+      ),
+      [true, false, false],
+    );
+    await provider.close();
+  });
+
+  test('a backend that accepts the switch is left alone', () async {
+    stub.routes['POST /v1/chat/completions'] = (req) =>
+        StubServer.stream(req, ['ok']);
+    final provider = make();
+    await provider.start(ask('a', reasoning: false)).done;
+    await provider.start(ask('b')).done;
+    expect(
+      stub.requests.map((r) => (jsonDecode(r.body) as Map)['reasoning_effort']),
+      ['none', null],
+    );
     await provider.close();
   });
 

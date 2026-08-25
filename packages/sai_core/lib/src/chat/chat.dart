@@ -8,6 +8,7 @@ import '../archive/event.dart';
 import '../context/assemble.dart';
 import '../llm/call.dart';
 import '../llm/failure.dart';
+import '../llm/privacy.dart';
 import '../llm/recorder.dart';
 import '../llm/status.dart';
 import '../providers.dart';
@@ -33,10 +34,6 @@ final class ChatTurn {
   final ChatRole role;
   final String text;
 
-  /// What the budget left out of this turn's request
-  /// ([AssembledContext.dropped]); empty when nothing was cut.
-  final List<String> dropped;
-
   /// What the model thought before [text], where the backend sent it.
   final String? reasoning;
 
@@ -52,6 +49,10 @@ final class ChatTurn {
   /// Whether the assistant answered this turn without the list.
   final bool tasksWithheld;
 
+  /// What the budget left out of this turn's request
+  /// ([AssembledContext.dropped]); empty when nothing was cut.
+  final List<String> dropped;
+
   bool get failed => failure != null;
 
   /// An assistant turn whose call carried the list: its words may quote
@@ -61,6 +62,21 @@ final class ChatTurn {
   @override
   String toString() => 'ChatTurn(${role.name}, ${text.length} chars)';
 }
+
+/// The notes both clients put beside an assistant turn's name, in a
+/// fixed order: how it ended, what it went without, what was cut.
+List<String> turnNotes(ChatTurn turn) => [
+  if (turn.finish == LlmFinish.cancelled) 'cancelled',
+  if (turn.finish == LlmFinish.length) 'cut short',
+  if (turn.tasksWithheld) tasksWithheldWord,
+  ?AssembledContext.cutNote(turn.dropped),
+];
+
+/// The failed turn's line, the same words in every client and the
+/// Providers dialog: kind, message, origin.
+String chatFailureLine(LlmFailure failure) =>
+    'failed: ${failure.kind.name} — ${failure.message}'
+    '${failure.endpoint == null ? '' : ' (${failure.endpoint})'}';
 
 /// The transcript and what is happening to it.
 final class ChatState {
@@ -86,8 +102,8 @@ final class ChatState {
   /// Whether the running call goes without the list.
   final bool tasksWithheld;
 
-  /// Why the last [ChatNotifier.send] did not start a call, until cleared
-  /// or the next send.
+  /// Why the last [ChatNotifier.send] did not start a call, until the
+  /// next send or the running turn ends.
   final String? error;
 
   bool get busy => streaming != null;
@@ -125,48 +141,53 @@ const chatNotReadyError = 'opening the archive…';
 /// governs the next turn and never disturbs the running one.
 class ChatNotifier extends Notifier<ChatState> {
   @override
-  ChatState build() => ChatState.empty;
+  ChatState build() {
+    ref.onDispose(() {
+      _disposed = true;
+      _call?.cancel();
+    });
+    return ChatState.empty;
+  }
 
   RecordedCall? _call;
   var _generation = 0;
+  var _disposed = false;
+
+  /// Set by [cancel] while a turn is being prepared and has no call yet;
+  /// the turn then ends before anything is sent.
+  var _cancelRequested = false;
 
   /// The window a turn is assembled for. A constant until the budget
   /// follows the endpoint's context window (ADR 0011); tests set it.
   ContextBudget budget = defaultContextBudget;
 
-  /// Sends [draft] as the next user turn. Returns once the answer is
-  /// complete and recorded, or once the send was refused (see
-  /// [ChatState.error]). Never throws.
-  Future<void> send(String draft) async {
+  /// Writes [next] unless the notifier is gone — a call that outlives
+  /// its container must not throw from a stream callback.
+  void _set(ChatState next) {
+    if (!_disposed) state = next;
+  }
+
+  /// Sends [draft] as the next user turn. Completes once the answer is
+  /// recorded, or once the send was refused — [ChatState.error] says so
+  /// and [wasAccepted] tells a client whether to keep the draft. Never
+  /// throws.
+  Future<bool> send(String draft) async {
     final container = ref.container;
     if (state.busy) return _refuse(chatBusyError);
     final message = draft.trim();
-    if (message.isEmpty) return;
+    if (message.isEmpty) return false;
     final provider = container.read(activeLlmProvider);
     if (provider == null) return _refuse(noProviderStatus);
     final projection = container.read(tasksProvider).value;
     if (projection == null) return _refuse(chatNotReadyError);
 
-    // The recorder withholds the list from a cloud provider (ADR 0010);
-    // an earlier answer that quoted it is history the same policy must
-    // withhold, or the list leaks back in through the conversation.
-    final withholds = container
-        .read(privacyPolicyProvider)
-        .withholdsFrom(provider.privacy);
     final AssembledContext assembled;
     try {
       assembled = assembleContext(
         profile: defaultProfile,
         projection: projection,
         today: container.read(todayProvider),
-        history: [
-          for (final turn in state.turns)
-            if (turn.text.isNotEmpty && !(withholds && turn.sawTasks))
-              LlmMessage(switch (turn.role) {
-                ChatRole.user => LlmRole.user,
-                ChatRole.assistant => LlmRole.assistant,
-              }, turn.text),
-        ],
+        history: _history(),
         draft: message,
         budget: budget,
         // Off asks the backend not to think; on leaves it to the model.
@@ -177,22 +198,19 @@ class ChatNotifier extends Notifier<ChatState> {
     }
 
     final generation = ++_generation;
-    bool current() => generation == _generation;
+    bool current() => generation == _generation && !_disposed;
+    _cancelRequested = false;
     // Busy from here, before the first await: a second Enter in the same
-    // tick is refused rather than racing this one to the recorder.
-    // The withheld flag belongs to this call, not the last one: it is
-    // false until the recorder has decided for this provider.
-    state = state.copyWith(
-      streaming: '',
-      tasksWithheld: false,
-      clearError: true,
-    );
+    // tick is refused rather than racing this one to the recorder. The
+    // withheld flag belongs to this call, not the last one.
+    _set(state.copyWith(streaming: '', tasksWithheld: false, clearError: true));
     final Archive archive;
     final LlmRecorder recorder;
     final StoredEvent said;
     try {
       archive = await container.read(archiveProvider.future);
       recorder = await container.read(llmRecorderProvider.future);
+      if (_cancelRequested) return _abandon(current);
       said = await archive.append(
         EventDraft(
           type: EventTypes.chatMessage,
@@ -203,41 +221,50 @@ class ChatNotifier extends Notifier<ChatState> {
       );
     } on Object catch (error) {
       if (current()) {
-        state = state.copyWith(clearStreaming: true);
+        _set(state.copyWith(clearStreaming: true));
         _refuse('could not record the message: $error');
       }
-      return;
+      return false;
     }
-    if (!current()) return;
-    state = state.copyWith(
-      turns: [
-        ...state.turns,
-        ChatTurn(role: ChatRole.user, text: message, event: said.id),
-      ],
+    if (!current()) return false;
+    _set(
+      state.copyWith(
+        turns: [
+          ...state.turns,
+          ChatTurn(role: ChatRole.user, text: message, event: said.id),
+        ],
+      ),
     );
+    if (_cancelRequested) return _abandon(current);
 
     final RecordedCall call;
     try {
       call = await recorder.start(provider, assembled.request);
     } on Object catch (error) {
       if (current()) {
-        state = state.copyWith(clearStreaming: true);
+        _set(state.copyWith(clearStreaming: true));
         _refuse('the call could not start: $error');
       }
-      return;
+      return false;
     }
-    if (!current()) return call.cancel();
+    if (!current()) {
+      call.cancel();
+      return false;
+    }
     _call = call;
-    state = state.copyWith(tasksWithheld: call.taskContextWithheld);
+    if (_cancelRequested) call.cancel();
+    _set(state.copyWith(tasksWithheld: call.taskContextWithheld));
     final deltas = call.deltas.listen((delta) {
       if (!current()) return;
-      state = delta.reasoning
-          ? state.copyWith(reasoning: call.reasoning)
-          : state.copyWith(streaming: call.text);
+      _set(
+        delta.reasoning
+            ? state.copyWith(reasoning: call.reasoning)
+            : state.copyWith(streaming: call.text),
+      );
     });
     final result = await call.done;
     await deltas.cancel();
-    if (!current()) return;
+    if (!current()) return false;
     _call = null;
 
     ChatTurn turn;
@@ -279,20 +306,71 @@ class ChatNotifier extends Notifier<ChatState> {
         dropped: assembled.dropped,
       );
     }
-    state = state.copyWith(
-      turns: [...state.turns, turn],
-      clearStreaming: true,
-      error: error,
+    if (!current()) return true;
+    _set(
+      state.copyWith(
+        turns: [...state.turns, turn],
+        clearStreaming: true,
+        // A refusal raised during the turn ends with it.
+        error: error,
+        clearError: error == null,
+      ),
     );
+    return true;
+  }
+
+  /// The conversation as the model may see it: user and assistant turns
+  /// in pairs, so a template that insists on alternation is never given
+  /// two user lines in a row. A pair goes as a whole — an answer that
+  /// never came (cancelled before its first token, failed) takes its
+  /// question with it — and an answer given with the list in view is
+  /// flagged as task data for the recorder to withhold (ADR 0011).
+  List<LlmMessage> _history() {
+    final turns = state.turns;
+    final out = <LlmMessage>[];
+    for (var i = 0; i + 1 < turns.length; i += 2) {
+      final question = turns[i];
+      final answer = turns[i + 1];
+      if (question.role != ChatRole.user ||
+          answer.role != ChatRole.assistant ||
+          answer.text.isEmpty) {
+        continue;
+      }
+      out
+        ..add(LlmMessage(LlmRole.user, question.text))
+        ..add(
+          LlmMessage(LlmRole.assistant, answer.text, taskData: answer.sawTasks),
+        );
+    }
+    return out;
+  }
+
+  /// Ends a turn that was stopped before its call existed: not busy,
+  /// nothing sent, the user's line (if written) stays as it is.
+  bool _abandon(bool Function() current) {
+    if (current()) _set(state.copyWith(clearStreaming: true));
+    return false;
   }
 
   /// Stops the running answer; what arrived stays as the assistant's
-  /// turn, marked cancelled (ADR 0007). No-op when nothing runs.
-  void cancel() => _call?.cancel();
-
-  void clearError() {
-    if (state.error != null) state = state.copyWith(clearError: true);
+  /// turn, marked cancelled (ADR 0007). Before the call exists, the turn
+  /// ends without one. No-op when nothing runs.
+  void cancel() {
+    if (!state.busy) return;
+    final call = _call;
+    if (call == null) {
+      _cancelRequested = true;
+    } else {
+      call.cancel();
+    }
   }
 
-  void _refuse(String why) => state = state.copyWith(error: why);
+  void clearError() {
+    if (state.error != null) _set(state.copyWith(clearError: true));
+  }
+
+  bool _refuse(String why) {
+    _set(state.copyWith(error: why));
+    return false;
+  }
 }

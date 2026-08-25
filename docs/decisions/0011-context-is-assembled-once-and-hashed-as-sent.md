@@ -68,15 +68,21 @@ put the privacy check in the recorder and asked #34 to carry the list on
   `sai_tui reasoning on|off` — decides whether the model may think at
   all: off goes on the request as `reasoning_effort: none` (the one
   switch LM Studio honours for Qwen-family models) and nothing shows;
-  on leaves the model to it and the clients show what it thought. The
+  on leaves the model to it and the clients show what it thought. A
+  generic endpoint that answers 400 to the switch is asked once more
+  without it and not asked again — the request line still records what
+  the caller wanted. The
   thinking is never part of the history sent back, and never in
   `chat.message`.
 
-- **History is governed like the list.** An assistant turn that saw the
-  list may quote it, so when the policy withholds the list from the
-  target provider those turns are left out of the history too (the
-  user's own words stay). The recorder remains the check on the wire;
-  this is assembly applying the same answer one step earlier.
+- **History is governed like the list, by the recorder.** An assistant
+  turn that saw the list may quote it, so assembly flags such messages
+  as task data (`LlmMessage.taskData`) and the recorder drops them
+  together with `taskContext` when its decision is `withheld` — one
+  check, on the wire, at the moment of sending. History goes in
+  question–answer pairs: a pair whose answer is dropped or never came
+  goes as a whole, so a template that insists on alternating roles is
+  never given two user lines in a row.
 
 ## Consequences
 

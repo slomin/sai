@@ -7,10 +7,16 @@ enum LlmRole { system, user, assistant }
 
 /// One turn of the conversation as sent to the model.
 final class LlmMessage {
-  const LlmMessage(this.role, this.text);
+  const LlmMessage(this.role, this.text, {this.taskData = false});
 
   final LlmRole role;
   final String text;
+
+  /// Whether [text] may carry task data — an earlier answer given with
+  /// the list in view. The recorder drops such messages together with
+  /// [LlmRequest.taskContext] when the policy withholds the list (ADR
+  /// 0010, 0011); the flag never goes on the wire or into the archive.
+  final bool taskData;
 
   /// `text`, not `content`: the archive already says `chat.message.text`.
   Map<String, Object?> toJson() => {'role': role.name, 'text': text};
@@ -65,12 +71,28 @@ final class LlmRequest {
   final bool? reasoning;
 
   /// The same request without its task context.
+  /// The request without the list: no [taskContext], and none of the
+  /// messages flagged [LlmMessage.taskData]. What the recorder sends to
+  /// a provider the policy withholds the list from.
   LlmRequest withoutTaskContext() => LlmRequest(
-    messages: messages,
+    messages: [
+      for (final m in messages)
+        if (!m.taskData) m,
+    ],
     model: model,
     maxTokens: maxTokens,
     temperature: temperature,
     reasoning: reasoning,
+  );
+
+  /// The same request with the reasoning switch left to the backend —
+  /// for a backend that rejected the switch.
+  LlmRequest withoutReasoning() => LlmRequest(
+    messages: messages,
+    model: model,
+    maxTokens: maxTokens,
+    temperature: temperature,
+    taskContext: taskContext,
   );
 
   /// The messages as they go on the wire: [taskContext], when present, as

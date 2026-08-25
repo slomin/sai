@@ -386,6 +386,27 @@ void main() {
       }, size: big);
     });
 
+    test('Tab is one-way and Esc leads back when idle', () async {
+      await testNocterm('keys', (tester) async {
+        await pumpTui(tester);
+        await tester.sendKey(LogicalKey.tab);
+        await tester.sendKey(LogicalKey.tab);
+        await tester.pump();
+        // A doubled Tab still lands in the chat, not back in capture.
+        await tester.enterText('hello');
+        await tester.pump();
+        expect(tester.terminalState, containsText('Capture to Inbox'));
+        expect(tester.terminalState, containsText('hello'));
+        await tester.sendKey(LogicalKey.escape);
+        await tester.pump();
+        await tester.enterText('milk');
+        await tester.pump();
+        // Esc when nothing runs: the capture field has focus again.
+        expect(tester.terminalState, isNot(containsText('Capture to Inbox')));
+        expect(tester.terminalState, containsText('milk'));
+      }, size: big);
+    });
+
     test('a question streams its answer, then settles', () async {
       await testNocterm('stream', (tester) async {
         final container = await pumpChat(

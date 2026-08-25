@@ -97,8 +97,9 @@ List<PlatformMenuItem> saiMenus({
         onSelected: chatFits ? commands.toggleChat : null,
       ),
       // Whether the model thinks before it answers (and shows it); the
-      // same switch as the Providers dialog's, until #40 gives it a screen. Platform items carry no checked state (ADR
-      // 0005), so the label says which way it goes.
+      // same switch as the Providers dialog's, until #40 gives it a
+      // screen. Platform items carry no checked state (ADR 0005), so the
+      // label says which way it goes.
       PlatformMenuItem(
         label: reasoningOn ? 'Disable Reasoning' : 'Enable Reasoning',
         shortcut: const SingleActivator(LogicalKeyboardKey.keyR, meta: true),

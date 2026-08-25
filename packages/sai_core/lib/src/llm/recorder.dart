@@ -144,6 +144,7 @@ final class LlmRecorder {
     if (streamError != null) {
       result = LlmResult(
         text: recorded.text,
+        reasoning: result.reasoning,
         finish: LlmFinish.failed,
         model: result.model,
         usage: result.usage,
@@ -164,6 +165,7 @@ final class LlmRecorder {
               'message': _clipBytes(failure.message, maxRecordedMessageBytes),
               if (failure.endpoint != null)
                 'endpoint': normalisedEndpoint(failure.endpoint!),
+              ..._reasoningFields(result.reasoning),
             },
             result.text,
             omitEmpty: true,
@@ -218,6 +220,7 @@ final class LlmRecorder {
           ? result
           : LlmResult(
               text: result.text,
+              reasoning: result.reasoning,
               finish: LlmFinish.failed,
               model: result.model,
               usage: result.usage,
