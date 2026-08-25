@@ -19,7 +19,7 @@ This repository is a Dart workspace:
 | `docs/archive/`      | The archive format contract ([event log v0](docs/archive/event-log-v0.md)). |
 | `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
 | `docs/settings/`     | The settings file contract ([settings v0](docs/settings/settings-v0.md)).   |
-| `tool/`              | Developer scripts (`sign-tui.sh`).                                          |
+| `tool/`              | Developer scripts (`sign-tui.sh`) and the smoke drivers (`smoke/`).         |
 | `docs/decisions/`    | Technical ADRs.                                                            |
 
 Both clients read the same providers from `sai_core`; nothing in `sai_core`
@@ -64,10 +64,13 @@ build/sai_tui`, or signed via `tool/sign-tui.sh` (below). To try one against a s
 point `SAI_ARCHIVE_ROOT` at a throwaway directory, e.g.
 `SAI_ARCHIVE_ROOT=/tmp/sai-demo/archive`. Non-secret settings live in
 `settings.json` in the same data directory as the default archive;
-`SAI_SETTINGS_FILE` moves them, and a scratch run sets both. No LLM
-provider is selected out of the box; the built-in `fake` provider
-answers offline — `{"version":0,"llm":"fake"}` in the settings file
-selects it.
+`SAI_SETTINGS_FILE` moves them, and a scratch run sets both. Three
+providers are built in and need no configuration: `lmstudio` (LM
+Studio's server on this Mac, `http://127.0.0.1:1234/v1`, whatever model
+it has loaded), `lan` (the LAN inference box, #23) and `fake` (answers
+offline). A first run — no settings file yet — selects `lmstudio`;
+`provider use lan|fake|none` changes that, and `{"version":0,"llm":"fake"}`
+in the settings file is the offline choice.
 
 ## Providers and keys
 
@@ -81,15 +84,19 @@ to a file or the archive (ADR 0008, [settings v0](docs/settings/settings-v0.md))
 dart run apps/sai_tui/bin/sai_tui.dart provider add local --kind openai_compatible \
   --endpoint http://127.0.0.1:1234/v1 --model <model-id>
 dart run apps/sai_tui/bin/sai_tui.dart provider use local
-# the LAN box, over TLS, with a key
+# a box with a key, over TLS
+dart run apps/sai_tui/bin/sai_tui.dart provider add box --kind openai_compatible \
+  --endpoint https://box.example:8443/v1 --model <model-id> --key
+dart run apps/sai_tui/bin/sai_tui.dart secret set box     # hidden prompt
+# the built-in LAN box, or LM Studio, with another model or address
 dart run apps/sai_tui/bin/sai_tui.dart provider add lan --kind openai_compatible \
-  --endpoint https://lan.local:8443/v1 --model <model-id> --key
-dart run apps/sai_tui/bin/sai_tui.dart secret set lan     # hidden prompt
+  --endpoint http://192.168.1.5:8080/v1 --model <model-id>
 dart run apps/sai_tui/bin/sai_tui.dart provider list
 ```
 
-Two kinds exist: `fake` (built in, offline) and `openai_compatible`
-(any `/v1` endpoint: `llama-server`, LM Studio, the LAN server). Plain
+Two kinds exist: `fake` (offline) and `openai_compatible` (any `/v1`
+endpoint: `llama-server`, LM Studio, the LAN server); a configured
+provider with a built-in's id replaces it. Plain
 `http://` is accepted only on this machine or the LAN (loopback and
 private addresses, `.local`-style and dotless names — ADR 0012);
 anything else must be `https://` with a certificate this Mac trusts —

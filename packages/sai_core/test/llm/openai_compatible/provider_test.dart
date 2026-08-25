@@ -10,9 +10,10 @@ import 'package:test/test.dart';
 import '../provider_contract.dart';
 import '../stub_server.dart';
 
-LlmRequest ask(String text, {bool? reasoning}) => LlmRequest(
+LlmRequest ask(String text, {bool? reasoning, String? model}) => LlmRequest(
   messages: [LlmMessage(LlmRole.user, text)],
   reasoning: reasoning,
+  model: model,
 );
 
 const canary = 'sk-canary-3c9e1a7b5d2f4e6a8c0b1d3f5a7c9e2b';
@@ -43,10 +44,11 @@ void main() {
     String? credentialOrigin,
     SecretStore? store,
     OpenAiDeadlines deadlines = quick,
+    String defaultModel = 'qwen',
   }) => OpenAiCompatibleProvider(
     id: 'lan',
     endpoint: endpoint ?? stub.v1,
-    defaultModel: 'qwen',
+    defaultModel: defaultModel,
     secrets: store ?? secrets,
     credential: credential,
     credentialOrigin: credentialOrigin,
@@ -492,6 +494,24 @@ void main() {
     ]);
     expect(result.text, 'ready.');
     expect(result.reasoning, 'let me think');
+    await provider.close();
+  });
+
+  test('the loaded model names nothing on the wire and takes the '
+      "backend's id", () async {
+    stub.routes['POST /v1/chat/completions'] = (req) =>
+        StubServer.stream(req, ['ok'], model: 'what-is-loaded');
+    final provider = make(defaultModel: OpenAiCompatibleProvider.loadedModel);
+    final result = await provider.start(ask('a')).done;
+    expect(result.text, 'ok');
+    expect(result.model.id, 'what-is-loaded');
+    expect(
+      (jsonDecode(stub.requests.single.body) as Map).containsKey('model'),
+      isFalse,
+    );
+    // A request that names a model is sent as named.
+    await provider.start(ask('b', model: 'named')).done;
+    expect((jsonDecode(stub.requests.last.body) as Map)['model'], 'named');
     await provider.close();
   });
 

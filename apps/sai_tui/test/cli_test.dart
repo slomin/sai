@@ -39,6 +39,35 @@ void main() {
 
   File settingsFile() => container.read(settingsFileProvider);
 
+  test('the built-in endpoints are listed and selectable (#23)', () async {
+    container = testContainer(builtins: builtinLlms(InMemorySecretStore()));
+    expect(await run('provider list'), cliOk);
+    expect(
+      out.toString(),
+      contains(
+        '  lmstudio  built-in @ http://127.0.0.1:1234  (loaded model) · local',
+      ),
+    );
+    expect(
+      out.toString(),
+      contains(
+        '  lan  built-in @ http://192.168.1.5:8080  '
+        '(sai-qwen38-27b-unsloth-q6k-fullctx-generic-mtp) · local',
+      ),
+    );
+    out.clear();
+    expect(await run('provider use lan'), cliOk);
+    expect(
+      out.toString().trim(),
+      'lan @ http://192.168.1.5:8080 '
+      '(sai-qwen38-27b-unsloth-q6k-fullctx-generic-mtp) — local',
+    );
+    expect(jsonDecode(settingsFile().readAsStringSync()), {
+      'version': 0,
+      'llm': 'lan',
+    });
+  });
+
   test('help and an unknown command', () async {
     expect(await run('help'), cliOk);
     expect(out.toString(), contains('usage: sai_tui'));

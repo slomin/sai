@@ -9,8 +9,8 @@ import 'archive/archive.dart';
 import 'chat/chat.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
+import 'llm/builtins.dart';
 import 'llm/factory.dart';
-import 'llm/fake.dart';
 import 'llm/openai_compatible/provider.dart';
 import 'llm/privacy.dart';
 import 'llm/probe.dart';
@@ -256,9 +256,16 @@ String credentialSuffix(CredentialStatus status, ProviderConfig? config) =>
 /// The providers that ship with every build, needing no configuration,
 /// as constructors: the cache below decides when one is built. A
 /// configured provider with the same id replaces the built-in one.
+/// `llm/builtins.dart` lists them; the test harnesses override this with
+/// the fake alone.
 final builtinLlmsProvider = Provider<List<LlmProvider Function()>>(
-  (ref) => [FakeLlmProvider.new],
+  (ref) => builtinLlms(ref.watch(secretStoreProvider)),
 );
+
+/// What a first run selects (#23): LM Studio on this Mac. Applied only
+/// while the settings file does not exist; the harnesses override it
+/// with null so a fresh test container selects nothing.
+final defaultLlmIdProvider = Provider<String?>((ref) => defaultLlmId);
 
 /// The open providers, keyed by what built them, so a configuration edit
 /// rebuilds only the providers whose configuration changed and closes
@@ -421,7 +428,14 @@ class SettingsNotifier extends Notifier<Settings> {
       ref.watch(settingsFileProvider),
       clock: ref.watch(clockProvider),
     );
-    return _store.load();
+    // A first run — no file yet — selects the built-in default without
+    // writing anything; a file that says `"llm": null` means none.
+    final fresh = !_store.file.existsSync();
+    final settings = _store.load();
+    if (fresh && settings.llm == null) {
+      return settings.withLlm(ref.watch(defaultLlmIdProvider));
+    }
+    return settings;
   }
 
   /// Selects the provider with [id] (null for none), writing the file

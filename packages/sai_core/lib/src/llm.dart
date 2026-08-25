@@ -9,6 +9,7 @@
 /// `provider.*` types and `model.provider` key.
 library;
 
+export 'llm/builtins.dart';
 export 'llm/call.dart';
 export 'llm/failure.dart';
 export 'llm/factory.dart';

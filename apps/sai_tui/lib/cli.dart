@@ -84,9 +84,13 @@ Future<int> runCli(
             container.read(credentialStatusProvider(provider.id)),
             config,
           );
-          final where = config?.endpoint == null
-              ? (config == null ? 'built-in' : config.kind)
-              : '${config!.kind} @ ${config.endpoint}';
+          final where = switch ((config, provider)) {
+            (null, OpenAiCompatibleProvider(:final origin)) =>
+              'built-in @ $origin',
+            (null, _) => 'built-in',
+            (final c?, _) when c.endpoint == null => c.kind,
+            (final c?, _) => '${c.kind} @ ${c.endpoint}',
+          };
           out.writeln(
             '$mark ${provider.id}  $where  (${provider.defaultModel}) · '
             '${provider.privacy.name}$key',

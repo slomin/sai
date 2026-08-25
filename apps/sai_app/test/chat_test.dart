@@ -196,12 +196,7 @@ void main() {
       WidgetTester tester, {
       String select = 'fake',
     }) async {
-      final container = await pumpApp(
-        tester,
-        overrides: [
-          builtinLlmsProvider.overrideWithValue([() => fake]),
-        ],
-      );
+      final container = await pumpApp(tester, builtins: [() => fake]);
       await tester.runAsync(
         () => container
             .read(tasksProvider.notifier)

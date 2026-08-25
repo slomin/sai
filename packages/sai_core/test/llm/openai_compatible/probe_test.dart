@@ -29,16 +29,19 @@ void main() {
   });
   tearDown(() => stub.close());
 
-  OpenAiCompatibleProvider make({String? credential, String? origin}) =>
-      OpenAiCompatibleProvider(
-        id: 'lan',
-        endpoint: stub.v1,
-        defaultModel: 'qwen',
-        secrets: secrets,
-        credential: credential,
-        credentialOrigin: origin,
-        deadlines: quick,
-      );
+  OpenAiCompatibleProvider make({
+    String? credential,
+    String? origin,
+    String defaultModel = 'qwen',
+  }) => OpenAiCompatibleProvider(
+    id: 'lan',
+    endpoint: stub.v1,
+    defaultModel: defaultModel,
+    secrets: secrets,
+    credential: credential,
+    credentialOrigin: origin,
+    deadlines: quick,
+  );
 
   test('llama.cpp: health, props and models', () async {
     stub.routes['GET /health'] = (req) =>
@@ -94,6 +97,39 @@ void main() {
     expect(info.serverKind, 'lmstudio');
     expect(info.contextWindow, 86016);
     expect(info.models, ['qwen', 'embed']);
+  });
+
+  test('LM Studio with the loaded model reads the first loaded LLM', () async {
+    stub.routes['GET /api/v1/models'] = (req) => StubServer.json(req, {
+      'models': [
+        {'type': 'embedding', 'key': 'embed', 'loaded_instances': []},
+        {'type': 'llm', 'key': 'idle', 'loaded_instances': []},
+        {
+          'type': 'llm',
+          'key': 'qwen',
+          'loaded_instances': [
+            {
+              'id': 'qwen',
+              'config': {'context_length': 86016},
+            },
+          ],
+        },
+        {
+          'type': 'llm',
+          'key': 'other',
+          'loaded_instances': [
+            {
+              'id': 'other',
+              'config': {'context_length': 4096},
+            },
+          ],
+        },
+      ],
+    });
+    final info = await make(defaultModel: OpenAiCompatibleProvider.loadedModel)
+        .probe();
+    expect(info.serverKind, 'lmstudio');
+    expect(info.contextWindow, 86016);
   });
 
   test('LM Studio with the default model not loaded says no context', () async {

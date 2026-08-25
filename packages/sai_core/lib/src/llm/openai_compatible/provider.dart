@@ -58,8 +58,22 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   @override
   final LlmPrivacy privacy;
 
+  /// The model used when a request names none. [loadedModel] stands for
+  /// whatever the endpoint has loaded.
   @override
   final String defaultModel;
+
+  /// A [defaultModel] that names no model: nothing goes on the wire as
+  /// `model` (LM Studio answers with the model it has loaded, `llama-server`
+  /// has one model anyway), and the response's lineage carries the id the
+  /// stream reports.
+  static const loadedModel = 'loaded model';
+
+  /// The id that goes on the wire for [request], or null for [loadedModel].
+  String? _wireModel(LlmRequest request) {
+    final model = request.model ?? defaultModel;
+    return model == loadedModel ? null : model;
+  }
 
   /// `scheme://host[:port]` of the endpoint — what failures name.
   final String origin;
@@ -160,8 +174,9 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     final (refused, auth) = _prepare();
     if (refused != null) return fail(refused);
 
+    final wireModel = _wireModel(request);
     final body = jsonEncode({
-      'model': request.model ?? defaultModel,
+      'model': ?wireModel,
       'messages': [
         for (final m in request.messages)
           {'role': m.role.name, 'content': m.text},
@@ -240,6 +255,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
 
     String? finish;
     String? requestId;
+    String? reportedModel;
     LlmUsage? usage;
     double? tokensPerSecond;
     var doneSeen = false;
@@ -293,6 +309,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
               return;
             }
             requestId ??= chunk.id;
+            reportedModel ??= chunk.model;
             if (chunk.usage != null) usage = chunk.usage;
             if (chunk.tokensPerSecond != null) {
               tokensPerSecond = chunk.tokensPerSecond;
@@ -345,9 +362,12 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         reasoning: controller.reasoning,
         finish: finish == 'length' ? LlmFinish.length : LlmFinish.stop,
         // Lineage is what was asked for; the request id is the backend's.
+        // Where nothing was asked for, the backend's word is the lineage.
         model: ModelRef(
           provider: id,
-          id: controller.model.id,
+          id: controller.model.id == loadedModel
+              ? (reportedModel ?? loadedModel)
+              : controller.model.id,
           requestId: requestId,
         ),
         usage: usage == null && tokensPerSecond == null ? null : merged(),
@@ -423,7 +443,14 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     if (lm.status == 200 && l is Map<String, Object?> && l['models'] is List) {
       int? ctx;
       for (final m in l['models'] as List) {
-        if (m is! Map<String, Object?> || m['key'] != defaultModel) continue;
+        if (m is! Map<String, Object?>) continue;
+        // The configured model, or with [loadedModel] the first LLM that is
+        // loaded — the one LM Studio would answer with.
+        if (defaultModel == loadedModel
+            ? (m['type'] != 'llm' || ctx != null)
+            : m['key'] != defaultModel) {
+          continue;
+        }
         final loaded = m['loaded_instances'];
         if (loaded is List && loaded.isNotEmpty) {
           final first = loaded.first;

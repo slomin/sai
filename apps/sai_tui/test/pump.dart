@@ -8,7 +8,10 @@ import 'package:test/test.dart';
 
 /// A per-test container over a temp archive root — TUI tests must never
 /// touch the real archive under Application Support.
-ProviderContainer testContainer({List<Override> overrides = const []}) {
+ProviderContainer testContainer({
+  List<Override> overrides = const [],
+  List<LlmProvider Function()> builtins = const [FakeLlmProvider.new],
+}) {
   // Archive and settings both go under one temp dir, whatever the
   // developer's environment says.
   final tmp = Directory.systemTemp.createTempSync('sai_tui_test');
@@ -21,6 +24,10 @@ ProviderContainer testContainer({List<Override> overrides = const []}) {
       eventSourceProvider.overrideWithValue(EventSources.tui),
       // Never the login keychain from a test.
       secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+      // The fake alone, nothing selected: a test never reaches LM Studio
+      // or the LAN box unless it asks for them.
+      builtinLlmsProvider.overrideWithValue(builtins),
+      defaultLlmIdProvider.overrideWithValue(null),
       ...overrides,
     ],
   );
