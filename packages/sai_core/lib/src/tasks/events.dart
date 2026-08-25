@@ -4,6 +4,7 @@ import 'codec.dart';
 import 'date.dart';
 import 'lists.dart';
 import 'model.dart';
+import 'undo_state.dart';
 
 /// The task-domain event types. The registry lives in
 /// `docs/archive/event-log-v0.md`; payload schemas in
@@ -123,6 +124,30 @@ sealed class TaskEvent {
   /// The payload exactly as written to the line.
   Map<String, Object?> toPayload();
 
+  /// The single event that puts the entity this one touched back the way
+  /// [before] had it — undo as the archive demands it: never a rewrite,
+  /// always a new event of the same vocabulary, computed against the
+  /// projection the mutation was validated on (the table in
+  /// `docs/tasks/task-model-v0.md`). [created] is the id the append
+  /// minted — the entity id for a `*.create`, unused otherwise.
+  ///
+  /// Total over the whole vocabulary, so a session's undo stack holds
+  /// exactly one entry per command: a degenerate mutation (deleting the
+  /// already-deleted, reopening the open) inverts to the state-preserving
+  /// event of its kind rather than to nothing, and one undo press never
+  /// silently skips to an older mutation. State comes back, timestamps
+  /// only where they are state: completion and cancellation instants ride
+  /// in `at`, while `modifiedAt` bumps to the inverse's own ts and an
+  /// older `deletedAt` is gone.
+  ///
+  /// Abstract on the sealed hierarchy on purpose: a new event type does
+  /// not compile until it says how it is undone, and a mutable field and
+  /// its inverse live in one class.
+  ///
+  /// Throws [StateError] when [before] does not hold the event's subject —
+  /// call it with the projection the event was validated against.
+  TaskEvent invert(UndoState before, {required BlobRef created});
+
   /// Whether the registry's actor column admits an assistant for this
   /// type: only `task.*` mutations may be assistant-made (#35); container
   /// events are user / system. Widening a row later is additive.
@@ -152,6 +177,22 @@ sealed class TaskEvent {
     );
   }
 }
+
+/// Whichever of complete-with-prior-`at` / cancel-with-prior-`at` / reopen
+/// restores the pair [task] had in [before].
+TaskEvent _invertLifecycle(UndoState before, TaskId task) {
+  final prior = _priorOf(before.tasks[task], task);
+  if (prior.cancelledAt != null) {
+    return TaskCancelled(task, at: prior.cancelledAt);
+  }
+  if (prior.completedAt != null) {
+    return TaskCompleted(task, at: prior.completedAt);
+  }
+  return TaskReopened(task);
+}
+
+T _priorOf<T>(T? entity, BlobRef id) =>
+    entity ?? (throw StateError('nothing known about $id to invert against'));
 
 void _checkPlacement({
   required BlobRef? project,
@@ -231,6 +272,11 @@ final class TaskCreated extends TaskEvent {
 
   @override
   BlobRef? get subject => null;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return TaskDeleted(created);
+  }
 
   @override
   Map<String, Object?> toPayload() => {
@@ -339,6 +385,19 @@ final class TaskEdited extends TaskEvent {
   BlobRef? get subject => task;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.tasks[task], task);
+    return TaskEdited(
+      task,
+      title: title == null ? null : Patch(prior.title),
+      notes: notes == null ? null : Patch(prior.notes),
+      when: when == null ? null : Patch(prior.when),
+      deadline: deadline == null ? null : Patch(prior.deadline),
+      tags: tags == null ? null : Patch(prior.tags),
+    );
+  }
+
+  @override
   Map<String, Object?> toPayload() => {
     'task': task.toString(),
     if (title != null) 'title': title!.value,
@@ -418,6 +477,18 @@ final class TaskMoved extends TaskEvent {
   List<BlobRef> get refs => [task, ?project, ?area, ?heading, ?after?.value];
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.tasks[task], task);
+    return TaskMoved(
+      task,
+      project: prior.project,
+      area: prior.area,
+      heading: prior.heading,
+      after: Patch(before.structuralPredecessor(task)),
+    );
+  }
+
+  @override
   Map<String, Object?> toPayload() => {
     'task': task.toString(),
     'project': project?.toString(),
@@ -488,6 +559,15 @@ final class TaskReordered extends TaskEvent {
   List<BlobRef> get refs => [task, ?after];
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return TaskReordered(
+      task,
+      list: list,
+      after: before.todayPredecessor(task),
+    );
+  }
+
+  @override
   Map<String, Object?> toPayload() => {
     'task': task.toString(),
     'list': list.name,
@@ -527,6 +607,11 @@ final class TaskCompleted extends TaskEvent {
   BlobRef? get subject => task;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return _invertLifecycle(before, task);
+  }
+
+  @override
   Map<String, Object?> toPayload() => {
     'task': task.toString(),
     if (at != null) 'at': formatTs(at!),
@@ -554,6 +639,11 @@ final class TaskCancelled extends TaskEvent {
 
   @override
   BlobRef? get subject => task;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return _invertLifecycle(before, task);
+  }
 
   @override
   Map<String, Object?> toPayload() => {
@@ -593,6 +683,11 @@ final class TaskReopened extends TaskEvent {
   BlobRef? get subject => task;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return _invertLifecycle(before, task);
+  }
+
+  @override
   Map<String, Object?> toPayload() => {'task': task.toString()};
 }
 
@@ -608,6 +703,12 @@ final class TaskDeleted extends TaskEvent {
 
   @override
   BlobRef? get subject => task;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.tasks[task], task);
+    return prior.deletedAt == null ? TaskRestored(task) : TaskDeleted(task);
+  }
 
   @override
   Map<String, Object?> toPayload() => {'task': task.toString()};
@@ -626,6 +727,12 @@ final class TaskRestored extends TaskEvent {
   BlobRef? get subject => task;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.tasks[task], task);
+    return prior.deletedAt == null ? TaskRestored(task) : TaskDeleted(task);
+  }
+
+  @override
   Map<String, Object?> toPayload() => {'task': task.toString()};
 }
 
@@ -642,6 +749,12 @@ final class TaskChecklistSet extends TaskEvent {
 
   @override
   BlobRef? get subject => task;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.tasks[task], task);
+    return TaskChecklistSet(task, prior.checklist);
+  }
 
   @override
   Map<String, Object?> toPayload() => {
@@ -684,6 +797,11 @@ final class AreaCreated extends TaskEvent {
 
   @override
   BlobRef? get subject => null;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return AreaDeleted(created);
+  }
 
   @override
   Map<String, Object?> toPayload() => {
@@ -737,6 +855,12 @@ final class AreaEdited extends TaskEvent {
   BlobRef? get subject => area;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.areas[area], area);
+    return AreaEdited(area, title: Patch(prior.title));
+  }
+
+  @override
   Map<String, Object?> toPayload() => {
     'area': area.toString(),
     if (title != null) 'title': title!.value,
@@ -768,6 +892,12 @@ final class AreaDeleted extends TaskEvent {
   BlobRef? get subject => area;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.areas[area], area);
+    return prior.deletedAt == null ? AreaRestored(area) : AreaDeleted(area);
+  }
+
+  @override
   Map<String, Object?> toPayload() => {'area': area.toString()};
 }
 
@@ -782,6 +912,12 @@ final class AreaRestored extends TaskEvent {
 
   @override
   BlobRef? get subject => area;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.areas[area], area);
+    return prior.deletedAt == null ? AreaRestored(area) : AreaDeleted(area);
+  }
 
   @override
   Map<String, Object?> toPayload() => {'area': area.toString()};
@@ -823,6 +959,11 @@ final class ProjectCreated extends TaskEvent {
 
   @override
   BlobRef? get subject => null;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return ProjectDeleted(created);
+  }
 
   @override
   Map<String, Object?> toPayload() => {
@@ -910,6 +1051,20 @@ final class ProjectEdited extends TaskEvent {
   BlobRef? get subject => project;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.projects[project], project);
+    return ProjectEdited(
+      project,
+      title: title == null ? null : Patch(prior.title),
+      notes: notes == null ? null : Patch(prior.notes),
+      area: area == null ? null : Patch(prior.area),
+      when: when == null ? null : Patch(prior.when),
+      deadline: deadline == null ? null : Patch(prior.deadline),
+      tags: tags == null ? null : Patch(prior.tags),
+    );
+  }
+
+  @override
   Map<String, Object?> toPayload() => {
     'project': project.toString(),
     if (title != null) 'title': title!.value,
@@ -976,6 +1131,14 @@ final class ProjectDeleted extends TaskEvent {
   BlobRef? get subject => project;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.projects[project], project);
+    return prior.deletedAt == null
+        ? ProjectRestored(project)
+        : ProjectDeleted(project);
+  }
+
+  @override
   Map<String, Object?> toPayload() => {'project': project.toString()};
 }
 
@@ -990,6 +1153,14 @@ final class ProjectRestored extends TaskEvent {
 
   @override
   BlobRef? get subject => project;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.projects[project], project);
+    return prior.deletedAt == null
+        ? ProjectRestored(project)
+        : ProjectDeleted(project);
+  }
 
   @override
   Map<String, Object?> toPayload() => {'project': project.toString()};
@@ -1026,6 +1197,11 @@ final class HeadingCreated extends TaskEvent {
 
   @override
   List<BlobRef> get refs => [project];
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return HeadingDeleted(created);
+  }
 
   @override
   Map<String, Object?> toPayload() => {
@@ -1082,6 +1258,12 @@ final class HeadingEdited extends TaskEvent {
   BlobRef? get subject => heading;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.headings[heading], heading);
+    return HeadingEdited(heading, title: Patch(prior.title));
+  }
+
+  @override
   Map<String, Object?> toPayload() => {
     'heading': heading.toString(),
     if (title != null) 'title': title!.value,
@@ -1113,6 +1295,14 @@ final class HeadingDeleted extends TaskEvent {
   BlobRef? get subject => heading;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.headings[heading], heading);
+    return prior.deletedAt == null
+        ? HeadingRestored(heading)
+        : HeadingDeleted(heading);
+  }
+
+  @override
   Map<String, Object?> toPayload() => {'heading': heading.toString()};
 }
 
@@ -1127,6 +1317,14 @@ final class HeadingRestored extends TaskEvent {
 
   @override
   BlobRef? get subject => heading;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.headings[heading], heading);
+    return prior.deletedAt == null
+        ? HeadingRestored(heading)
+        : HeadingDeleted(heading);
+  }
 
   @override
   Map<String, Object?> toPayload() => {'heading': heading.toString()};
@@ -1160,6 +1358,11 @@ final class TagCreated extends TaskEvent {
 
   @override
   BlobRef? get subject => null;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return TagDeleted(created);
+  }
 
   @override
   Map<String, Object?> toPayload() => {
@@ -1217,6 +1420,16 @@ final class TagEdited extends TaskEvent {
   BlobRef? get subject => tag;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.tags[tag], tag);
+    return TagEdited(
+      tag,
+      title: title == null ? null : Patch(prior.title),
+      parent: parent == null ? null : Patch(prior.parent),
+    );
+  }
+
+  @override
   Map<String, Object?> toPayload() => {
     'tag': tag.toString(),
     if (title != null) 'title': title!.value,
@@ -1254,6 +1467,12 @@ final class TagDeleted extends TaskEvent {
   BlobRef? get subject => tag;
 
   @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.tags[tag], tag);
+    return prior.deletedAt == null ? TagRestored(tag) : TagDeleted(tag);
+  }
+
+  @override
   Map<String, Object?> toPayload() => {'tag': tag.toString()};
 }
 
@@ -1268,6 +1487,12 @@ final class TagRestored extends TaskEvent {
 
   @override
   BlobRef? get subject => tag;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.tags[tag], tag);
+    return prior.deletedAt == null ? TagRestored(tag) : TagDeleted(tag);
+  }
 
   @override
   Map<String, Object?> toPayload() => {'tag': tag.toString()};
