@@ -9,12 +9,14 @@ Steps are a JSON list of [kind, arg, seconds]:
   ["snap", "name", 0]    save the stripped screen text as <dir>/<name>.txt
   ["sleep", 2, 0]        just wait
 
-Runs `dart run apps/sai_tui/bin/sai_tui.dart` with SAI_ARCHIVE_ROOT and
-SAI_SETTINGS_FILE under <scratch-dir>, a 100x30 terminal, and always
+Runs `dart run apps/sai_tui/bin/sai_tui.dart` (or the compiled binary
+named by SAI_TUI_BIN) with SAI_ARCHIVE_ROOT and SAI_SETTINGS_FILE under
+<scratch-dir>, a 100x30 terminal, and always
 kills the process at the end. Prints one line per step.
 
-Two things a real terminal does that the nocterm tester does not: every
-key arrives as a byte stream (so nocterm may deliver a key twice), and
+Two things a real terminal does that the nocterm tester does not: keys
+arrive as a byte stream, chunked by read (so each key is written on its
+own — a string and its Enter in one chunk parse differently), and
 the screen is repainted cell by cell — only the cells that changed — so
 the output is replayed into a small screen model and text is matched on
 the rendered rows, whitespace collapsed. nocterm paints the rows below
@@ -24,6 +26,8 @@ a key (Tab is harmless), then wait for the footer.
 import codecs, fcntl, json, os, pty, re, select, signal, struct, sys, termios, time
 
 ROWS, COLS = 30, 100
+# One key: a CSI sequence (arrows) or a single character (a lone Esc too).
+KEY = re.compile(r'\x1b\[[0-9;]*[@-~]|.', re.S)
 SEQ = re.compile(r'\x1b\[([0-9;?]*)([ -/]*)([@-~])|\x1b[()][A-Z0-9]|\x1b[=>78]|\x1b\][^\x07]*\x07')
 
 
@@ -103,6 +107,9 @@ def main(scratch, steps):
     pid, fd = pty.fork()
     if pid == 0:
         os.chdir(root)
+        binary = os.environ.get('SAI_TUI_BIN')
+        if binary:
+            os.execvpe(binary, [binary], env)
         os.execvpe('dart', ['dart', 'run', 'apps/sai_tui/bin/sai_tui.dart'], env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 100, 0, 0))
     screen = Screen()
@@ -134,7 +141,12 @@ def main(scratch, steps):
                 ok &= hit
                 print(f'{"ok  " if hit else "FAIL"} wait {arg!r}', flush=True)
             elif kind == 'send':
-                os.write(fd, arg.encode())
+                # One key per write, as a hand on a keyboard: a whole
+                # string in one read is parsed differently by nocterm
+                # (an Enter after text in the same chunk can be lost).
+                for key in KEY.findall(arg):
+                    os.write(fd, key.encode())
+                    read(0.03)
                 read(seconds)
                 print(f'ok   send {arg!r}', flush=True)
             elif kind == 'snap':
