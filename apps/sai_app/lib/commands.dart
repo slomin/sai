@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'providers_dialog.dart';
-import 'shell.dart';
 
 /// Focus for the quick-capture field: Cmd+N and File > New Task land
 /// here. Flutter-typed, so app-side rather than in core.
@@ -15,22 +14,22 @@ final captureFocusProvider = Provider<FocusNode>((ref) {
   return node;
 });
 
-/// Focus for the chat pane's input: Cmd+J lands here when it opens.
+/// Focus for the assistant's input: Cmd+J lands here when it opens.
 final chatFocusProvider = Provider<FocusNode>((ref) {
   final node = FocusNode(debugLabel: 'chat');
   ref.onDispose(node.dispose);
   return node;
 });
 
-/// The chat pane's draft. Owned here rather than by the pane so a
-/// half-typed message survives the pane unmounting below its breakpoint.
+/// The assistant's draft. Owned here rather than by the band so a
+/// half-typed message survives the band being tucked away.
 final chatDraftProvider = Provider<TextEditingController>((ref) {
   final controller = TextEditingController();
   ref.onDispose(controller.dispose);
   return controller;
 });
 
-/// The status bar's notice: the last failure, or empty once something
+/// The top bar's notice: the last failure, or empty once something
 /// succeeds again.
 final noticeProvider = NotifierProvider<Notice, String>(Notice.new);
 
@@ -67,7 +66,7 @@ class AppCommands {
     return AppCommands(
       focusCapture: () => container.read(captureFocusProvider).requestFocus(),
       undo: () => _undo(container),
-      toggleChat: () => _toggleChat(container, context),
+      toggleChat: () => _toggleChat(container),
       sendChat: () => _sendChat(container),
       cancelChat: () => container.read(chatProvider.notifier).cancel(),
       toggleReasoning: () => _toggleReasoning(container),
@@ -108,19 +107,14 @@ class AppCommands {
     }
   }
 
-  static void _toggleChat(ProviderContainer container, BuildContext context) {
-    // Toggling a pane the window cannot show would only desync the menu
-    // from the screen — and a focus request on the unmounted field would
-    // latch and steal focus when the pane finally mounts.
-    if (!chatFits(context)) {
-      container
-          .read(noticeProvider.notifier)
-          .show('widen the window to show the chat');
+  static void _toggleChat(ProviderContainer container) {
+    container.read(chatVisibleProvider.notifier).toggle();
+    if (!container.read(chatVisibleProvider)) {
+      // Tucked away: the list is what is left to type into.
+      container.read(captureFocusProvider).requestFocus();
       return;
     }
-    container.read(chatVisibleProvider.notifier).toggle();
-    if (!container.read(chatVisibleProvider)) return;
-    // The pane mounts on the next frame; focus it once it is there.
+    // The body mounts on the next frame; focus it once it is there.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       container.read(chatFocusProvider).requestFocus();
     });
@@ -175,7 +169,7 @@ class AppCommands {
         title: const Text('Keyboard Shortcuts'),
         content: const Text(
           '⌘N  New task (focus quick capture)\n'
-          '⌘J  Show or hide the chat pane\n'
+          '⌘J  Open the assistant, or tuck it away\n'
           '⌘Z  Undo the last change\n'
           '⌘R  Let the model think before it answers, or not\n'
           'Esc  Stop the assistant\'s answer',

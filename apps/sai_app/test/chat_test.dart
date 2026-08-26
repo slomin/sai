@@ -4,11 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sai_app/chat_pane.dart';
+import 'package:sai_app/assistant/assistant_band.dart';
 import 'package:sai_app/commands.dart';
-import 'package:sai_app/main_pane.dart';
+import 'package:sai_app/workspace/task_list_pane.dart';
 import 'package:sai_app/sidebar.dart';
-import 'package:sai_app/shell.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
@@ -38,52 +37,44 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
   }
 
-  testWidgets('the chat pane shows by default with a placeholder', (
+  testWidgets('the assistant band opens by default with a placeholder', (
     tester,
   ) async {
     await pumpApp(tester);
-    expect(find.byType(ChatPane), findsOneWidget);
+    expect(find.byType(AssistantBand), findsOneWidget);
     expect(find.byKey(chatFieldKey), findsOneWidget);
     expect(find.textContaining('assistant'), findsOneWidget);
   });
 
-  testWidgets('Cmd+J hides the chat, then shows it and focuses it', (
+  testWidgets('Cmd+J tucks the band away, then opens it and focuses it', (
     tester,
   ) async {
     final container = await pumpApp(tester);
     await chord(tester, LogicalKeyboardKey.keyJ);
-    expect(find.byType(ChatPane), findsNothing);
+    expect(find.byKey(chatFieldKey), findsNothing);
+    expect(find.byKey(assistantHeaderKey), findsOneWidget);
     expect(container.read(chatVisibleProvider), isFalse);
+    expect(container.read(captureFocusProvider).hasFocus, isTrue);
 
     await chord(tester, LogicalKeyboardKey.keyJ);
-    expect(find.byType(ChatPane), findsOneWidget);
+    expect(find.byKey(chatFieldKey), findsOneWidget);
     expect(container.read(chatFocusProvider).hasFocus, isTrue);
     expect(container.read(captureFocusProvider).hasFocus, isFalse);
   }, variant: macOS);
 
-  testWidgets('Cmd+J in a window too narrow for the chat says so', (
+  testWidgets('the band header tucks the band away and brings it back', (
     tester,
   ) async {
-    await surface(tester, 700);
     final container = await pumpApp(tester);
-    expect(chatFits(tester.element(find.byKey(captureFieldKey))), isFalse);
-    await chord(tester, LogicalKeyboardKey.keyJ);
-    expect(container.read(chatVisibleProvider), isTrue);
-    expect(find.textContaining('widen the window'), findsOneWidget);
-    final item = menuItem(menuDelegate.menus, ['View', 'Show Chat']);
-    expect(item.onSelected, isNull);
-    // Nothing latched: widening shows the chat without stealing focus.
-    tester.view.physicalSize = const Size(900, 600);
+    await tester.tap(find.byKey(assistantHeaderKey));
+    await tester.pump();
+    expect(container.read(chatVisibleProvider), isFalse);
+    expect(find.byKey(chatFieldKey), findsNothing);
+    await tester.tap(find.byKey(assistantHeaderKey));
     await tester.pump();
     await tester.pump();
-    expect(find.byType(ChatPane), findsOneWidget);
-    expect(container.read(chatFocusProvider).hasFocus, isFalse);
-    expect(container.read(captureFocusProvider).hasFocus, isTrue);
-    expect(
-      menuItem(menuDelegate.menus, ['View', 'Hide Chat']).onSelected,
-      isNotNull,
-    );
-  }, variant: macOS);
+    expect(find.byKey(chatFieldKey), findsOneWidget);
+  });
 
   testWidgets('Cmd+N brings focus back to quick capture', (tester) async {
     final container = await pumpApp(tester);
@@ -99,28 +90,27 @@ void main() {
     );
   }, variant: macOS);
 
-  testWidgets('a narrow window drops the chat pane, a narrower the sidebar', (
+  testWidgets('a narrow window drops the sidebar; the band stays', (
     tester,
   ) async {
     await surface(tester, 700);
-    final container = await pumpApp(tester);
-    expect(container.read(chatVisibleProvider), isTrue);
-    expect(find.byType(ChatPane), findsNothing);
+    await pumpApp(tester);
     expect(find.byType(SaiSidebar), findsOneWidget);
+    expect(find.byKey(chatFieldKey), findsOneWidget);
     expect(find.byKey(captureFieldKey), findsOneWidget);
 
     tester.view.physicalSize = const Size(500, 600);
     await tester.pump();
     expect(find.byType(SaiSidebar), findsNothing);
     expect(find.byKey(captureFieldKey), findsOneWidget);
+    expect(find.byKey(chatFieldKey), findsOneWidget);
 
     tester.view.physicalSize = const Size(900, 600);
     await tester.pump();
     expect(find.byType(SaiSidebar), findsOneWidget);
-    expect(find.byType(ChatPane), findsOneWidget);
   });
 
-  testWidgets('typed text survives resizing across the breakpoints', (
+  testWidgets('typed text survives resizing across the breakpoint', (
     tester,
   ) async {
     await surface(tester, 900);
@@ -144,9 +134,7 @@ void main() {
     );
   });
 
-  testWidgets('the status bar fits a long provider line and a long notice', (
-    tester,
-  ) async {
+  testWidgets('the top bar and the band header fit long lines', (tester) async {
     await surface(tester, 500);
     final container = await pumpApp(
       tester,
@@ -162,24 +150,23 @@ void main() {
     expect(find.textContaining('undo failed:'), findsOneWidget);
   });
 
-  testWidgets('a notice gets the row, not a fixed half of it', (tester) async {
+  testWidgets('a notice gets the room the bar has left', (tester) async {
     await surface(tester, 900);
     final container = await pumpApp(tester);
     container.read(noticeProvider.notifier).show('undo failed: ${'x' * 200}');
     await tester.pump();
     expect(
       tester.getSize(find.textContaining('undo failed:')).width,
-      greaterThan(500),
+      greaterThan(300),
     );
   });
 
-  testWidgets('the status bar names the (missing) provider', (tester) async {
+  testWidgets('the band header names the (missing) provider', (tester) async {
     await pumpApp(tester);
     expect(find.text(noProviderStatus), findsOneWidget);
-    expect(find.text('no provider — local only'), findsOneWidget);
   });
 
-  testWidgets('the status bar follows the selected provider', (tester) async {
+  testWidgets('the band header follows the selected provider', (tester) async {
     final container = await pumpApp(tester);
     container.read(settingsProvider.notifier).selectLlm('fake');
     await tester.pump();
