@@ -346,6 +346,42 @@ void main() {
       },
     );
 
+    testWidgets('a partial name attaches the suggestion, never a second tag; '
+        'a deleted assigned tag does not block the next one', (tester) async {
+      final container = await pumpApp(tester);
+      final id = await open(tester, container);
+      final store = storeOf(container);
+      final errand = await tester.runAsync(
+        () => store.createTag(title: 'errand'),
+      );
+      await tester.pump();
+      await tester.enterText(find.byKey(tagFieldKey), 'err');
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => tester.testTextInput.receiveAction(TextInputAction.done),
+      );
+      // One event: the edit attaching errand. No "err" tag was created.
+      expect(store.projection.tasks[id]!.tags, [errand]);
+      expect(store.projection.tags.values.map((t) => t.title), ['errand']);
+
+      await settleEvents(tester, container, () => store.deleteTag(errand!));
+      expect(find.text('ERRAND'), findsNothing);
+      await tester.enterText(find.byKey(tagFieldKey), 'work');
+      await settleEvents(
+        tester,
+        container,
+        () => tester.testTextInput.receiveAction(TextInputAction.done),
+        count: 2,
+      );
+      final work = store.projection.tags.values
+          .firstWhere((t) => t.title == 'work')
+          .id;
+      expect(store.projection.tasks[id]!.tags, [work]);
+      expect(find.text('WORK'), findsWidgets);
+    });
+
     testWidgets('the checklist adds, toggles, renames and removes items', (
       tester,
     ) async {
@@ -478,6 +514,27 @@ void main() {
       await tester.tap(find.text('Keep'));
       await tester.pump();
       expect(store.projection.tasks[id]!.deletedAt, isNull);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+    testWidgets('⌘⏎ and Cancel leave a task in the Trash alone', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final id = await open(tester, container);
+      final store = storeOf(container);
+      await settleEvents(tester, container, () => store.deleteTask(id));
+      await selectSection(tester, container, trash);
+      await tester.tap(row(id));
+      await tester.pump();
+      final count = store.projection.eventCount;
+      await chord(tester, LogicalKeyboardKey.enter);
+      menuItem(menuDelegate.menus, ['Task', 'Cancel']).onSelected!();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      expect(store.projection.tasks[id]!.status, TaskStatus.open);
     }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
     testWidgets('Manage… opens the tags dialog', (tester) async {

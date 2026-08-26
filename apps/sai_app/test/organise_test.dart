@@ -541,6 +541,8 @@ void main() {
         expect(store.projection.tasks[tiles.id]!.heading, isNull);
         expect(store.projection.tasks[tiles.id]!.project, ids.kitchen);
         expect(rowTitles(tester), contains('Tiles'));
+        // An archived project offers no new heading: it would be refused.
+        expect(find.byKey(addHeadingKey), findsNothing);
       },
     );
 

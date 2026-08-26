@@ -192,7 +192,8 @@ class AppCommands {
 
   static Future<void> _completeSelected(ProviderContainer container) async {
     final task = _selectedTask(container);
-    if (task == null) return;
+    // A task in the Trash keeps its status until it is restored.
+    if (task == null || task.deletedAt != null) return;
     final commands = container.read(taskCommandsProvider);
     if (task.status == TaskStatus.open) {
       await commands.complete(task.id);
@@ -203,7 +204,8 @@ class AppCommands {
 
   static Future<void> _cancelSelected(ProviderContainer container) async {
     final task = _selectedTask(container);
-    if (task == null || task.status != TaskStatus.open) return;
+    if (task == null || task.deletedAt != null) return;
+    if (task.status != TaskStatus.open) return;
     await container.read(taskCommandsProvider).cancel(task.id);
   }
 

@@ -59,24 +59,46 @@ class _TagsEditorState extends State<TagsEditor> {
     ]..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
+  /// The task's tags that still exist: a tag deleted through the manager
+  /// keeps its id on the task, and the store refuses a list naming it,
+  /// so every patch is built from the live ids.
+  List<TagId> get _live => [
+    for (final id in widget.task.tags)
+      if (widget.projection.tags[id] case final tag? when tag.deletedAt == null)
+        id,
+  ];
+
   void _add(TagId tag) {
     _controller.clear();
-    widget.onChanged([...widget.task.tags, tag]);
+    if (_live.contains(tag)) return;
+    widget.onChanged([..._live, tag]);
   }
 
+  void _remove(TagId tag) => widget.onChanged([
+    for (final id in _live)
+      if (id != tag) id,
+  ]);
+
+  /// One submission path (the field's own Enter never selects): the tag
+  /// with exactly this title, else the first suggestion — what the
+  /// options list would have highlighted — else a new tag.
   Future<void> _submit(String line) async {
     final title = line.trim();
     if (title.isEmpty) return;
-    final existing = widget.projection.tags.values
+    final exact = widget.projection.tags.values
         .where(
           (t) =>
               t.deletedAt == null &&
               t.title.toLowerCase() == title.toLowerCase(),
         )
         .firstOrNull;
-    if (existing != null) {
-      if (!widget.task.tags.contains(existing.id)) _add(existing.id);
-      _controller.clear();
+    if (exact != null) {
+      _add(exact.id);
+      return;
+    }
+    final candidates = _candidates(title);
+    if (candidates.isNotEmpty) {
+      _add(candidates.first.id);
       return;
     }
     final created = await widget.onCreate(title);
@@ -104,13 +126,7 @@ class _TagsEditorState extends State<TagsEditor> {
               runSpacing: 4,
               children: [
                 for (final tag in tags)
-                  _TagChip(
-                    tag: tag,
-                    onRemove: () => widget.onChanged([
-                      for (final id in widget.task.tags)
-                        if (id != tag.id) id,
-                    ]),
-                  ),
+                  _TagChip(tag: tag, onRemove: () => _remove(tag.id)),
               ],
             ),
           ),
@@ -129,10 +145,7 @@ class _TagsEditorState extends State<TagsEditor> {
                       controller: controller,
                       focusNode: focus,
                       style: text.small,
-                      onSubmitted: (line) {
-                        onSubmit();
-                        _submit(line);
-                      },
+                      onSubmitted: _submit,
                       decoration: const InputDecoration(
                         hintText: 'Add a tag',
                         isDense: true,

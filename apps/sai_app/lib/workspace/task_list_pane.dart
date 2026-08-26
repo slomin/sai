@@ -159,7 +159,10 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
                 child: Row(
                   children: [
                     if (meta != null) Eyebrow(meta, dim: true),
-                    if (section case ProjectSection(:final project)) ...[
+                    // An archived project refuses new members; no offer.
+                    if (section case ProjectSection(:final project)
+                        when widget.projection.projects[project]?.archivedAt ==
+                            null) ...[
                       if (meta != null) const SizedBox(width: 12),
                       _AddHeading(project: project, title: title),
                     ],
