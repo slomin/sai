@@ -253,6 +253,101 @@ void main() {
     expect(report.unsupported[Unsupported.inTemplateProjects], 2);
   });
 
+  group('options leave history behind', () {
+    late String openPlain, openInstance, doneOld, doneNew, doneInstance;
+    ThingsSnapshot build() => snapshotOf((f) {
+      final template = f.item('Water plants', template: true, start: 1);
+      openPlain = f.item('Call mom');
+      openInstance = f.item('Water plants', repeatingTemplate: template);
+      doneOld = f.item(
+        'Old chore',
+        status: 3,
+        stopped: DateTime.utc(2025, 12, 31, 12),
+      );
+      doneNew = f.item(
+        'New chore',
+        status: 2,
+        stopped: DateTime.utc(2026, 8, 20, 12),
+      );
+      doneInstance = f.item(
+        'Water plants',
+        status: 3,
+        stopped: DateTime.utc(2026, 8, 1, 12),
+        repeatingTemplate: template,
+      );
+      f.close();
+    });
+    Set<String> imported(ThingsImportOptions options) {
+      final (plan, _) = planThingsImport(
+        build(),
+        projection: TaskProjection.empty,
+        now: now,
+        options: options,
+      );
+      return plan.ops.map((op) => op.uuid).toSet();
+    }
+
+    test('nothing is left behind by default', () {
+      expect(imported(const ThingsImportOptions()), {
+        openPlain,
+        openInstance,
+        doneOld,
+        doneNew,
+        doneInstance,
+      });
+    });
+
+    test('--open-only keeps the open ones, instances included', () {
+      final (plan, report) = planThingsImport(
+        build(),
+        projection: TaskProjection.empty,
+        now: now,
+        options: const ThingsImportOptions(openOnly: true),
+      );
+      expect(plan.ops.map((op) => op.uuid), [openPlain, openInstance]);
+      expect(report.unsupported[Unsupported.openOnly], 3);
+      expect(report.tasks.created, 2);
+    });
+
+    test('--skip-repeat-history drops finished instances only', () {
+      expect(imported(const ThingsImportOptions(skipRepeatHistory: true)), {
+        openPlain,
+        openInstance,
+        doneOld,
+        doneNew,
+      });
+    });
+
+    test('--logbook-since drops what finished before the day', () {
+      final since = const CalendarDate(2026, 1, 1);
+      final (plan, report) = planThingsImport(
+        build(),
+        projection: TaskProjection.empty,
+        now: now,
+        options: ThingsImportOptions(logbookSince: since),
+      );
+      expect(plan.ops.map((op) => op.uuid).toSet(), {
+        openPlain,
+        openInstance,
+        doneNew,
+        doneInstance,
+      });
+      expect(report.unsupported[Unsupported.logbookBefore(since)], 1);
+    });
+
+    test('the options combine', () {
+      expect(
+        imported(
+          const ThingsImportOptions(
+            skipRepeatHistory: true,
+            logbookSince: CalendarDate(2026, 1, 1),
+          ),
+        ),
+        {openPlain, openInstance, doneNew},
+      );
+    });
+  });
+
   test('an empty title becomes "(untitled)" and is counted', () {
     late String task, area;
     final snapshot = snapshotOf((f) {

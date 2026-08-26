@@ -476,6 +476,13 @@ abstract final class Unsupported {
   static const futureInstants =
       'timestamps in the future (imported with the run time)';
   static const emptyTitles = 'empty titles (imported as "$untitled")';
+  static const openOnly = 'completed and cancelled tasks (--open-only)';
+  static const repeatHistory =
+      'completed and cancelled repeating instances (--skip-repeat-history)';
+
+  /// The bucket for finished tasks older than [since].
+  static String logbookBefore(CalendarDate since) =>
+      'tasks finished before $since (--logbook-since)';
 
   /// What an entity with no title is called in sai, which refuses an
   /// empty one.
@@ -491,14 +498,41 @@ abstract final class Unsupported {
   ThingsSnapshot snapshot, {
   required TaskProjection projection,
   required DateTime now,
-}) => _Planner(snapshot, projection, now).plan();
+  ThingsImportOptions options = const ThingsImportOptions(),
+}) => _Planner(snapshot, projection, now, options).plan();
+
+/// What to leave behind on purpose. A switch from Things does not want
+/// years of Logbook or the completion history of every recurring
+/// habit; each option drops a slice of finished tasks and reports the
+/// count. Open tasks, projects, headings, areas and tags are never
+/// filtered. A task an earlier run imported and an option now excludes
+/// is left as it is, not deleted.
+final class ThingsImportOptions {
+  const ThingsImportOptions({
+    this.openOnly = false,
+    this.skipRepeatHistory = false,
+    this.logbookSince,
+  });
+
+  /// Import no completed or cancelled task at all.
+  final bool openOnly;
+
+  /// Drop completed or cancelled instances of repeating tasks; their
+  /// open next instances still import.
+  final bool skipRepeatHistory;
+
+  /// Drop tasks completed or cancelled before this day (local day of the
+  /// stop instant); a finished task without a stop instant is kept.
+  final CalendarDate? logbookSince;
+}
 
 final class _Planner {
-  _Planner(this.snapshot, this.projection, this.now);
+  _Planner(this.snapshot, this.projection, this.now, this.options);
 
   final ThingsSnapshot snapshot;
   final TaskProjection projection;
   final DateTime now;
+  final ThingsImportOptions options;
 
   final ops = <ImportOp>[];
   final unsupported = <String, int>{};
@@ -877,6 +911,11 @@ final class _Planner {
         _count(skipped);
         continue;
       }
+      final filtered = _filteredBucket(item);
+      if (filtered != null) {
+        _count(filtered);
+        continue;
+      }
       _noteFlags(item);
       final placement = _placement(item, liveProjects, liveHeadings);
       final when = _when(item);
@@ -944,6 +983,23 @@ final class _Planner {
       }
       tasks = changed ? tasks._add(updated: 1) : tasks._add(unchanged: 1);
     }
+  }
+
+  /// The option that leaves a finished [item] behind, or null.
+  String? _filteredBucket(ThingsItem item) {
+    if (item.status == ThingsStatus.open) return null;
+    if (options.openOnly) return Unsupported.openOnly;
+    if (options.skipRepeatHistory && item.repeatingTemplate != null) {
+      return Unsupported.repeatHistory;
+    }
+    final since = options.logbookSince;
+    if (since != null) {
+      final stopped = decodeThingsInstant(item.stopDate);
+      if (stopped != null && CalendarDate.fromLocal(stopped) < since) {
+        return Unsupported.logbookBefore(since);
+      }
+    }
+    return null;
   }
 
   ImportPlacement _placement(

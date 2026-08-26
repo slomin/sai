@@ -133,6 +133,46 @@ void main() {
     expect(archiveLines(container), isEmpty);
   });
 
+  test('history options reach the planner and are reported', () async {
+    final path = '${tmp.path}/main.sqlite';
+    final f = ThingsFixture(path);
+    f.item('Call mom');
+    f.item('Old chore', status: 3, stopped: DateTime.utc(2025, 6, 1, 12));
+    f.item('New chore', status: 3, stopped: DateTime.utc(2026, 8, 1, 12));
+    f.close();
+    expect(
+      await run(
+        'things import --dry-run --db $path --logbook-since 2026-01-01',
+      ),
+      cliOk,
+    );
+    expect(
+      out.toString(),
+      contains('  tasks: 2 created, 0 updated, 0 unchanged'),
+    );
+    expect(
+      out.toString(),
+      contains(
+        '  ${Unsupported.logbookBefore(const CalendarDate(2026, 1, 1))}: 1',
+      ),
+    );
+    out.clear();
+    expect(await run('things import --dry-run --db $path --open-only'), cliOk);
+    expect(
+      out.toString(),
+      contains('  tasks: 1 created, 0 updated, 0 unchanged'),
+    );
+    expect(out.toString(), contains('  ${Unsupported.openOnly}: 2'));
+    expect(
+      await run('things import --db $path --logbook-since yesterday'),
+      cliUsageError,
+    );
+    expect(
+      err.toString(),
+      contains('--logbook-since takes a day as YYYY-MM-DD'),
+    );
+  });
+
   test('bad options are usage errors', () async {
     expect(await run('things import --db'), cliUsageError);
     expect(err.toString(), contains('--db needs a path'));

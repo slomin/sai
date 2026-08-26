@@ -49,11 +49,13 @@ Future<ThingsImportResult> importThings(
   required TaskStore store,
   required DateTime now,
   bool dryRun = false,
+  ThingsImportOptions options = const ThingsImportOptions(),
 }) async {
   final (plan, report) = planThingsImport(
     snapshot,
     projection: store.projection,
     now: now,
+    options: options,
   );
   if (dryRun) {
     return ThingsImportResult(

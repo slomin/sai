@@ -222,6 +222,14 @@ is written. `external.version` carries the verified Things version.
 | repeating template | reported; its materialised instances import as plain tasks with `external.instance` = the template uuid |
 | reminder time, This Evening, contact, area tags, Today order | reported only |
 
+For a switch rather than a mirror, three options leave finished tasks
+behind and report the count: `--open-only` (no finished task at all),
+`--skip-repeat-history` (no finished instance of a repeating task; open
+next instances still import), `--logbook-since YYYY-MM-DD` (only tasks
+finished on or after that local day). Open tasks and every container
+always import; a task an earlier run imported and an option now
+excludes is left as it is.
+
 An instant in the future or a day that does not decode is dropped and
 reported rather than failing the run; an entity deleted in sai since a
 previous import is left deleted and reported. The report is counts only

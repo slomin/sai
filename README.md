@@ -182,8 +182,10 @@ the Things 3 database on this Mac; without `--dry-run` it writes it, as
 only what changed. Things is never written to — the command reads a
 private copy — and the report is counts only (`--db <main.sqlite>` or
 `SAI_THINGS_DB` names another file). Repeating rules, reminders,
-completed projects and the Trash are reported, not imported; the mapping
-is in `docs/tasks/task-model-v0.md` § Imports.
+completed projects and the Trash are reported, not imported. For a
+fresh start rather than a mirror, `--open-only`, `--skip-repeat-history`
+and `--logbook-since YYYY-MM-DD` leave finished tasks behind (and say how
+many); the mapping is in `docs/tasks/task-model-v0.md` § Imports.
 
 ## Verify
 

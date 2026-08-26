@@ -21,6 +21,8 @@ usage: sai_tui                       open the terminal client
        sai_tui secret clear <id>
        sai_tui secret status <id>
        sai_tui things import [--dry-run] [--db <main.sqlite>]
+                            [--open-only] [--skip-repeat-history]
+                            [--logbook-since YYYY-MM-DD]
                                     bring the Things 3 database over
        sai_tui help
 
@@ -40,7 +42,11 @@ things import reads a private copy of the Things 3 database (the one
 under ~/Library/Group Containers, or --db / SAI_THINGS_DB) and writes
 what is new or changed into the archive as system events; run it again
 and only the differences land. --dry-run prints what a run would do and
-writes nothing. Things itself is never written to.''';
+writes nothing. Things itself is never written to. For a switch rather
+than a mirror, leave history behind: --open-only imports no finished
+task, --skip-repeat-history drops the completion history of repeating
+tasks (their open next instances still come), --logbook-since keeps
+only tasks finished on or after that day; each reports what it left.''';
 
 /// What `privacy` prints for each position of the switch.
 String privacyLine(PrivacyPolicy policy) => policy.shareTasksWithCloud
@@ -352,11 +358,26 @@ Future<int> runCli(
 
       case ['things', 'import', ...final rest]:
         var dryRun = false;
+        var openOnly = false;
+        var skipRepeatHistory = false;
+        CalendarDate? logbookSince;
         String? explicit;
         for (var i = 0; i < rest.length; i++) {
           switch (rest[i]) {
             case '--dry-run':
               dryRun = true;
+            case '--open-only':
+              openOnly = true;
+            case '--skip-repeat-history':
+              skipRepeatHistory = true;
+            case '--logbook-since':
+              if (i + 1 >= rest.length) {
+                throw _Usage('--logbook-since needs a day (YYYY-MM-DD)');
+              }
+              logbookSince = CalendarDate.tryParse(rest[++i]);
+              if (logbookSince == null) {
+                throw _Usage('--logbook-since takes a day as YYYY-MM-DD');
+              }
             case '--db':
               if (i + 1 >= rest.length) throw _Usage('--db needs a path');
               explicit = rest[++i];
@@ -403,6 +424,11 @@ Future<int> runCli(
             store: store,
             now: DateTime.now().toUtc(),
             dryRun: dryRun,
+            options: ThingsImportOptions(
+              openOnly: openOnly,
+              skipRepeatHistory: skipRepeatHistory,
+              logbookSince: logbookSince,
+            ),
           );
         } on ThingsImportException catch (e) {
           err.writeln('sai_tui: import stopped: $e');
