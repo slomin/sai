@@ -312,6 +312,8 @@ void main() {
   });
 
   group('shell providers', () {
+    final taskA = BlobRef.sha256OfBytes([1]);
+
     test('selectedSectionProvider opens on Today and moves on select', () {
       final container = ProviderContainer.test();
       expect(
@@ -322,6 +324,24 @@ void main() {
           .read(selectedSectionProvider.notifier)
           .select(const TrashSection());
       expect(container.read(selectedSectionProvider), const TrashSection());
+    });
+
+    test('selectedTaskProvider starts empty, selects and clears', () {
+      final container = ProviderContainer.test();
+      expect(container.read(selectedTaskProvider), isNull);
+      container.read(selectedTaskProvider.notifier).select(taskA);
+      expect(container.read(selectedTaskProvider), taskA);
+      container.read(selectedTaskProvider.notifier).clear();
+      expect(container.read(selectedTaskProvider), isNull);
+    });
+
+    test('selectedTaskProvider is independent of the section', () {
+      final container = ProviderContainer.test();
+      container.read(selectedTaskProvider.notifier).select(taskA);
+      container
+          .read(selectedSectionProvider.notifier)
+          .select(const ListSection(TaskList.inbox));
+      expect(container.read(selectedTaskProvider), taskA);
     });
 
     test('chatVisibleProvider starts shown and toggles', () {
