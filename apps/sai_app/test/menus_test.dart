@@ -9,7 +9,16 @@ import 'package:sai_core/sai_core.dart';
 import 'harness.dart';
 
 void main() {
-  const topLevel = ['sai', 'File', 'Edit', 'View', 'Go', 'Window', 'Help'];
+  const topLevel = [
+    'sai',
+    'File',
+    'Edit',
+    'Task',
+    'View',
+    'Go',
+    'Window',
+    'Help',
+  ];
 
   Map<String, Object?> chord(PlatformMenuItem item) =>
       item.shortcut!.serializeForMenu().toChannelRepresentation();
@@ -26,14 +35,22 @@ void main() {
       showShortcuts: () => calls.add('shortcuts'),
       showProviders: () => calls.add('providers'),
       select: (section) => calls.add('select $section'),
+      toggleInspector: () => calls.add('inspector'),
+      completeSelected: () => calls.add('complete'),
+      cancelSelected: () => calls.add('cancel-task'),
+      deleteSelected: () => calls.add('delete'),
     );
-    List<PlatformMenuItem> menus({bool canUndo = false, bool chat = true}) =>
-        saiMenus(
-          commands: commands,
-          canUndo: canUndo,
-          chatShown: chat,
-          reasoningOn: false,
-        );
+    List<PlatformMenuItem> menus({
+      bool canUndo = false,
+      bool chat = true,
+      bool task = false,
+    }) => saiMenus(
+      commands: commands,
+      canUndo: canUndo,
+      chatShown: chat,
+      reasoningOn: false,
+      taskSelected: task,
+    );
 
     setUp(calls.clear);
 

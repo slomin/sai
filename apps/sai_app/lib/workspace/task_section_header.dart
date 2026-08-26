@@ -6,10 +6,18 @@ import '../widgets/eyebrow.dart';
 /// A group's label and its count — a day in Upcoming or the Logbook, an
 /// area, a project or a heading elsewhere.
 class TaskSectionHeader extends StatelessWidget {
-  const TaskSectionHeader({super.key, required this.label, required this.meta});
+  const TaskSectionHeader({
+    super.key,
+    required this.label,
+    required this.meta,
+    this.trailing,
+  });
 
   final String label;
   final String meta;
+
+  /// A heading's menu button, outside the header's own semantics.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -25,6 +33,10 @@ class TaskSectionHeader extends StatelessWidget {
             Expanded(child: Eyebrow(label, dim: true)),
             const SizedBox(width: 12),
             Eyebrow(meta, dim: true),
+            if (trailing case final trailing?) ...[
+              const SizedBox(width: 6),
+              trailing,
+            ],
           ],
         ),
       ),

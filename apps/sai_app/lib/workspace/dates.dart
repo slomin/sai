@@ -52,3 +52,24 @@ String clockTime(DateTime moment) {
   String two(int n) => n.toString().padLeft(2, '0');
   return '${two(local.hour)}:${two(local.minute)}';
 }
+
+/// `24 Aug 09:02` — an evidence line's stamp, in local time.
+String shortStamp(DateTime moment) {
+  final local = moment.toLocal();
+  return '${local.day} ${_months[local.month - 1].substring(0, 3)} '
+      '${clockTime(moment)}';
+}
+
+/// The inspector's WHEN value: the reference's words for the common
+/// cases, the short day otherwise.
+String whenLabel(TaskWhen when, {required CalendarDate today}) =>
+    switch (when) {
+      TaskWhenNone() => 'No plan',
+      TaskWhenSomeday() => 'Someday',
+      TaskWhenDate(:final date) =>
+        date == today
+            ? 'Today'
+            : date == today.addDays(1)
+            ? 'Tomorrow'
+            : shortDay(date),
+    };

@@ -13,12 +13,14 @@ import 'commands.dart';
 /// deferred to #76; the items keep every list
 /// reachable from the keyboard through the menu bar.
 ///
-/// [chatShown] is whether the assistant's band is open right now.
+/// [chatShown] is whether the assistant's band is open right now;
+/// [taskSelected] whether the Task menu has a task to act on.
 List<PlatformMenuItem> saiMenus({
   required AppCommands commands,
   required bool canUndo,
   required bool chatShown,
   required bool reasoningOn,
+  required bool taskSelected,
 }) => [
   PlatformMenu(
     label: 'sai',
@@ -85,8 +87,39 @@ List<PlatformMenuItem> saiMenus({
     ],
   ),
   PlatformMenu(
+    label: 'Task',
+    menus: [
+      PlatformMenuItem(
+        label: 'Complete',
+        shortcut: const SingleActivator(LogicalKeyboardKey.enter, meta: true),
+        onSelected: taskSelected ? commands.completeSelected : null,
+      ),
+      PlatformMenuItem(
+        label: 'Cancel',
+        onSelected: taskSelected ? commands.cancelSelected : null,
+      ),
+      PlatformMenuItemGroup(
+        members: [
+          PlatformMenuItem(
+            label: 'Delete…',
+            shortcut: const SingleActivator(
+              LogicalKeyboardKey.backspace,
+              meta: true,
+            ),
+            onSelected: taskSelected ? commands.deleteSelected : null,
+          ),
+        ],
+      ),
+    ],
+  ),
+  PlatformMenu(
     label: 'View',
     menus: [
+      PlatformMenuItem(
+        label: taskSelected ? 'Hide Inspector' : 'Show Inspector',
+        shortcut: const SingleActivator(LogicalKeyboardKey.keyI, meta: true),
+        onSelected: commands.toggleInspector,
+      ),
       PlatformMenuItem(
         label: chatShown ? 'Hide Assistant' : 'Show Assistant',
         shortcut: const SingleActivator(LogicalKeyboardKey.keyJ, meta: true),
@@ -178,7 +211,7 @@ class SaiChrome extends ConsumerStatefulWidget {
 }
 
 class _SaiChromeState extends ConsumerState<SaiChrome> {
-  (bool, bool, bool)? _menuState;
+  (bool, bool, bool, bool)? _menuState;
   List<PlatformMenuItem> _menus = const [];
 
   @override
@@ -187,7 +220,8 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
     final canUndo = ref.watch(canUndoProvider);
     final shown = ref.watch(chatVisibleProvider);
     final reasoning = ref.watch(reasoningProvider);
-    final state = (canUndo, shown, reasoning);
+    final taskSelected = ref.watch(selectedTaskProvider) != null;
+    final state = (canUndo, shown, reasoning, taskSelected);
     if (state != _menuState) {
       _menuState = state;
       _menus = saiMenus(
@@ -195,6 +229,7 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
         canUndo: canUndo,
         chatShown: shown,
         reasoningOn: reasoning,
+        taskSelected: taskSelected,
       );
     }
     return PlatformMenuBar(
@@ -210,8 +245,17 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
           const SingleActivator(LogicalKeyboardKey.escape): commands.cancelChat,
           const SingleActivator(LogicalKeyboardKey.keyR, meta: true):
               commands.toggleReasoning,
+          const SingleActivator(LogicalKeyboardKey.keyI, meta: true):
+              commands.toggleInspector,
+          const SingleActivator(LogicalKeyboardKey.enter, meta: true):
+              commands.completeSelected,
+          const SingleActivator(LogicalKeyboardKey.backspace, meta: true):
+              commands.deleteSelected,
         },
-        child: widget.child,
+        // A scope of its own: a field that gives focus up (Escape, Enter,
+        // a click beside it) lands here, inside the bindings, rather than
+        // on the route's scope above them.
+        child: FocusScope(child: widget.child),
       ),
     );
   }

@@ -28,7 +28,9 @@ void main() {
       expect(y, greaterThan(lastY));
       lastY = y;
     }
-    expect(find.text('AREAS & PROJECTS'), findsNothing);
+    // The heading stays, carrying the "+" that adds the first area.
+    expect(find.text('AREAS & PROJECTS'), findsOneWidget);
+    expect(find.text('ARCHIVED'), findsNothing);
     expect(find.byType(SaiSidebar), findsOneWidget);
   });
 

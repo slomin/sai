@@ -5,6 +5,7 @@ import 'package:sai_app/assistant/assistant_band.dart';
 import 'package:sai_app/theme/sai_tokens.dart';
 import 'package:sai_app/widgets/chip.dart';
 import 'package:sai_app/widgets/empty_state.dart';
+import 'package:sai_app/widgets/glyph_button.dart';
 import 'package:sai_app/workspace/task_list.dart';
 import 'package:sai_app/workspace/task_row.dart';
 import 'package:sai_app/workspace/task_row_chips.dart';
@@ -289,7 +290,9 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(rowTitles(tester), ['Water the plants']);
-      expect(container.read(selectedTaskProvider), isNull);
+      // The task still exists, so the selection (and the inspector) stay
+      // on it (#74); only a deletion or a section change clears it.
+      expect(container.read(selectedTaskProvider), ids.first);
       expect(sidebarCount(tester, logbook), 1);
     });
 
@@ -384,7 +387,12 @@ void main() {
       // The store has moved on, the ghost holds its place and confirms.
       expect(rowTitles(tester), ['One', 'Two']);
       expect(find.text('COMPLETED'), findsOneWidget);
+      // A controller started between frames takes its start time from
+      // the next frame that moves the clock: a frame to start the hold,
+      // the hold, a frame to start the collapse, then half of it.
+      await tester.pump(const Duration(milliseconds: 1));
       await tester.pump(SaiDurations.hold);
+      await tester.pump(const Duration(milliseconds: 1));
       await tester.pump(SaiDurations.collapse ~/ 2);
       expect(tester.getSize(find.byType(TaskRow).first).height, lessThan(full));
       await tester.pump(SaiDurations.collapse);
@@ -514,7 +522,9 @@ void main() {
       expect(rowTitles(tester), ['A', 'B', 'C']);
       final ids = store.projection.todayOrder;
       await settleEvents(tester, container, () async {
-        await tester.drag(check(ids[0]), const Offset(0, 120));
+        // Well past the two rows below: the drop lands after the last one.
+        final step = tester.getSize(row(ids[0])).height;
+        await tester.drag(check(ids[0]), Offset(0, 4 * step));
         await tester.pump(const Duration(milliseconds: 300));
       });
       expect(
@@ -536,7 +546,8 @@ void main() {
       }
       final ids = container.read(tasksProvider).value!.structuralOrder;
       await settleEvents(tester, container, () async {
-        await tester.drag(check(ids[2]), const Offset(0, -120));
+        final step = tester.getSize(row(ids[2])).height;
+        await tester.drag(check(ids[2]), Offset(0, -4 * step));
         await tester.pump(const Duration(milliseconds: 300));
       });
       expect(
@@ -620,7 +631,7 @@ void main() {
       expect(tester.getSemantics(check(ids[1])).label, 'Complete Short');
       expect(tester.getSemantics(row(ids[1])).label, startsWith('Short'));
       expect(
-        tester.widget<IconButton>(find.byKey(cancelButtonKey(ids[1]))).tooltip,
+        tester.widget<GlyphButton>(find.byKey(cancelButtonKey(ids[1]))).label,
         'Cancel Short',
       );
       expect(

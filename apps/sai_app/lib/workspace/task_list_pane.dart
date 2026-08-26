@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import '../commands.dart';
+import '../organise/organise_commands.dart';
 import '../theme/sai_theme.dart';
 import '../theme/sai_tokens.dart';
 import '../widgets/eyebrow.dart';
+import '../widgets/sai_dialog.dart';
 import 'dates.dart';
 import 'task_list.dart';
 
@@ -15,6 +17,9 @@ const captureFieldKey = Key('capture-field');
 
 /// The selected section's title, so tests can read which list is shown.
 const paneTitleKey = Key('pane-title');
+
+/// A project view's "+ heading", for tests.
+const addHeadingKey = Key('add-heading');
 
 /// The selected section (#72): the day's eyebrow, the title and its count,
 /// the capture field, then the rows from [taskViewProvider] — or the
@@ -26,6 +31,41 @@ class TaskListPane extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<TaskListPane> createState() => _TaskListPaneState();
+}
+
+/// `+ HEADING` in a project's meta line: a new heading at the end of the
+/// project (#74).
+class _AddHeading extends ConsumerWidget {
+  const _AddHeading({required this.project, required this.title});
+
+  final ProjectId project;
+  final String title;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Semantics(
+      button: true,
+      label: 'New heading',
+      child: ExcludeSemantics(
+        child: InkWell(
+          key: addHeadingKey,
+          onTap: () async {
+            final name = await promptForTitle(
+              context,
+              eyebrow: title,
+              title: 'New heading',
+              confirm: 'Create',
+            );
+            if (name == null) return;
+            await ref
+                .read(organiseCommandsProvider)
+                .createHeading(project, name);
+          },
+          child: Text('+ HEADING', style: context.saiText.eyebrow),
+        ),
+      ),
+    );
+  }
 }
 
 class _TaskListPaneState extends ConsumerState<TaskListPane> {
@@ -64,22 +104,29 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
     final today = ref.watch(todayProvider);
     final section = ref.watch(selectedSectionProvider);
     final view = ref.watch(taskViewProvider(section));
-    // The selection follows the task; when it leaves the view, so does
-    // the selection (an effect, so it lives in listen, not build).
-    void follow(AsyncValue<TaskView> view) {
+    // The selection follows the task (#74): it stays while the task is
+    // merely edited out of this list (the inspector is still on it), and
+    // goes when the task is gone — deleted outside the Trash, or unknown
+    // — or when the person moves to another section that does not show
+    // it. Effects, so they live in listen, not build.
+    ref.listen(tasksProvider, (_, next) {
+      final selected = ref.read(selectedTaskProvider);
+      final projection = next.value;
+      if (selected == null || projection == null) return;
+      final task = projection.task(selected);
+      final trash = ref.read(selectedSectionProvider) == const TrashSection();
+      if (task == null || (task.deletedAt != null && !trash)) {
+        ref.read(selectedTaskProvider.notifier).clear();
+      }
+    });
+    ref.listen(selectedSectionProvider, (_, next) {
       final selected = ref.read(selectedTaskProvider);
       if (selected == null) return;
-      final tasks = view.value?.tasks;
+      final tasks = ref.read(taskViewProvider(next)).value?.tasks;
       if (tasks != null && !tasks.any((t) => t.id == selected)) {
         ref.read(selectedTaskProvider.notifier).clear();
       }
-    }
-
-    ref.listen(taskViewProvider(section), (_, next) => follow(next));
-    ref.listen(
-      selectedSectionProvider,
-      (_, next) => follow(ref.read(taskViewProvider(next))),
-    );
+    });
     final text = context.saiText;
     final title = view.value?.title ?? sectionTitle(widget.projection, section);
     final tasks = view.value?.tasks ?? const <Task>[];
@@ -108,7 +155,15 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
               const SizedBox(height: 6),
               SizedBox(
                 height: 14,
-                child: meta == null ? null : Eyebrow(meta, dim: true),
+                child: Row(
+                  children: [
+                    if (meta != null) Eyebrow(meta, dim: true),
+                    if (section case ProjectSection(:final project)) ...[
+                      if (meta != null) const SizedBox(width: 12),
+                      _AddHeading(project: project, title: title),
+                    ],
+                  ],
+                ),
               ),
             ],
           ),

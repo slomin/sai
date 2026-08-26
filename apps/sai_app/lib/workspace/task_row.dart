@@ -6,6 +6,7 @@ import '../theme/sai_theme.dart';
 import '../theme/sai_tokens.dart';
 import '../widgets/check_mark.dart';
 import '../widgets/chip.dart';
+import '../widgets/glyph_button.dart';
 import 'task_row_chips.dart';
 
 /// The key of a task's row, and of its cancel affordance, for tests.
@@ -228,14 +229,14 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
                     padding: const EdgeInsets.only(left: 6),
                     child: Opacity(
                       opacity: _hovered || widget.selected ? 1 : 0,
-                      child: IconButton(
+                      child: GlyphButton(
                         key: cancelButtonKey(task.id),
-                        tooltip: 'Cancel ${task.title}',
-                        iconSize: 16,
-                        visualDensity: VisualDensity.compact,
+                        glyph: '✕',
+                        label: 'Cancel ${task.title}',
                         color: SaiColors.inkFaint,
+                        size: 13,
+                        minSize: 30,
                         onPressed: widget.onCancel,
-                        icon: const Icon(Icons.close),
                       ),
                     ),
                   ),

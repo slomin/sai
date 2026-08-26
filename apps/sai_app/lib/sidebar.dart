@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import 'organise/container_menu.dart';
 import 'theme/sai_theme.dart';
 import 'theme/sai_tokens.dart';
 import 'widgets/eyebrow.dart';
@@ -10,8 +11,10 @@ import 'widgets/eyebrow.dart';
 Key sidebarRowKey(SidebarSection section) => ValueKey(section);
 
 /// The standard lists with their counts, the Trash, then areas with their
-/// projects nested and the standalone projects — [sidebarProvider]'s
-/// shape. Tapping a row selects its section.
+/// projects nested and the standalone projects in their persisted order,
+/// then the archived containers — [sidebarProvider]'s shape. Tapping a
+/// row selects its section; a container row's "…" (or a secondary
+/// click) opens its organisation menu (#74).
 class SaiSidebar extends ConsumerWidget {
   const SaiSidebar({super.key});
 
@@ -29,6 +32,25 @@ class SaiSidebar extends ConsumerWidget {
           selected: entry.section == selected,
           onTap: () => select(entry.section),
         );
+    Widget container(
+      SidebarEntry entry, {
+      bool nested = false,
+      bool archived = false,
+    }) => ContainerMenu(
+      section: entry.section,
+      title: entry.title,
+      archived: archived,
+      builder: (context, open, button) => SidebarRow(
+        key: sidebarRowKey(entry.section),
+        title: nested ? '— ${entry.title}' : entry.title,
+        count: null,
+        selected: entry.section == selected,
+        dim: archived,
+        trailing: button,
+        onTap: () => select(entry.section),
+        onSecondaryTapDown: (at) => open(at),
+      ),
+    );
     return Container(
       color: SaiColors.bg,
       child: ListView(
@@ -37,15 +59,19 @@ class SaiSidebar extends ConsumerWidget {
           const _Heading('Lists'),
           for (final entry in model.lists) row(entry),
           row(model.trash),
-          if (model.areas.isNotEmpty || model.projects.isNotEmpty) ...[
+          const SizedBox(height: 26),
+          const _Heading('Areas & projects', trailing: SidebarAddMenu()),
+          for (final area in model.areas) ...[
+            container(area.entry),
+            for (final project in area.projects)
+              container(project, nested: true),
+          ],
+          for (final project in model.projects) container(project),
+          if (model.archived.isNotEmpty) ...[
             const SizedBox(height: 26),
-            const _Heading('Areas & projects'),
-            for (final area in model.areas) ...[
-              row(area.entry, count: false),
-              for (final project in area.projects)
-                row(project, count: false, nested: true),
-            ],
-            for (final project in model.projects) row(project, count: false),
+            const _Heading('Archived'),
+            for (final entry in model.archived)
+              container(entry, archived: true),
           ],
         ],
       ),
@@ -54,80 +80,149 @@ class SaiSidebar extends ConsumerWidget {
 }
 
 class _Heading extends StatelessWidget {
-  const _Heading(this.text);
+  const _Heading(this.text, {this.trailing});
 
   final String text;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
-      child: Eyebrow(text, dim: true),
+      padding: const EdgeInsets.fromLTRB(24, 0, 16, 10),
+      child: SizedBox(
+        height: 20,
+        child: Row(
+          children: [
+            Expanded(child: Eyebrow(text, dim: true)),
+            ?trailing,
+          ],
+        ),
+      ),
     );
   }
 }
 
 /// One sidebar row: the title, the count in mono on the right, and the
-/// ink treatment with a red bar when selected.
-class SidebarRow extends StatelessWidget {
+/// ink treatment with a red bar when selected. A container row carries
+/// its "…" button as [trailing], outside the row's own semantics.
+class SidebarRow extends StatefulWidget {
   const SidebarRow({
     super.key,
     required this.title,
     required this.count,
     required this.selected,
     required this.onTap,
+    this.trailing,
+    this.onSecondaryTapDown,
+    this.dim = false,
   });
 
   final String title;
   final int? count;
   final bool selected;
   final VoidCallback onTap;
+  final Widget? trailing;
+  final void Function(Offset at)? onSecondaryTapDown;
+  final bool dim;
+
+  @override
+  State<SidebarRow> createState() => _SidebarRowState();
+}
+
+class _SidebarRowState extends State<SidebarRow> {
+  var _hovered = false;
 
   @override
   Widget build(BuildContext context) {
     final text = context.saiText;
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: count == null ? title : '$title, $count',
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          height: 38,
-          decoration: BoxDecoration(
-            color: selected ? SaiColors.ink : null,
-            border: Border(
-              left: BorderSide(
-                color: selected ? SaiColors.red : Colors.transparent,
-                width: 3,
-              ),
+    final title = widget.title;
+    final count = widget.count;
+    final selected = widget.selected;
+    final dim = widget.dim;
+    final trailing = widget.trailing;
+    final onSecondaryTapDown = widget.onSecondaryTapDown;
+    final color = selected
+        ? SaiColors.onInk
+        : dim
+        ? SaiColors.inkFaint
+        : SaiColors.ink;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Container(
+        height: 38,
+        decoration: BoxDecoration(
+          color: selected ? SaiColors.ink : null,
+          border: Border(
+            left: BorderSide(
+              color: selected ? SaiColors.red : Colors.transparent,
+              width: 3,
             ),
           ),
-          padding: const EdgeInsets.only(left: 21, right: 24),
-          // The row's own label carries title and count for assistive tech.
-          child: ExcludeSemantics(
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: text.sidebar.copyWith(
-                      color: selected ? SaiColors.onInk : SaiColors.ink,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Semantics(
+                button: true,
+                selected: selected,
+                label: count == null ? title : '$title, $count',
+                child: GestureDetector(
+                  onSecondaryTapDown: onSecondaryTapDown == null
+                      ? null
+                      : (d) => onSecondaryTapDown(d.localPosition),
+                  child: InkWell(
+                    onTap: widget.onTap,
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        left: 21,
+                        right: trailing == null ? 24 : 4,
+                      ),
+                      // The row's own label carries title and count.
+                      child: ExcludeSemantics(
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                title,
+                                style: text.sidebar.copyWith(color: color),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (count case final count?)
+                              Text(
+                                '$count',
+                                style: text.meta.copyWith(
+                                  color: selected
+                                      ? SaiColors.onInk
+                                      : SaiColors.inkFaint,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (count case final count?)
-                  Text(
-                    '$count',
-                    style: text.meta.copyWith(
+              ),
+            ),
+            if (trailing case final trailing?)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                // Shown on hover or selection; always in the tree, so the
+                // keyboard and assistive tech reach it regardless.
+                child: Opacity(
+                  opacity: _hovered || selected ? 1 : 0,
+                  child: IconTheme(
+                    data: IconThemeData(
                       color: selected ? SaiColors.onInk : SaiColors.inkFaint,
                     ),
+                    child: trailing,
                   ),
-              ],
-            ),
-          ),
+                ),
+              ),
+          ],
         ),
       ),
     );
