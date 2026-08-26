@@ -155,6 +155,11 @@ SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/tui
 Build a debug app bundle (what CI does): `cd apps/sai_app && flutter build
 macos --debug` → `apps/sai_app/build/macos/Build/Products/Debug/sai.app`.
 
+The app's look is the Sai visual system (`references/gui_design_v1_0/`): the
+tokens live in `apps/sai_app/lib/theme/`, and the two families it sets in —
+Space Grotesk and JetBrains Mono, both SIL OFL — ship as assets under
+`apps/sai_app/fonts/` beside their licences. Light appearance only for now.
+
 ## Chat
 
 Both clients carry the conversation (#34): the pane in the app (⌘J
@@ -204,6 +209,17 @@ gitleaks git . --config .gitleaks.toml   # no secret in any commit
 `sai_core` must stay free of Flutter: its tests fail if `lib/` imports
 `package:flutter` or `dart:ui`, or if its pubspec declares a Flutter
 dependency.
+
+The app's widget tests compare goldens under `apps/sai_app/test/goldens/`
+(macOS only, where CI runs them; `test/flutter_test_config.dart` loads the
+bundled fonts first so the pixels are deterministic). A change that moves
+pixels re-records them deliberately, one file at a time, and the PNG diff is
+reviewed by eye — a regenerated golden asserts the new pixels are right, it
+is not a way to turn a red test green:
+
+```sh
+cd apps/sai_app && flutter test --update-goldens test/workspace_test.dart
+```
 
 The event log under the archive root is verifiable without sai at all —
 each line's id is the SHA-256 of its exact bytes (`shasum -a 256`); the

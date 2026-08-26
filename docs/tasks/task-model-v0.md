@@ -140,6 +140,16 @@ sidebar section:
 - Logbook groups completed and cancelled tasks by the finish instant's local
   calendar day, newest day first and newest finish first within the day.
 
+A client's row selection is `selectedTaskProvider` (#72), a task id or
+null beside the section selection: the client clears it when the task
+leaves the view it is showing, and later surfaces (the inspector, restored
+workspace state) read the same value. Dragging a row in the macOS app maps
+onto the two orders above — Today through `reorderToday`, the Inbox and
+every structural group shown on its own (a project's unheaded tasks, a
+heading, an area's direct tasks) through `reorderTask`, `after` being the
+live row above the drop slot or null for first. Upcoming, the Logbook and
+the Anytime/Someday hierarchies keep their derived order.
+
 `taskViewProvider` and `sidebarProvider` preserve the task provider's loading
 and error state and watch both its projection and `todayProvider`.
 `todayProvider` schedules local midnight, reads the clock again after a late
