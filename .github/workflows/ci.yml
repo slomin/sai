@@ -65,6 +65,10 @@ jobs:
           cache: true
       - name: Resolve the workspace
         run: dart pub get
+      - name: Provide the system SQLite the Things reader loads (#18)
+        # package:sqlite3 2.x opens the OS library at run time; macOS
+        # ships it, the runner needs the dev package for the .so link.
+        run: sudo apt-get install -y --no-install-recommends libsqlite3-dev
       - name: Format
         run: dart format --output=none --set-exit-if-changed packages apps/sai_tui apps/sai_app/lib apps/sai_app/test
       - name: Analyze
