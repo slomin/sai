@@ -34,9 +34,11 @@ sandbox is not required by any store policy.
 ## Amendment (2026-08-26, #18)
 
 The importer landed as a TUI command only (`sai_tui things import`); the
-app does not read the Things container. The condition above is therefore
-met, but the app stays unsandboxed for now: re-enabling the sandbox is
-its own change — entitlements for the Keychain item (ADR 0008), the
-archive path, the smoke driver — and belongs in a ticket of its own
-rather than in the import. Until then the entitlements are as decided
-here.
+app never reads the Things container, so the reason above no longer
+applies. The app stays unsandboxed anyway, as a settled decision rather
+than a deferral: the sandbox is a build-time entitlement, not something
+one operation can opt into, and turning it on would move the app's data
+into its container and break the one archive the app and the terminal
+client share (ADR 0006). For a hand-distributed local app (#42) that
+trade is not worth it. Revisit only if App Store distribution becomes a
+goal.
