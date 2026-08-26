@@ -229,6 +229,30 @@ void main() {
     expect(report.unsupported[Unsupported.danglingParents], 1);
   });
 
+  test('a repeating template project and its contents are reported', () {
+    late String template, child, heading;
+    final snapshot = snapshotOf((f) {
+      template = f.project('Weekly review', start: 1);
+      f.db.execute('update TMTask set rt1_recurrenceRule = ? where uuid = ?', [
+        [1, 2, 3],
+        template,
+      ]);
+      heading = f.heading('Steps', project: template);
+      child = f.item('Clear inbox', project: template, heading: heading);
+      f.close();
+    });
+    final (plan, report) = planThingsImport(
+      snapshot,
+      projection: TaskProjection.empty,
+      now: now,
+    );
+    expect(plan.ops.map((op) => op.uuid), isNot(contains(template)));
+    expect(plan.ops.map((op) => op.uuid), isNot(contains(child)));
+    expect(plan.ops, isEmpty);
+    expect(report.unsupported[Unsupported.repeatingTemplates], 1);
+    expect(report.unsupported[Unsupported.inTemplateProjects], 2);
+  });
+
   test('an empty title becomes "(untitled)" and is counted', () {
     late String task, area;
     final snapshot = snapshotOf((f) {

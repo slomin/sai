@@ -58,9 +58,13 @@ String? locateThingsDatabase({
 /// The database is not a Things 3 database this reader understands. The
 /// message names a table or column, never data.
 final class ThingsSchemaException implements Exception {
-  ThingsSchemaException(this.message);
+  ThingsSchemaException(this.message) : retryable = false;
+
+  /// A copy that SQLite reports as torn; another copy may be whole.
+  ThingsSchemaException.inconsistent(this.message) : retryable = true;
 
   final String message;
+  final bool retryable;
 
   @override
   String toString() => 'ThingsSchemaException: $message';
@@ -228,41 +232,89 @@ final class ThingsDatabase {
     if (!source.existsSync()) {
       throw FileSystemException('Things database not found', path);
     }
-    final copy = Directory.systemTemp.createTempSync('sai_things_copy_');
-    try {
-      final target = p.join(copy.path, 'main.sqlite');
-      source.copySync(target);
-      for (final suffix in const ['-wal', '-shm']) {
-        final companion = File('$path$suffix');
-        if (companion.existsSync()) companion.copySync('$target$suffix');
-      }
-      final Database db;
+    // Things may checkpoint or reset its WAL while the three files are
+    // being copied, leaving a set from two generations, or remove a
+    // companion between the existence check and the copy. A copy is
+    // trusted only once SQLite has checked it; otherwise it is thrown
+    // away and taken again.
+    ThingsSchemaException? last;
+    for (var attempt = 0; attempt < snapshotAttempts; attempt++) {
+      final copy = Directory.systemTemp.createTempSync('sai_things_copy_');
       try {
-        // Read-write on purpose, on the copy: a WAL database needs its
-        // shared-memory file, and a read-only connection cannot create one
-        // when the companions were not there to copy. Nothing here writes.
-        db = sqlite3.open(target, mode: OpenMode.readWrite);
-      } on SqliteException catch (e) {
-        throw ThingsSchemaException('not an SQLite database (${e.message})');
-      }
-      try {
-        _checkSchema(db);
-      } on SqliteException catch (e) {
-        db.close();
-        throw ThingsSchemaException('not an SQLite database (${e.message})');
+        final target = p.join(copy.path, 'main.sqlite');
+        source.copySync(target);
+        for (final suffix in const ['-wal', '-shm']) {
+          final companion = File('$path$suffix');
+          try {
+            companion.copySync('$target$suffix');
+          } on FileSystemException {
+            // Gone since the main file was copied; a checkpoint folded
+            // it into main.sqlite, which the check below confirms.
+          }
+        }
+        final Database db;
+        try {
+          // Read-write on purpose, on the copy: a WAL database needs its
+          // shared-memory file, and a read-only connection cannot create
+          // one when the companions were not there to copy. Nothing here
+          // writes.
+          db = sqlite3.open(target, mode: OpenMode.readWrite);
+        } on SqliteException catch (e) {
+          throw ThingsSchemaException('not an SQLite database (${e.message})');
+        }
+        try {
+          try {
+            _checkIntegrity(db);
+          } on SqliteException catch (e) {
+            // A torn copy can fail inside the check itself.
+            throw ThingsSchemaException.inconsistent(e.message);
+          }
+          try {
+            _checkSchema(db);
+          } on SqliteException catch (e) {
+            throw ThingsSchemaException(
+              'not an SQLite database (${e.message})',
+            );
+          }
+        } catch (_) {
+          db.close();
+          rethrow;
+        }
+        return ThingsDatabase._(db, copy, path);
+      } on ThingsSchemaException catch (e) {
+        copy.deleteSync(recursive: true);
+        last = e;
+        if (!e.retryable) rethrow;
       } catch (_) {
-        db.close();
+        copy.deleteSync(recursive: true);
         rethrow;
       }
-      return ThingsDatabase._(db, copy, path);
-    } catch (_) {
-      copy.deleteSync(recursive: true);
-      rethrow;
+    }
+    throw ThingsSchemaException(
+      'no consistent snapshot after $snapshotAttempts attempts '
+      '(${last!.message})',
+    );
+  }
+
+  /// How often [snapshot] retries a copy SQLite reports as inconsistent.
+  static const snapshotAttempts = 3;
+
+  /// `pragma quick_check` over the copy: a torn copy of a WAL database
+  /// shows up here as a corrupt page or a bad header.
+  static void _checkIntegrity(Database db) {
+    final rows = db.select('pragma quick_check');
+    if (rows.length != 1 || rows.single.columnAt(0) != 'ok') {
+      throw ThingsSchemaException.inconsistent(
+        'the copy did not pass quick_check',
+      );
     }
   }
 
   final Database _db;
   final Directory _copy;
+
+  /// The private directory holding the copy; gone after [dispose].
+  Directory get copyDirectory => _copy;
 
   /// The path the snapshot was taken from.
   final String sourcePath;

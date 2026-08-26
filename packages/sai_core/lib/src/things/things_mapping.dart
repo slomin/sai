@@ -453,6 +453,11 @@ abstract final class Unsupported {
   static const finishedProjects =
       'completed or cancelled projects (no project completion in v0.1)';
   static const inFinishedProjects = 'tasks and headings in those projects';
+  static const inTemplateProjects =
+      'tasks and headings in repeating template projects';
+  static const movedHeadings =
+      'headings moved to another project (their tasks keep the project; '
+      'sai has no heading move)';
   static const repeatingTemplates =
       'repeating templates (instances import as plain tasks)';
   static const reminders = 'reminder times';
@@ -703,6 +708,10 @@ final class _Planner {
         _count(Unsupported.finishedProjects);
         continue;
       }
+      if (item.isRepeatingTemplate) {
+        _count(Unsupported.repeatingTemplates);
+        continue;
+      }
       _noteFlags(item);
       final area = item.area != null && _live.contains(item.area)
           ? item.area
@@ -774,9 +783,7 @@ final class _Planner {
       final project = item.project;
       if (project == null || !liveProjects.contains(project)) {
         _count(
-          project != null && _isFinishedProject(project)
-              ? Unsupported.inFinishedProjects
-              : Unsupported.headingWithoutProject,
+          _skippedProjectBucket(project) ?? Unsupported.headingWithoutProject,
         );
         continue;
       }
@@ -796,6 +803,13 @@ final class _Planner {
         final existing = projection.headings[id];
         if (existing == null || existing.deletedAt != null) {
           _count(Unsupported.deletedInSai);
+          continue;
+        }
+        if (existing.project != _idOf(project)) {
+          // sai has no heading.move: the sai heading stays where it was
+          // and is not the target of any task this run; tasks under the
+          // Things heading fall back to their (new) project.
+          _count(Unsupported.movedHeadings);
           continue;
         }
         if (existing.title != title) {
@@ -819,7 +833,27 @@ final class _Planner {
         item.uuid,
   };
 
-  bool _isFinishedProject(String uuid) => _finishedProjects.contains(uuid);
+  late final _templateProjects = {
+    for (final item in snapshot.items)
+      if (item.type == ThingsItemType.project &&
+          !item.trashed &&
+          item.status == ThingsStatus.open &&
+          item.isRepeatingTemplate)
+        item.uuid,
+  };
+
+  /// The bucket for an item whose project was skipped on purpose, or
+  /// null when the project is simply missing or trashed.
+  String? _skippedProjectBucket(String? project) {
+    if (project == null) return null;
+    if (_finishedProjects.contains(project)) {
+      return Unsupported.inFinishedProjects;
+    }
+    if (_templateProjects.contains(project)) {
+      return Unsupported.inTemplateProjects;
+    }
+    return null;
+  }
 
   void _noteFlags(ThingsItem item) {
     if (item.reminderTime != null) _count(Unsupported.reminders);
@@ -838,8 +872,9 @@ final class _Planner {
         _count(Unsupported.repeatingTemplates);
         continue;
       }
-      if (item.project != null && _isFinishedProject(item.project!)) {
-        _count(Unsupported.inFinishedProjects);
+      final skipped = _skippedProjectBucket(item.project);
+      if (skipped != null) {
+        _count(skipped);
         continue;
       }
       _noteFlags(item);

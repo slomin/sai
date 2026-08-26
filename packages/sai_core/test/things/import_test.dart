@@ -216,6 +216,49 @@ void main() {
     expect(third.plan.isEmpty, isTrue);
   });
 
+  test(
+    'a heading moved to another project keeps its tasks importable',
+    () async {
+      final ids = seed();
+      await importThings(snapshot(), store: store, now: now);
+      final count = logLines().length;
+
+      final f = ThingsFixture.reopen(thingsPath());
+      final garage = f.project('Garage', start: 1);
+      f.db.execute('update TMTask set project = ? where uuid in (?, ?)', [
+        garage,
+        ids.shopping,
+        ids.oat,
+      ]);
+      f.close();
+
+      final result = await importThings(snapshot(), store: store, now: now);
+
+      expect(result.plan.ops.map((op) => (op.runtimeType, op.uuid)), [
+        (CreateProject, garage),
+        (MoveTask, ids.oat),
+      ]);
+      expect(logLines().length, count + 2);
+      expect(result.report.unsupported[Unsupported.movedHeadings], 1);
+      expect(result.report.headings.unchanged, 0);
+      final oat = store.projection.byExternal('things3', ids.oat)!;
+      expect(oat.project, store.projection.idByExternal('things3', garage));
+      expect(oat.heading, isNull);
+      // The sai heading stays in its old project, untouched.
+      final heading = store
+          .projection
+          .headings[store.projection.idByExternal('things3', ids.shopping)!]!;
+      expect(
+        heading.project,
+        store.projection.idByExternal('things3', ids.kitchen),
+      );
+
+      final third = await importThings(snapshot(), store: store, now: now);
+      expect(third.plan.isEmpty, isTrue);
+      expect(third.report.unsupported[Unsupported.movedHeadings], 1);
+    },
+  );
+
   test('a dry run plans the same operations and appends nothing', () async {
     seed();
     final dry = await importThings(

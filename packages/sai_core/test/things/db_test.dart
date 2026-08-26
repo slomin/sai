@@ -99,20 +99,12 @@ void main() {
       final path = p.join(tmp.path, 'main.sqlite');
       ThingsFixture(path).close();
       final db = ThingsDatabase.snapshot(path);
-      final copies = Directory.systemTemp
-          .listSync()
-          .whereType<Directory>()
-          .where((d) => p.basename(d.path).startsWith('sai_things_copy_'))
-          .map((d) => d.path)
-          .toSet();
-      expect(copies, isNotEmpty);
+      final copy = db.copyDirectory;
+      expect(copy.existsSync(), isTrue);
+      expect(p.basename(copy.path), startsWith('sai_things_copy_'));
+      expect(p.isWithin(Directory.systemTemp.path, copy.path), isTrue);
       db.dispose();
-      final remaining = Directory.systemTemp
-          .listSync()
-          .whereType<Directory>()
-          .where((d) => copies.contains(d.path))
-          .toList();
-      expect(remaining, isEmpty);
+      expect(copy.existsSync(), isFalse);
     });
 
     test('refuses a database without the Things tables', () {
@@ -146,6 +138,36 @@ void main() {
             (e) => e.message,
             'message',
             'missing column TMTask.rt1_repeatingTemplate',
+          ),
+        ),
+      );
+    });
+
+    test('a torn copy is retried and then refused, never trusted', () {
+      final path = p.join(tmp.path, 'torn.sqlite');
+      final f = ThingsFixture(path);
+      for (var i = 0; i < 40; i++) {
+        f.item('row ' * 50);
+      }
+      f.close();
+      // Damage every page after the first: the header still reads as
+      // SQLite and the file opens, quick_check does not pass.
+      final file = File(path);
+      final bytes = file.readAsBytesSync();
+      for (var i = 4096; i < bytes.length; i++) {
+        bytes[i] = 0xFF;
+      }
+      file.writeAsBytesSync(bytes);
+      expect(
+        () => ThingsDatabase.snapshot(path),
+        throwsA(
+          isA<ThingsSchemaException>().having(
+            (e) => e.message,
+            'message',
+            startsWith(
+              'no consistent snapshot after '
+              '${ThingsDatabase.snapshotAttempts} attempts',
+            ),
           ),
         ),
       );
