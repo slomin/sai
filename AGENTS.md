@@ -83,18 +83,24 @@ the layout and the toolchain; this file has the rules.
   just written: `.claude/settings.json` turns on the Bash sandbox with
   those variables unset and those homes denied, and strips the same
   names from every subprocess; `.gitleaks.toml` fails a push or a PR
-  that carries a key. `dart`, `flutter` and `gh` run outside the
-  sandbox (their TLS cannot verify certificates under Seatbelt — a
-  Dart `HttpClient` fails `CERTIFICATE_VERIFY_FAILED`, so `pub` cannot
-  resolve), as do `open`, `osascript` and `screencapture` (Apple
-  Events); the variable strip still reaches them. The exclusion is
-  judged on the whole command line, so run them as a bare line
-  (`dart test`, after a separate `cd`) — `cd x && dart test` is
-  sandboxed as a whole and `pub` fails. Everything else may write
-  only under the repository, `$TMPDIR` and the listed caches, and
-  nothing sandboxed can read `~/.claude` — including this session's
-  own saved tool output, so keep test output small
-  (`--reporter=failures-only`). The `/sandbox` panel writes
+  that carries a key. Three command shapes run outside the sandbox:
+  `dart *` and `flutter *` — the toolchain does not work under
+  Seatbelt (a Dart `HttpClient` fails `CERTIFICATE_VERIFY_FAILED`, so
+  every implicit `pub` resolution fails, and `flutter test` cannot
+  bind its loopback socket) — and the fixed-purpose
+  `tool/smoke/drive.sh *` (Apple Events for the app smoke). That is
+  the honest residual: code an agent writes and runs through `dart`
+  is not file-isolated, which is why the vendor homes hold no
+  plaintext of ours (ADR 0013: keyring `CODEX_HOME`, Claude Code's
+  Keychain item) and why `no_spawn_test` and the scanner exist. The
+  exclusion is judged on the whole command line, so run the toolchain
+  as a bare line (`dart test`, after a separate `cd`) — `cd x && dart
+  test` is sandboxed as a whole and fails. Everything else — `gh`,
+  `git`, `uv`, `curl` — runs sandboxed and may write only under the
+  repository, `$TMPDIR` and the listed caches; nothing sandboxed can
+  read `~/.claude` — including this session's own saved tool output,
+  so keep test output small (`--reporter=failures-only`). The
+  `/sandbox` panel writes
   that same local file and can switch the sandbox off for you; the
   deny lists still hold. One consequence: the sandbox refuses to
   rewrite `.claude/settings.json`, so a sandboxed `git rebase` or
