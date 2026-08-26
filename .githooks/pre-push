@@ -1,13 +1,17 @@
 #!/bin/sh
-# Block any push carrying tool-generated attribution.
+# Block any push carrying tool-generated attribution or a provider key.
 # Policy: commits in this repository are authored solely by the person
-# committing. Patterns live in attribution-patterns (shared with commit-msg
-# and the CI attribution job). Fails closed: if the commits cannot be
-# inspected, the push is refused.
+# committing (patterns in attribution-patterns, shared with commit-msg
+# and the CI attribution job), and no commit carries a secret (rules in
+# .gitleaks.toml, shared with the CI secrets job). Fails closed: if the
+# commits cannot be inspected, or gitleaks is not installed, the push is
+# refused.
 # Install with: git config core.hooksPath .githooks
+#               brew install gitleaks
 
 remote="$1"
 patterns="$(dirname "$0")/attribution-patterns"
+root="$(git rev-parse --show-toplevel)"
 
 is_zero() {
 	case "$1" in
@@ -15,6 +19,11 @@ is_zero() {
 		*) return 0 ;;
 	esac
 }
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+	echo "pre-push: BLOCKED - gitleaks is not installed (brew install gitleaks)" >&2
+	exit 1
+fi
 
 while read -r local_ref local_sha remote_ref remote_sha; do
 	# Deleting a remote ref: nothing to inspect.
@@ -37,6 +46,16 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 		echo "pre-push: BLOCKED - attribution trailer found in commits bound for $remote" >&2
 		echo "$bad" >&2
 		echo "Rewrite those commit messages before pushing." >&2
+		exit 1
+	fi
+
+	# Nothing new for this ref (e.g. remote already has every commit).
+	[ -z "$log" ] && continue
+
+	if ! gitleaks git "$root" --config "$root/.gitleaks.toml" --no-banner --redact \
+		--log-opts="$*" >&2; then
+		echo "pre-push: BLOCKED - gitleaks found a secret in commits bound for $remote" >&2
+		echo "Remove it and rewrite those commits before pushing." >&2
 		exit 1
 	fi
 done

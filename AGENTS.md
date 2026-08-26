@@ -36,7 +36,9 @@ the layout and the toolchain; this file has the rules.
   provider with a dummy loopback `endpoint` gets the dialog's `Test`
   button without dialling anything.
 - Nothing in a smoke touches the login Keychain unless the ticket is
-  about keys — and then say so before launching.
+  about keys — and then say so before launching. An agent's smoke is
+  keyless (the `fake` provider, `lan.py`); a smoke against a cloud
+  account is a person's job, `docs/smoke/cloud.md`.
 - The TUI is driven the same way, through a pseudo-terminal:
   `tool/smoke/tui.py <dir> <steps.json>` sends keys, waits for screen
   text and saves screen snapshots (no tmux needed). Keys are not
@@ -69,6 +71,42 @@ the layout and the toolchain; this file has the rules.
   archive, never a log line, never an exception message, never the
   `security` command. Tests use `InMemorySecretStore` or a throwaway
   keychain file; nothing under `test/` touches the login keychain.
+- Agents never hold a credential (#56). An agent never receives or asks
+  for a real key; never reads `~/.claude`, `~/.claude.json`, `~/.codex`,
+  `~/.hermes` or `~/.local/share/opencode`, nor the
+  `Claude Code-credentials` or `Codex Auth` Keychain items, and never
+  runs `security find-generic-password`; never spawns `claude` or
+  `codex app-server` against a real home — provider tests go through
+  the fake process runner (`test/no_spawn_test.dart` lists the only
+  files that may start a process). Agents run keyless smokes only; a
+  person runs the cloud ones (`docs/smoke/cloud.md`). Enforced, not
+  just written: `.claude/settings.json` turns on the Bash sandbox with
+  those variables unset and those homes denied, and strips the same
+  names from every subprocess; `.gitleaks.toml` fails a push or a PR
+  that carries a key. Four command shapes run outside the sandbox:
+  `dart *` and `flutter *` — the toolchain does not work under
+  Seatbelt (a Dart `HttpClient` fails `CERTIFICATE_VERIFY_FAILED`, so
+  every implicit `pub` resolution fails, and `flutter test` cannot
+  bind its loopback socket) — `gh *` (Go TLS fails the same way,
+  `x509: OSStatus -26276`) and the fixed-purpose
+  `tool/smoke/drive.sh *` (Apple Events for the app smoke). That is
+  the honest residual: code an agent writes and runs through `dart`
+  is not file-isolated, which is why the vendor homes hold no
+  plaintext of ours (ADR 0013: keyring `CODEX_HOME`, Claude Code's
+  Keychain item) and why `no_spawn_test` and the scanner exist. The
+  exclusion is judged on the whole command line, so run the toolchain
+  as a bare line (`dart test`, after a separate `cd`) — `cd x && dart
+  test` is sandboxed as a whole and fails. Everything else — `gh`,
+  `git`, `uv`, `curl` — runs sandboxed and may write only under the
+  repository, `$TMPDIR` and the listed caches; nothing sandboxed can
+  read `~/.claude` — including this session's own saved tool output,
+  so keep test output small (`--reporter=failures-only`). The
+  `/sandbox` panel writes
+  that same local file and can switch the sandbox off for you; the
+  deny lists still hold. One consequence: the sandbox refuses to
+  rewrite `.claude/settings.json`, so a sandboxed `git rebase` or
+  `checkout` that would touch it fails part-way — edit that file with
+  the Edit tool and leave history rewrites to a terminal.
 - Outbound HTTP goes only through `OpenAiCompatibleProvider`'s transport
   in `sai_core` (ADR 0009): no redirects, no proxy, no certificate
   bypass, plaintext only to this machine or the LAN (ADR 0012), fixed

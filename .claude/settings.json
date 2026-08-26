@@ -1,0 +1,79 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "excludedCommands": [
+      "dart *",
+      "flutter *",
+      "gh *",
+      "tool/smoke/drive.sh *"
+    ],
+    "filesystem": {
+      "allowWrite": [
+        "~/.pub-cache",
+        "~/.cache",
+        "~/.dart",
+        "~/.dart-tool",
+        "~/.dartServer",
+        "~/.flutter",
+        "~/.flutter-devtools",
+        "~/.flutter_tool_state",
+        "~/Library/Caches"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "objects.githubusercontent.com",
+        "pub.dev",
+        "storage.googleapis.com",
+        "formulae.brew.sh",
+        "ghcr.io",
+        "localhost",
+        "127.0.0.1",
+        "192.168.1.5"
+      ]
+    },
+    "credentials": {
+      "envVars": [
+        { "name": "ANTHROPIC_API_KEY", "mode": "deny" },
+        { "name": "ANTHROPIC_AUTH_TOKEN", "mode": "deny" },
+        { "name": "CLAUDE_CODE_OAUTH_TOKEN", "mode": "deny" },
+        { "name": "OPENAI_API_KEY", "mode": "deny" },
+        { "name": "OPENAI_ADMIN_KEY", "mode": "deny" },
+        { "name": "CODEX_API_KEY", "mode": "deny" },
+        { "name": "CODEX_ACCESS_TOKEN", "mode": "deny" },
+        { "name": "OPENROUTER_API_KEY", "mode": "deny" },
+        { "name": "OPENCODE_AUTH_CONTENT", "mode": "deny" }
+      ],
+      "files": [
+        { "path": "~/.claude", "mode": "deny" },
+        { "path": "~/.claude.json", "mode": "deny" },
+        { "path": "~/.codex", "mode": "deny" },
+        { "path": "~/.hermes", "mode": "deny" },
+        { "path": "~/.local/share/opencode", "mode": "deny" },
+        { "path": "~/.config/openai", "mode": "deny" },
+        { "path": "~/.openai", "mode": "deny" }
+      ]
+    }
+  },
+  "permissions": {
+    "deny": [
+      "Read(~/.claude/**)",
+      "Read(~/.claude.json)",
+      "Read(~/.codex/**)",
+      "Read(~/.hermes/**)",
+      "Read(~/.local/share/opencode/**)",
+      "Read(~/.config/openai/**)",
+      "Read(~/.openai/**)",
+      "Bash(security find-generic-password:*)",
+      "Bash(security find-internet-password:*)",
+      "Bash(security dump-keychain:*)",
+      "Bash(claude:*)",
+      "Bash(codex:*)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "ANTHROPIC_API_KEY,ANTHROPIC_AUTH_TOKEN,CLAUDE_CODE_OAUTH_TOKEN,OPENAI_API_KEY,OPENAI_ADMIN_KEY,CODEX_API_KEY,CODEX_ACCESS_TOKEN,OPENROUTER_API_KEY,OPENCODE_AUTH_CONTENT"
+  }
+}
