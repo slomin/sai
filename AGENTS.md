@@ -118,6 +118,14 @@ the layout and the toolchain; this file has the rules.
 - A request is built by `assembleContext` and nowhere else (ADR 0011):
   profile, memory, lists and conversation in one deterministic, hashed
   shape. A client sends what it is given; it never assembles a prompt.
+- The Things 3 database is private data and this repository is public
+  (#18). Nothing read from it — a row, a title, a copy of the file, a
+  dry-run listing — goes into the tree, a test, a PR, an issue or a
+  screenshot; evidence from a real import is counts only. Tests build
+  their Things databases with `package:sai_core/things_testing.dart`,
+  and `.gitignore` refuses `*.sqlite*` and `*.thingsdatabase/`. The
+  importer reads a private copy under the system temp dir and never
+  opens the file in the Things container.
 - `spikes/` are frozen evidence behind a decision. They stay out of the
   workspace and nothing imports them.
 - The archive (`sai_core`'s event log) is append-only: no API updates or

@@ -171,6 +171,17 @@ to unless the reasoning switch is on — in the Providers dialog, View ›
 the default. On, the thinking streams too, is recorded on the response
 line, and shows dimmed above the answer (`thinking…` while it waits).
 
+## Importing from Things 3
+
+`sai_tui things import --dry-run` shows what the archive would gain from
+the Things 3 database on this Mac; without `--dry-run` it writes it, as
+`system` events carrying each item's Things uuid, so a second run adds
+only what changed. Things is never written to — the command reads a
+private copy — and the report is counts only (`--db <main.sqlite>` or
+`SAI_THINGS_DB` names another file). Repeating rules, reminders,
+completed projects and the Trash are reported, not imported; the mapping
+is in `docs/tasks/task-model-v0.md` § Imports.
+
 ## Verify
 
 Same commands CI runs, from the repository root:

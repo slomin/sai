@@ -195,6 +195,39 @@ and keys the projection's dedupe index — a re-run of the Things import
 valid **only alongside `external`**; `modified_at` can never be
 supplied. Imports write as actor `system`.
 
+#### Things 3 (#18)
+
+`sai_tui things import [--dry-run] [--db <main.sqlite>]` reads a private
+copy of the Things database (`packages/sai_core/lib/src/things/`,
+verified against Things 3.23.1 — 3.22.12 has the same schema) and plans
+against the projection: an entity whose `things3:<uuid>` the index knows
+gets only the events that change what differs; nothing matches, nothing
+is written. `external.version` carries the verified Things version.
+
+| Things | sai |
+| --- | --- |
+| area (all, hidden too) | `area.create` |
+| tag, parent tag | `tag.create` with `parent`; shortcuts are reported |
+| open project | `project.create` (title, notes, area, when, deadline, tags) |
+| completed or cancelled project, and everything in it | reported, not imported (no project completion in v0.1) |
+| heading in a live project | `heading.create`; a heading whose project is gone drops out, its tasks keep the project |
+| task, not trashed, not a repeating template | `task.create`; placement heading (with its project) > project > area |
+| Someday | `when: "someday"` |
+| start date | `when: <date>` |
+| Anytime with no date and no place | `when: null` — sai lists it in Inbox; reported |
+| deadline | `deadline` |
+| completed / cancelled with stop date | `task.complete` / `task.cancel` with `at` |
+| checklist items in order | `checklist` (`completed_at` from the item's stop date) |
+| trashed items | reported, not imported |
+| repeating template | reported; its materialised instances import as plain tasks with `external.instance` = the template uuid |
+| reminder time, This Evening, contact, area tags, Today order | reported only |
+
+An instant in the future or a day that does not decode is dropped and
+reported rather than failing the run; an entity deleted in sai since a
+previous import is left deleted and reported. The report is counts only
+— it carries no title — and the dry-run listing (which does name
+titles) prints to the terminal and nowhere else.
+
 ## Replay
 
 The reducer is one function, run by full replay and by apply-on-append
@@ -317,11 +350,13 @@ archive writes.
 
 ## Repeating tasks are deferred
 
-v0.1 models **no repetition rule**. The Things import (#18) materialises
-each repeating task's *next instance* as a plain task, carrying
-`external` with the **repeater's** id and the occurrence date in
-`instance` — so a later re-import, seeing the repeater advanced, updates
-the materialised task in place instead of duplicating it. When
+v0.1 models **no repetition rule**. Things materialises each repeating
+task's *next instance* as a row of its own, and the import (#18) brings
+that row over as a plain task keyed on the instance's uuid, carrying the
+**repeater's** uuid in `external.instance` — so a later re-import finds
+the same instance by its own id and updates it in place instead of
+duplicating it, and the link to the repeater survives for the day
+repetition rules arrive. When
 repetition earns its way in, rules arrive as new event types against the
 same task ids.
 
