@@ -411,4 +411,73 @@ void main() {
       expect((json['model'] as Map<String, Object?>)['id'], 'claude-fable-5');
     });
   });
+
+  group('container ordering and archive commands', () {
+    test('container reorders persist across restart', () async {
+      final a = await store.createArea(title: 'a');
+      final b = await store.createArea(title: 'b');
+      final p1 = await store.createProject(title: 'p1', area: a);
+      final p2 = await store.createProject(title: 'p2', area: a);
+      final h1 = await store.createHeading(project: p1, title: 'h1');
+      final h2 = await store.createHeading(project: p1, title: 'h2');
+      await store.reorderArea(b, after: null);
+      await store.reorderProject(p2, after: null);
+      await store.reorderHeading(h2, after: null);
+      await store.archiveProject(p2);
+
+      final reopened = await TaskStore.open(archive, source: 'sai/app');
+      expect(reopened.projection.toJson(), store.projection.toJson());
+      expect(reopened.projection.areaOrder, [b, a]);
+      expect(reopened.projection.projectOrder, [p2, p1]);
+      expect(reopened.projection.headingOrder, [h2, h1]);
+      expect(reopened.projection.archivedProjects().single.id, p2);
+      reopened.dispose();
+    });
+
+    test('a bad container anchor appends nothing and leaves the projection '
+        'untouched', () async {
+      final a = await store.createArea(title: 'a');
+      final b = await store.createArea(title: 'b');
+      final before = store.projection;
+      final lines = logLines().length;
+      await expectLater(
+        store.reorderArea(a, after: a),
+        throwsA(isA<TaskProjectionError>()),
+      );
+      await store.archiveArea(b);
+      await expectLater(
+        store.reorderArea(a, after: b),
+        throwsA(isA<TaskProjectionError>()),
+      );
+      expect(logLines(), hasLength(lines + 1));
+      expect(store.projection.areaOrder, before.areaOrder);
+    });
+
+    test('archiveProject appends exactly the minimal line and a create into '
+        'an archived area appends nothing', () async {
+      final area = await store.createArea(title: 'A');
+      final project = await store.createProject(title: 'P');
+      await store.archiveProject(project);
+      final line = jsonDecode(logLines().last) as Map<String, Object?>;
+      expect(line['type'], 'project.archive');
+      expect(line['payload'], {'project': project.toString()});
+      await store.archiveArea(area);
+      final lines = logLines().length;
+      await expectLater(
+        store.createProject(title: 'x', area: area),
+        throwsA(isA<TaskProjectionError>()),
+      );
+      expect(logLines(), hasLength(lines));
+    });
+
+    test('archiving a deleted project is allowed and leaves it in neither '
+        'list', () async {
+      final project = await store.createProject(title: 'P');
+      await store.deleteProject(project);
+      await store.archiveProject(project);
+      expect(store.projection.archivedProjects(), isEmpty);
+      expect(store.projection.liveProjects(), isEmpty);
+      expect(store.projection.projects[project]!.archivedAt, isNotNull);
+    });
+  });
 }

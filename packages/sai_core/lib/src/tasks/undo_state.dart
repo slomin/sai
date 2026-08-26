@@ -18,4 +18,15 @@ abstract interface class UndoState {
   /// The prior task in Today's independent sequence, for an inverse
   /// reorder. Null means the task was first.
   TaskId? todayPredecessor(TaskId task);
+
+  /// The prior live area in the sidebar's sequence, for an inverse
+  /// reorder. Null means the area was first.
+  AreaId? areaPredecessor(AreaId area);
+
+  /// The prior live project in [project]'s group — its live area, or the
+  /// standalone group. Null means it was first.
+  ProjectId? projectPredecessor(ProjectId project);
+
+  /// The prior live heading of [heading]'s project. Null means first.
+  HeadingId? headingPredecessor(HeadingId heading);
 }

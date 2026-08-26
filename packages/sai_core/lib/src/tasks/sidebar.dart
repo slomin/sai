@@ -98,12 +98,17 @@ final class SidebarModel {
     required this.trash,
     required this.areas,
     required this.projects,
+    this.archived = const [],
   });
 
   final List<SidebarEntry> lists;
   final SidebarEntry trash;
   final List<SidebarArea> areas;
   final List<SidebarEntry> projects;
+
+  /// Archived areas then archived projects (#74), each in its persisted
+  /// order — the rows an Archived group shows so a client can unarchive.
+  final List<SidebarEntry> archived;
 
   /// Every row top to bottom, areas immediately followed by their
   /// projects — the order a client that cannot nest (or a keyboard walking
@@ -118,31 +123,25 @@ final class SidebarModel {
 
 /// The sidebar as of [today]: lists in [TaskList.values] order, then the
 /// Trash, then the areas and their projects, then the standalone projects
-/// — a project whose area is deleted is listed standalone rather than
-/// hidden. Containers sort by title, case-insensitively, ties broken by
-/// id; deleted containers are left out. List counts follow the view
-/// unions of [TaskProjection.list], container counts are open, visible
-/// tasks. Manual ordering is #20's. Shared here so the clients cannot
-/// drift apart.
+/// — a project whose area is deleted or archived is listed standalone
+/// rather than hidden. Containers follow the projection's persisted order
+/// (#74); deleted and archived containers are left out of the main groups,
+/// the archived ones listed under [SidebarModel.archived]. List counts
+/// follow the view unions of [TaskProjection.list], container counts are
+/// open, visible tasks. Shared here so the clients cannot drift apart.
 SidebarModel sidebarModel(
   TaskProjection projection, {
   required CalendarDate today,
 }) {
-  final areas = [
-    for (final area in projection.areas.values)
-      if (area.deletedAt == null) area,
-  ]..sort((a, b) => _byTitle(a.title, a.id, b.title, b.id));
-  final live = {for (final area in areas) area.id};
-  final projects = [
-    for (final project in projection.projects.values)
-      if (project.deletedAt == null) project,
-  ]..sort((a, b) => _byTitle(a.title, a.id, b.title, b.id));
+  final areas = projection.liveAreas();
+  final projects = projection.liveProjects();
 
-  SidebarEntry projectEntry(Project project) => SidebarEntry(
-    project.title,
-    projection.inProject(project.id).length,
-    ProjectSection(project.id),
-  );
+  SidebarEntry projectEntry(Project project, {bool archived = false}) =>
+      SidebarEntry(
+        project.title,
+        projection.inProject(project.id, archived: archived).length,
+        ProjectSection(project.id),
+      );
 
   return SidebarModel(
     lists: [
@@ -168,13 +167,23 @@ SidebarModel sidebarModel(
           ),
           [
             for (final project in projects)
-              if (project.area == area.id) projectEntry(project),
+              if (projection.groupOf(project) == area.id) projectEntry(project),
           ],
         ),
     ],
     projects: [
       for (final project in projects)
-        if (!live.contains(project.area)) projectEntry(project),
+        if (projection.groupOf(project) == null) projectEntry(project),
+    ],
+    archived: [
+      for (final area in projection.archivedAreas())
+        SidebarEntry(
+          area.title,
+          projection.inArea(area.id, archived: true).length,
+          AreaSection(area.id),
+        ),
+      for (final project in projection.archivedProjects())
+        projectEntry(project, archived: true),
     ],
   );
 }
@@ -187,13 +196,17 @@ List<Task> sectionTasks(
 }) => switch (section) {
   ListSection(:final list) => projection.list(list, today: today),
   TrashSection() => projection.trash(),
-  AreaSection(:final area) => projection.inArea(area),
-  ProjectSection(:final project) => projection.inProject(project),
+  AreaSection(:final area) => projection.inArea(area, archived: true),
+  ProjectSection(:final project) => projection.inProject(
+    project,
+    archived: true,
+  ),
 };
 
 /// The heading a main pane shows for [section]. A container that is
 /// deleted, or that the projection does not know, degrades instead of
-/// throwing — a stale selection is a display problem, not a crash.
+/// throwing — a stale selection is a display problem, not a crash. An
+/// archived container keeps its name: it is still browsable.
 String sectionTitle(TaskProjection projection, SidebarSection section) =>
     switch (section) {
       ListSection(:final list) => listTitle(list),
@@ -209,8 +222,3 @@ String sectionTitle(TaskProjection projection, SidebarSection section) =>
     };
 
 const _unknown = '(deleted)';
-
-int _byTitle(String aTitle, Object aId, String bTitle, Object bId) {
-  final byTitle = aTitle.toLowerCase().compareTo(bTitle.toLowerCase());
-  return byTitle != 0 ? byTitle : aId.toString().compareTo(bId.toString());
-}

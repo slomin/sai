@@ -786,4 +786,284 @@ void main() {
       expect(p.underHeading(heading.id).map((t) => t.title), ['b']);
     });
   });
+
+  group('persisted container ordering', () {
+    test('areas, projects and headings replay in creation order', () {
+      final b = emit(AreaCreated(title: 'b'));
+      final a = emit(AreaCreated(title: 'a'));
+      final p2 = emit(ProjectCreated(title: 'p2', area: a.id));
+      final p1 = emit(ProjectCreated(title: 'p1', area: a.id));
+      final h2 = emit(HeadingCreated(project: p1.id, title: 'h2'));
+      final h1 = emit(HeadingCreated(project: p1.id, title: 'h1'));
+      final p = applyAll([b, a, p2, p1, h2, h1]);
+      expect(p.liveAreas().map((x) => x.id), [b.id, a.id]);
+      expect(p.liveProjects().map((x) => x.id), [p2.id, p1.id]);
+      expect(p.headingsOf(p1.id).map((x) => x.id), [h2.id, h1.id]);
+      expect(
+        TaskProjection.replay([b, a, p2, p1, h2, h1]).toJson(),
+        p.toJson(),
+      );
+    });
+
+    test('a reorder moves a container to first and after a sibling', () {
+      final a = emit(AreaCreated(title: 'a'));
+      final b = emit(AreaCreated(title: 'b'));
+      final c = emit(AreaCreated(title: 'c'));
+      var p = applyAll([a, b, c, emit(AreaReordered(c.id, after: null))]);
+      expect(p.areaOrder, [c.id, a.id, b.id]);
+      p = p.apply(emit(AreaReordered(c.id, after: a.id)));
+      expect(p.areaOrder, [a.id, c.id, b.id]);
+      expect(p.areaPredecessor(c.id), a.id);
+      expect(p.areaPredecessor(a.id), isNull);
+    });
+
+    test('one project sequence serves every area group', () {
+      final home = emit(AreaCreated(title: 'home'));
+      final work = emit(AreaCreated(title: 'work'));
+      final h1 = emit(ProjectCreated(title: 'h1', area: home.id));
+      final w1 = emit(ProjectCreated(title: 'w1', area: work.id));
+      final h2 = emit(ProjectCreated(title: 'h2', area: home.id));
+      final loose = emit(ProjectCreated(title: 'loose'));
+      var p = applyAll([home, work, h1, w1, h2, loose]);
+      expect(p.projectPredecessor(h2.id), h1.id);
+      expect(p.projectPredecessor(w1.id), isNull);
+      p = p.apply(emit(ProjectReordered(h2.id, after: null)));
+      expect(p.projectOrder, [h2.id, h1.id, w1.id, loose.id]);
+      expect(
+        () => p.apply(emit(ProjectReordered(h1.id, after: w1.id))),
+        throwsA(
+          isA<TaskProjectionError>().having(
+            (e) => e.reason,
+            'reason',
+            contains('is in another group'),
+          ),
+        ),
+      );
+    });
+
+    test('a heading reorders inside its project only', () {
+      final p1 = emit(ProjectCreated(title: 'p1'));
+      final p2 = emit(ProjectCreated(title: 'p2'));
+      final a = emit(HeadingCreated(project: p1.id, title: 'a'));
+      final b = emit(HeadingCreated(project: p1.id, title: 'b'));
+      final other = emit(HeadingCreated(project: p2.id, title: 'other'));
+      var p = applyAll([p1, p2, a, b, other]);
+      p = p.apply(emit(HeadingReordered(b.id, after: null)));
+      expect(p.headingsOf(p1.id).map((h) => h.id), [b.id, a.id]);
+      expect(p.headingPredecessor(a.id), b.id);
+      expect(
+        () => p.apply(emit(HeadingReordered(a.id, after: other.id))),
+        throwsA(
+          isA<TaskProjectionError>().having(
+            (e) => e.reason,
+            'reason',
+            'the heading anchor ${other.id} is in another group',
+          ),
+        ),
+      );
+    });
+
+    test('unknown, self, wrong-kind and not-live container anchors are '
+        'refused', () {
+      final a = emit(AreaCreated(title: 'a'));
+      final b = emit(AreaCreated(title: 'b'));
+      final project = emit(ProjectCreated(title: 'p'));
+      final p = applyAll([a, b, project, emit(AreaArchived(b.id))]);
+      String reasonOf(TaskEvent event) {
+        try {
+          p.apply(emit(event));
+        } on TaskProjectionError catch (e) {
+          return e.reason;
+        }
+        fail('applied');
+      }
+
+      final unknown = BlobRef.sha256OfBytes([9]);
+      expect(
+        reasonOf(AreaReordered(a.id, after: unknown)),
+        'unknown area: $unknown',
+      );
+      expect(
+        reasonOf(AreaReordered(a.id, after: a.id)),
+        'an area cannot be ordered after itself',
+      );
+      expect(
+        reasonOf(AreaReordered(a.id, after: project.id)),
+        '${project.id} is a project, not a area',
+      );
+      expect(
+        reasonOf(AreaReordered(a.id, after: b.id)),
+        'the area anchor ${b.id} is not live',
+      );
+      expect(
+        reasonOf(AreaReordered(b.id, after: null)),
+        'the area ${b.id} is not live',
+      );
+      expect(
+        reasonOf(ProjectReordered(project.id, after: project.id)),
+        'a project cannot be ordered after itself',
+      );
+    });
+
+    test("changing a project's area appends it to the end of the new group; "
+        'rewriting the same area leaves the order alone', () {
+      final home = emit(AreaCreated(title: 'home'));
+      final work = emit(AreaCreated(title: 'work'));
+      final h1 = emit(ProjectCreated(title: 'h1', area: home.id));
+      final w1 = emit(ProjectCreated(title: 'w1', area: work.id));
+      final h2 = emit(ProjectCreated(title: 'h2', area: home.id));
+      var p = applyAll([home, work, h1, w1, h2]);
+      p = p.apply(emit(ProjectEdited(h1.id, area: Patch(work.id))));
+      expect(p.projectOrder, [w1.id, h1.id, h2.id]);
+      p = p.apply(emit(ProjectReordered(h1.id, after: null)));
+      expect(p.projectOrder, [h1.id, w1.id, h2.id]);
+      p = p.apply(
+        emit(
+          ProjectEdited(h1.id, area: Patch(work.id), title: const Patch('x')),
+        ),
+      );
+      expect(p.projectOrder, [h1.id, w1.id, h2.id]);
+    });
+
+    test('a project whose area is archived groups as standalone', () {
+      final home = emit(AreaCreated(title: 'home'));
+      final h1 = emit(ProjectCreated(title: 'h1', area: home.id));
+      final loose = emit(ProjectCreated(title: 'loose'));
+      final p = applyAll([home, h1, loose, emit(AreaArchived(home.id))]);
+      expect(p.groupOf(p.projects[h1.id]!), isNull);
+      expect(p.projectPredecessor(loose.id), h1.id);
+      expect(
+        p.apply(emit(ProjectReordered(loose.id, after: null))).projectOrder,
+        [loose.id, h1.id],
+      );
+    });
+  });
+
+  group('archiving', () {
+    const today = CalendarDate(2026, 8, 24);
+
+    test('archiving hides a container\'s tasks; unarchiving reveals them at '
+        'their positions', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final a = emit(TaskCreated(title: 'a', project: project.id));
+      final b = emit(TaskCreated(title: 'b'));
+      final c = emit(TaskCreated(title: 'c', project: project.id));
+      var p = applyAll([project, a, b, c]);
+      p = p.apply(emit(ProjectArchived(project.id)));
+      expect(p.projects[project.id]!.archivedAt, isNotNull);
+      expect(p.list(TaskList.anytime, today: today), isEmpty);
+      expect(p.inProject(project.id), isEmpty);
+      expect(p.inProject(project.id, archived: true).map((t) => t.title), [
+        'a',
+        'c',
+      ]);
+      expect(p.liveProjects(), isEmpty);
+      expect(p.archivedProjects().map((x) => x.id), [project.id]);
+      expect(p.projectOrder, [project.id]);
+      p = p.apply(emit(ProjectUnarchived(project.id)));
+      expect(p.inProject(project.id).map((t) => t.title), ['a', 'c']);
+      expect(p.archivedProjects(), isEmpty);
+    });
+
+    test('archived containers refuse new members', () {
+      final area = emit(AreaCreated(title: 'A'));
+      final project = emit(ProjectCreated(title: 'P'));
+      final task = emit(TaskCreated(title: 't'));
+      final p = applyAll([
+        area,
+        project,
+        task,
+        emit(AreaArchived(area.id)),
+        emit(ProjectArchived(project.id)),
+      ]);
+      final attempts = <TaskEvent, String>{
+        TaskCreated(title: 'x', project: project.id):
+            'project ${project.id} is archived',
+        TaskMoved(task.id, area: area.id): 'area ${area.id} is archived',
+        ProjectCreated(title: 'x', area: area.id):
+            'area ${area.id} is archived',
+        HeadingCreated(project: project.id, title: 'h'):
+            'project ${project.id} is archived',
+      };
+      for (final MapEntry(key: event, value: reason) in attempts.entries) {
+        expect(
+          () => p.apply(emit(event)),
+          throwsA(
+            isA<TaskProjectionError>().having(
+              (e) => e.reason,
+              'reason',
+              reason,
+            ),
+          ),
+          reason: event.type,
+        );
+      }
+    });
+
+    test('archiving twice overwrites the stamp; unarchiving a live container '
+        'is a no-op; archive and delete are independent', () {
+      final area = emit(AreaCreated(title: 'A'));
+      var p = applyAll([area, emit(AreaUnarchived(area.id))]);
+      expect(p.areas[area.id]!.archivedAt, isNull);
+      p = p.apply(emit(AreaArchived(area.id)));
+      final first = p.areas[area.id]!.archivedAt;
+      p = p.apply(emit(AreaArchived(area.id)));
+      expect(p.areas[area.id]!.archivedAt!.isAfter(first!), isTrue);
+      p = p.apply(emit(AreaDeleted(area.id)));
+      expect(p.archivedAreas(), isEmpty);
+      expect(p.areas[area.id]!.archivedAt, isNotNull);
+      p = p.apply(emit(AreaRestored(area.id)));
+      expect(p.archivedAreas().map((a) => a.id), [area.id]);
+      expect(p.liveAreas(), isEmpty);
+    });
+
+    test('a task in a live project under an archived area stays visible, '
+        'and an anchor inside an archived project is not live', () {
+      final area = emit(AreaCreated(title: 'A'));
+      final project = emit(ProjectCreated(title: 'P', area: area.id));
+      final inProject = emit(TaskCreated(title: 'p', project: project.id));
+      final direct = emit(TaskCreated(title: 'd', area: area.id));
+      final loose = emit(TaskCreated(title: 'l'));
+      var p = applyAll([area, project, inProject, direct, loose]);
+      p = p.apply(emit(AreaArchived(area.id)));
+      expect(p.list(TaskList.anytime, today: today).map((t) => t.title), ['p']);
+      expect(p.inArea(area.id), isEmpty);
+      expect(p.inArea(area.id, archived: true).map((t) => t.title), ['d']);
+      p = p.apply(emit(ProjectArchived(project.id)));
+      expect(
+        () => p.apply(
+          emit(
+            TaskMoved(
+              loose.id,
+              project: project.id,
+              after: Patch(inProject.id),
+            ),
+          ),
+        ),
+        throwsA(isA<TaskProjectionError>()),
+      );
+    });
+
+    test('toJson round-trips the sequences and archived_at, and refuses a '
+        'sequence missing an id', () {
+      final area = emit(AreaCreated(title: 'A'));
+      final project = emit(ProjectCreated(title: 'P', area: area.id));
+      final heading = emit(HeadingCreated(project: project.id, title: 'H'));
+      final p = applyAll([area, project, heading, emit(AreaArchived(area.id))]);
+      final json = jsonDecode(jsonEncode(p.toJson()));
+      expect(TaskProjection.fromJson(json).toJson(), p.toJson());
+      final bad = jsonDecode(jsonEncode(p.toJson())) as Map<String, Object?>;
+      bad['heading_order'] = <Object?>[];
+      expect(
+        () => TaskProjection.fromJson(bad),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            'projection.heading_order must contain every heading id exactly once',
+          ),
+        ),
+      );
+    });
+  });
 }

@@ -386,6 +386,7 @@ final class Project {
     required this.createdAt,
     required this.modifiedAt,
     this.deletedAt,
+    this.archivedAt,
     this.external,
   }) : tags = List.unmodifiable(tags);
 
@@ -399,6 +400,10 @@ final class Project {
   final DateTime createdAt;
   final DateTime modifiedAt;
   final DateTime? deletedAt;
+
+  /// Set while archived (#74): out of the sidebar, tasks hidden, placement
+  /// and position kept. Independent of [deletedAt].
+  final DateTime? archivedAt;
   final ExternalRef? external;
 
   Project copyWith({
@@ -410,6 +415,7 @@ final class Project {
     Patch<List<TagId>>? tags,
     Patch<DateTime>? modifiedAt,
     Patch<DateTime?>? deletedAt,
+    Patch<DateTime?>? archivedAt,
   }) => Project(
     id: id,
     title: title == null ? this.title : title.value,
@@ -421,6 +427,7 @@ final class Project {
     createdAt: createdAt,
     modifiedAt: modifiedAt == null ? this.modifiedAt : modifiedAt.value,
     deletedAt: deletedAt == null ? this.deletedAt : deletedAt.value,
+    archivedAt: archivedAt == null ? this.archivedAt : archivedAt.value,
     external: external,
   );
 
@@ -435,6 +442,7 @@ final class Project {
     'created_at': formatTs(createdAt),
     'modified_at': formatTs(modifiedAt),
     'deleted_at': deletedAt == null ? null : formatTs(deletedAt!),
+    'archived_at': archivedAt == null ? null : formatTs(archivedAt!),
     'external': external?.toJson(),
   };
 
@@ -451,6 +459,7 @@ final class Project {
       'created_at',
       'modified_at',
       'deleted_at',
+      'archived_at',
       'external',
     }, where: 'project');
     return Project(
@@ -465,6 +474,7 @@ final class Project {
       createdAt: requireInstant(map, 'created_at', where: 'project'),
       modifiedAt: requireInstant(map, 'modified_at', where: 'project'),
       deletedAt: optionalInstant(map, 'deleted_at', where: 'project'),
+      archivedAt: optionalInstant(map, 'archived_at', where: 'project'),
       external: map['external'] == null
           ? null
           : ExternalRef.fromJson(map['external']),
@@ -484,6 +494,7 @@ final class Project {
       other.createdAt == createdAt &&
       other.modifiedAt == modifiedAt &&
       other.deletedAt == deletedAt &&
+      other.archivedAt == archivedAt &&
       other.external == external;
 
   @override
@@ -498,6 +509,7 @@ final class Project {
     createdAt,
     modifiedAt,
     deletedAt,
+    archivedAt,
     external,
   );
 }
@@ -585,6 +597,7 @@ final class Area {
     required this.createdAt,
     required this.modifiedAt,
     this.deletedAt,
+    this.archivedAt,
     this.external,
   });
 
@@ -593,18 +606,24 @@ final class Area {
   final DateTime createdAt;
   final DateTime modifiedAt;
   final DateTime? deletedAt;
+
+  /// Set while archived (#74): out of the sidebar, tasks hidden, placement
+  /// and position kept. Independent of [deletedAt].
+  final DateTime? archivedAt;
   final ExternalRef? external;
 
   Area copyWith({
     Patch<String>? title,
     Patch<DateTime>? modifiedAt,
     Patch<DateTime?>? deletedAt,
+    Patch<DateTime?>? archivedAt,
   }) => Area(
     id: id,
     title: title == null ? this.title : title.value,
     createdAt: createdAt,
     modifiedAt: modifiedAt == null ? this.modifiedAt : modifiedAt.value,
     deletedAt: deletedAt == null ? this.deletedAt : deletedAt.value,
+    archivedAt: archivedAt == null ? this.archivedAt : archivedAt.value,
     external: external,
   );
 
@@ -614,6 +633,7 @@ final class Area {
     'created_at': formatTs(createdAt),
     'modified_at': formatTs(modifiedAt),
     'deleted_at': deletedAt == null ? null : formatTs(deletedAt!),
+    'archived_at': archivedAt == null ? null : formatTs(archivedAt!),
     'external': external?.toJson(),
   };
 
@@ -625,6 +645,7 @@ final class Area {
       'created_at',
       'modified_at',
       'deleted_at',
+      'archived_at',
       'external',
     }, where: 'area');
     return Area(
@@ -633,6 +654,7 @@ final class Area {
       createdAt: requireInstant(map, 'created_at', where: 'area'),
       modifiedAt: requireInstant(map, 'modified_at', where: 'area'),
       deletedAt: optionalInstant(map, 'deleted_at', where: 'area'),
+      archivedAt: optionalInstant(map, 'archived_at', where: 'area'),
       external: map['external'] == null
           ? null
           : ExternalRef.fromJson(map['external']),
@@ -647,11 +669,19 @@ final class Area {
       other.createdAt == createdAt &&
       other.modifiedAt == modifiedAt &&
       other.deletedAt == deletedAt &&
+      other.archivedAt == archivedAt &&
       other.external == external;
 
   @override
-  int get hashCode =>
-      Object.hash(id, title, createdAt, modifiedAt, deletedAt, external);
+  int get hashCode => Object.hash(
+    id,
+    title,
+    createdAt,
+    modifiedAt,
+    deletedAt,
+    archivedAt,
+    external,
+  );
 }
 
 /// A tag, optionally nested under a parent tag.

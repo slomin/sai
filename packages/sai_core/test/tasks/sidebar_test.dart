@@ -64,33 +64,39 @@ void main() {
       expect(byTitle['Inbox'], 0);
     });
 
-    test('areas sort by title case-insensitively, ties broken by id', () async {
+    test('areas follow the persisted order; creation appends', () async {
       await store.createArea(title: 'work');
       await store.createArea(title: 'Family');
-      final homeA = await store.createArea(title: 'Home');
-      final homeB = await store.createArea(title: 'home');
-      final m = model();
-      expect(m.areas.map((a) => a.entry.title).toList().sublist(0, 1), [
+      final home = await store.createArea(title: 'Home');
+      expect(model().areas.map((a) => a.entry.title), [
+        'work',
+        'Family',
+        'Home',
+      ]);
+      await store.reorderArea(home, after: null);
+      expect(model().areas.map((a) => a.entry.title), [
+        'Home',
+        'work',
         'Family',
       ]);
-      expect(m.areas.last.entry.title, 'work');
-      final homes = m.areas.sublist(1, 3).map((a) => a.entry.section).toList();
-      final expected = [homeA, homeB]
-        ..sort((a, b) => a.toString().compareTo(b.toString()));
-      expect(homes, expected.map(AreaSection.new));
     });
 
-    test('projects nest under their area in the same order', () async {
+    test('projects nest under their area in the persisted order', () async {
       final area = await store.createArea(title: 'Home');
-      await store.createProject(title: 'renovate', area: area);
+      final renovate = await store.createProject(title: 'renovate', area: area);
       await store.createProject(title: 'Garden', area: area);
       final m = model();
       expect(m.areas.single.entry.title, 'Home');
       expect(m.areas.single.projects.map((e) => e.title), [
-        'Garden',
         'renovate',
+        'Garden',
       ]);
       expect(m.projects, isEmpty);
+      await store.reorderProject(renovate, after: null);
+      expect(model().areas.single.projects.map((e) => e.title), [
+        'renovate',
+        'Garden',
+      ]);
     });
 
     test('standalone projects come after the areas in rows', () async {
@@ -117,6 +123,38 @@ void main() {
       expect(m.projects, isEmpty);
       await store.deleteArea(area);
       expect(model().areas, isEmpty);
+    });
+
+    test('archived areas and projects move to the archived rows', () async {
+      final area = await store.createArea(title: 'Home');
+      final project = await store.createProject(title: 'Garden', area: area);
+      await store.createTask(title: 'mow', project: project);
+      await store.archiveProject(project);
+      var m = model();
+      expect(m.areas.single.projects, isEmpty);
+      expect(m.archived.map((e) => e.label), ['Garden (1)']);
+      await store.archiveArea(area);
+      m = model();
+      expect(m.areas, isEmpty);
+      expect(m.archived.map((e) => e.title), ['Home', 'Garden']);
+      expect(sectionTitle(store.projection, AreaSection(area)), 'Home');
+      expect(
+        sectionTasks(
+          store.projection,
+          ProjectSection(project),
+          today: today,
+        ).map((t) => t.title),
+        ['mow'],
+      );
+    });
+
+    test('a project whose area is archived shows as standalone', () async {
+      final area = await store.createArea(title: 'Home');
+      await store.createProject(title: 'Garden', area: area);
+      await store.archiveArea(area);
+      final m = model();
+      expect(m.areas, isEmpty);
+      expect(m.projects.map((e) => e.title), ['Garden']);
     });
 
     test('a project whose area was deleted shows as standalone', () async {

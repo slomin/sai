@@ -472,6 +472,8 @@ abstract final class Unsupported {
   static const headingWithoutProject =
       'headings without a live project (their tasks keep the project)';
   static const deletedInSai = 'entities deleted in sai since a previous import';
+  static const archivedInSai =
+      'areas and projects archived in sai since a previous import (their contents import unfiled)';
   static const badDates = 'unreadable dates (imported without the date)';
   static const futureInstants =
       'timestamps in the future (imported with the run time)';
@@ -626,6 +628,10 @@ final class _Planner {
           _count(Unsupported.deletedInSai);
           continue;
         }
+        if (existing.archivedAt != null) {
+          _count(Unsupported.archivedInSai);
+          continue;
+        }
         if (existing.title != title) {
           ops.add(EditArea(uuid: area.uuid, id: id, title: title));
           areas = areas._add(updated: 1);
@@ -776,6 +782,13 @@ final class _Planner {
         final existing = projection.projects[id];
         if (existing == null || existing.deletedAt != null) {
           _count(Unsupported.deletedInSai);
+          continue;
+        }
+        if (existing.archivedAt != null ||
+            projection.areas[existing.area]?.archivedAt != null) {
+          // Archived in sai, or filed under an area that is: leave it be
+          // rather than pull it out of the archive.
+          _count(Unsupported.archivedInSai);
           continue;
         }
         final areaId = area == null ? null : _idOf(area);
@@ -955,6 +968,12 @@ final class _Planner {
         _count(Unsupported.deletedInSai);
         continue;
       }
+      if (_archivedInSai(existing)) {
+        // Its container was archived in sai: leave the task where it was
+        // put away rather than pull it back out.
+        _count(Unsupported.archivedInSai);
+        continue;
+      }
       var changed = false;
       final edit = EditTask(
         uuid: item.uuid,
@@ -1029,6 +1048,15 @@ final class _Planner {
       _count(Unsupported.danglingParents);
     }
     return const ImportPlacement();
+  }
+
+  /// Whether [task] sits in a container archived in sai — its project,
+  /// that project's area, or its own area.
+  bool _archivedInSai(Task task) {
+    final project = projection.projects[task.project];
+    if (project?.archivedAt != null) return true;
+    final area = projection.areas[project?.area ?? task.area];
+    return area?.archivedAt != null;
   }
 
   bool _samePlacement(Task existing, ImportPlacement wanted) {

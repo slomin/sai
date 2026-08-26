@@ -421,6 +421,25 @@ final class TaskStore {
     Attribution by = const Attribution.user(),
   }) => _commit(AreaEdited(area, title: title), by);
 
+  /// Moves [area] after [after] (first when null) in the sidebar's order.
+  Future<void> reorderArea(
+    AreaId area, {
+    required AreaId? after,
+    Attribution by = const Attribution.user(),
+  }) => _commit(AreaReordered(area, after: after), by);
+
+  /// Archives [area] (#74): out of the sidebar, its tasks hidden, placement
+  /// and position kept for [unarchiveArea].
+  Future<void> archiveArea(
+    AreaId area, {
+    Attribution by = const Attribution.user(),
+  }) => _commit(AreaArchived(area), by);
+
+  Future<void> unarchiveArea(
+    AreaId area, {
+    Attribution by = const Attribution.user(),
+  }) => _commit(AreaUnarchived(area), by);
+
   Future<void> deleteArea(
     AreaId area, {
     Attribution by = const Attribution.user(),
@@ -479,6 +498,24 @@ final class TaskStore {
     by,
   );
 
+  /// Moves [project] after [after] (first when null) within its group —
+  /// its live area, or the standalone projects.
+  Future<void> reorderProject(
+    ProjectId project, {
+    required ProjectId? after,
+    Attribution by = const Attribution.user(),
+  }) => _commit(ProjectReordered(project, after: after), by);
+
+  Future<void> archiveProject(
+    ProjectId project, {
+    Attribution by = const Attribution.user(),
+  }) => _commit(ProjectArchived(project), by);
+
+  Future<void> unarchiveProject(
+    ProjectId project, {
+    Attribution by = const Attribution.user(),
+  }) => _commit(ProjectUnarchived(project), by);
+
   Future<void> deleteProject(
     ProjectId project, {
     Attribution by = const Attribution.user(),
@@ -512,6 +549,13 @@ final class TaskStore {
     Patch<String>? title,
     Attribution by = const Attribution.user(),
   }) => _commit(HeadingEdited(heading, title: title), by);
+
+  /// Moves [heading] after [after] (first when null) within its project.
+  Future<void> reorderHeading(
+    HeadingId heading, {
+    required HeadingId? after,
+    Attribution by = const Attribution.user(),
+  }) => _commit(HeadingReordered(heading, after: after), by);
 
   Future<void> deleteHeading(
     HeadingId heading, {
