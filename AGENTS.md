@@ -83,11 +83,12 @@ the layout and the toolchain; this file has the rules.
   just written: `.claude/settings.json` turns on the Bash sandbox with
   those variables unset and those homes denied, and strips the same
   names from every subprocess; `.gitleaks.toml` fails a push or a PR
-  that carries a key. Three command shapes run outside the sandbox:
+  that carries a key. Four command shapes run outside the sandbox:
   `dart *` and `flutter *` — the toolchain does not work under
   Seatbelt (a Dart `HttpClient` fails `CERTIFICATE_VERIFY_FAILED`, so
   every implicit `pub` resolution fails, and `flutter test` cannot
-  bind its loopback socket) — and the fixed-purpose
+  bind its loopback socket) — `gh *` (Go TLS fails the same way,
+  `x509: OSStatus -26276`) and the fixed-purpose
   `tool/smoke/drive.sh *` (Apple Events for the app smoke). That is
   the honest residual: code an agent writes and runs through `dart`
   is not file-isolated, which is why the vendor homes hold no

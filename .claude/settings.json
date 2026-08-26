@@ -4,6 +4,7 @@
     "excludedCommands": [
       "dart *",
       "flutter *",
+      "gh *",
       "tool/smoke/drive.sh *"
     ],
     "filesystem": {
