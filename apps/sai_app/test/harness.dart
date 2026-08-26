@@ -4,8 +4,12 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sai_app/main_pane.dart';
+import 'package:sai_app/platform/reduce_motion.dart';
 import 'package:sai_app/sai_app.dart';
+import 'package:sai_app/sidebar.dart';
+import 'package:sai_app/widgets/check_mark.dart';
+import 'package:sai_app/workspace/task_list_pane.dart';
+import 'package:sai_app/workspace/task_row.dart';
 import 'package:sai_core/sai_core.dart';
 
 /// Stands in for the platform's menu: records what the app would have
@@ -63,6 +67,7 @@ Future<ProviderContainer> pumpApp(
   List<Override> overrides = const [],
   List<LlmProvider Function()> builtins = const [FakeLlmProvider.new],
   bool settled = true,
+  bool reduceMotion = true,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
   // real data directory, whatever the developer's environment says.
@@ -86,12 +91,21 @@ Future<ProviderContainer> pumpApp(
       todayProvider.overrideWithBuild(
         (ref, notifier) => CalendarDate.fromLocal(ref.watch(clockProvider)()),
       ),
+      // Reduced by default, so lists settle in one frame and a test never
+      // waits out a confirmation hold; the motion tests turn it back on.
+      reduceMotionProvider.overrideWithBuild((ref, notifier) => reduceMotion),
       ...overrides,
     ],
   );
   if (settled) {
     await tester.runAsync(() => container.read(tasksProvider.future));
   }
+  // A window the size a person would use, not the 800×600 default: the
+  // band takes its share of the column and the list must still show rows.
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = const Size(1200, 800);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.view.resetPhysicalSize);
   final binding = WidgetsBinding.instance;
   final platformMenus = binding.platformMenuDelegate;
   addTearDown(() => binding.platformMenuDelegate = platformMenus);
@@ -168,4 +182,76 @@ List<String> archiveLines(Directory root) {
     );
   }
   return lines;
+}
+
+/// The sidebar row of [section].
+Finder sidebarRow(SidebarSection section) => find.byKey(sidebarRowKey(section));
+
+/// The count the sidebar shows for [section].
+int sidebarCount(WidgetTester tester, SidebarSection section) {
+  final texts = find.descendant(
+    of: sidebarRow(section),
+    matching: find.byType(Text),
+  );
+  return int.parse(tester.widget<Text>(texts.last).data!);
+}
+
+/// The title of the list the pane is showing.
+String paneTitle(WidgetTester tester) =>
+    tester.widget<Text>(find.byKey(paneTitleKey)).data!;
+
+/// Runs [act] (a tap, a drag) under real async and waits until the store
+/// has committed [count] more events, then pumps a frame.
+Future<void> settleEvents(
+  WidgetTester tester,
+  ProviderContainer container,
+  Future<void> Function() act, {
+  int count = 1,
+}) async {
+  final store = container.read(tasksProvider.notifier).store;
+  final expected = store.projection.eventCount + count;
+  await tester.runAsync(() async {
+    await act();
+    while (store.projection.eventCount < expected) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+  });
+  await tester.pump();
+}
+
+/// The row showing [task].
+Finder row(TaskId task) => find.byKey(taskRowKey(task));
+
+/// The check at the head of [task]'s row.
+Finder check(TaskId task) =>
+    find.descendant(of: row(task), matching: find.byType(CheckMark));
+
+/// The titles on screen, top to bottom, of the rows in the list.
+List<String> rowTitles(WidgetTester tester) {
+  final rows = find.byType(TaskRow).evaluate().toList()
+    ..sort(
+      (a, b) => (a.renderObject as RenderBox)
+          .localToGlobal(Offset.zero)
+          .dy
+          .compareTo(
+            (b.renderObject as RenderBox).localToGlobal(Offset.zero).dy,
+          ),
+    );
+  return [for (final e in rows) (e.widget as TaskRow).task.title];
+}
+
+/// Pumps frames of [step] until [ready], or fails after [limit] of fake
+/// time — for motion whose exact frame count is not the point.
+Future<void> pumpUntil(
+  WidgetTester tester,
+  bool Function() ready, {
+  Duration step = const Duration(milliseconds: 50),
+  Duration limit = const Duration(seconds: 3),
+}) async {
+  var elapsed = Duration.zero;
+  while (!ready()) {
+    if (elapsed > limit) fail('not ready after $limit');
+    await tester.pump(step);
+    elapsed += step;
+  }
 }

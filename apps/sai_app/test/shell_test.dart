@@ -13,36 +13,23 @@ void main() {
   ) async {
     await pumpApp(
       tester,
-      overrides: [
-        appInfoProvider.overrideWithValue(
-          const AppInfo(name: 'override', version: '0'),
-        ),
-      ],
+      overrides: [llmStatusProvider.overrideWithValue('override status')],
     );
-    expect(find.text('override 0 — nothing here yet'), findsOneWidget);
+    expect(find.text('override status'), findsOneWidget);
   });
 
-  testWidgets('the appearance follows the system', (tester) async {
-    await pumpApp(tester);
-    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
-    expect(app.themeMode, ThemeMode.system);
-    expect(app.theme, isNotNull);
-    expect(app.darkTheme, isNotNull);
-    expect(
-      Theme.of(tester.element(find.byType(Scaffold))).brightness,
-      Brightness.light,
-    );
-  });
-
-  testWidgets('a dark system appearance renders the shell dark', (
+  testWidgets('the appearance is light — a dark variant is a later ticket', (
     tester,
   ) async {
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
     await pumpApp(tester);
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.themeMode, ThemeMode.light);
+    expect(app.darkTheme, isNull);
     expect(
       Theme.of(tester.element(find.byType(Scaffold))).brightness,
-      Brightness.dark,
+      Brightness.light,
     );
   });
 

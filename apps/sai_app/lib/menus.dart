@@ -4,24 +4,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'commands.dart';
-import 'shell.dart';
 
 /// The native menu bar, built in Dart (ADR 0005). The standard items are
 /// the platform's own; everything else routes to [commands]. Built to
 /// grow: new items slot into these menus rather than new ones.
 ///
 /// The Go menu carries no accelerators yet — list switching by key is
-/// deferred until the lists are real (#38); the items keep every list
+/// deferred to #76; the items keep every list
 /// reachable from the keyboard through the menu bar.
 ///
-/// [chatShown] is whether the chat pane is on screen right now; [chatFits]
-/// whether the window could show it at all — narrower than that, the View
-/// item is disabled rather than promising a pane that cannot appear.
+/// [chatShown] is whether the assistant's band is open right now.
 List<PlatformMenuItem> saiMenus({
   required AppCommands commands,
   required bool canUndo,
   required bool chatShown,
-  required bool chatFits,
   required bool reasoningOn,
 }) => [
   PlatformMenu(
@@ -92,9 +88,9 @@ List<PlatformMenuItem> saiMenus({
     label: 'View',
     menus: [
       PlatformMenuItem(
-        label: chatShown ? 'Hide Chat' : 'Show Chat',
+        label: chatShown ? 'Hide Assistant' : 'Show Assistant',
         shortcut: const SingleActivator(LogicalKeyboardKey.keyJ, meta: true),
-        onSelected: chatFits ? commands.toggleChat : null,
+        onSelected: commands.toggleChat,
       ),
       // Whether the model thinks before it answers (and shows it); the
       // same switch as the Providers dialog's, until #40 gives it a
@@ -182,24 +178,22 @@ class SaiChrome extends ConsumerStatefulWidget {
 }
 
 class _SaiChromeState extends ConsumerState<SaiChrome> {
-  (bool, bool, bool, bool)? _menuState;
+  (bool, bool, bool)? _menuState;
   List<PlatformMenuItem> _menus = const [];
 
   @override
   Widget build(BuildContext context) {
     final commands = AppCommands.of(context);
     final canUndo = ref.watch(canUndoProvider);
-    final fits = chatFits(context);
-    final shown = ref.watch(chatVisibleProvider) && fits;
+    final shown = ref.watch(chatVisibleProvider);
     final reasoning = ref.watch(reasoningProvider);
-    final state = (canUndo, shown, fits, reasoning);
+    final state = (canUndo, shown, reasoning);
     if (state != _menuState) {
       _menuState = state;
       _menus = saiMenus(
         commands: commands,
         canUndo: canUndo,
         chatShown: shown,
-        chatFits: fits,
         reasoningOn: reasoning,
       );
     }

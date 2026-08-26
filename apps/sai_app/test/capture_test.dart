@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sai_app/main_pane.dart';
+import 'package:sai_app/workspace/task_list_pane.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
@@ -27,7 +27,7 @@ void main() {
     tester,
   ) async {
     await pumpApp(tester);
-    expect(find.text('sai 2.0.0-dev — nothing here yet'), findsOneWidget);
+    expect(find.text('Nothing planned for today.'), findsOneWidget);
     expect(find.byKey(captureFieldKey), findsOneWidget);
     final undo = tester.widget<TextButton>(
       find.widgetWithText(TextButton, 'Undo'),
@@ -41,12 +41,12 @@ void main() {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Buy oat milk');
     // Counted in the sidebar straight away…
-    expect(find.text('Inbox (1)'), findsOneWidget);
+    expect(sidebarCount(tester, const ListSection(TaskList.inbox)), 1);
     expect(captureField(tester).controller!.text, isEmpty);
     // …and listed once the Inbox is the section on show; meanwhile the
     // pane says which section is the empty one.
     expect(find.text('Buy oat milk'), findsNothing);
-    expect(find.text('Nothing in Today'), findsOneWidget);
+    expect(find.text('Nothing planned for today.'), findsOneWidget);
     await selectSection(tester, container, inbox);
     expect(find.text('Buy oat milk'), findsOneWidget);
   });
@@ -54,12 +54,12 @@ void main() {
   testWidgets('an @today capture surfaces under Today', (tester) async {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Call mom @today');
-    expect(find.text('Today (1)'), findsOneWidget);
-    expect(find.text('Inbox (0)'), findsOneWidget);
-    expect(find.text('Upcoming (0)'), findsOneWidget);
-    expect(find.text('Someday (0)'), findsOneWidget);
+    expect(sidebarCount(tester, const ListSection(TaskList.today)), 1);
+    expect(sidebarCount(tester, const ListSection(TaskList.inbox)), 0);
+    expect(sidebarCount(tester, const ListSection(TaskList.upcoming)), 0);
+    expect(sidebarCount(tester, const ListSection(TaskList.someday)), 0);
     // Today is the section the shell opens on.
-    expect(find.text('Call mom @today'), findsOneWidget);
+    expect(find.text('Call mom'), findsOneWidget);
   });
 
   testWidgets('a deadline token counts in Inbox and in Upcoming', (
@@ -68,21 +68,21 @@ void main() {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Pay rent !2026-09-01');
     // The view union: a due-later Inbox task also surfaces in Upcoming.
-    expect(find.text('Inbox (1)'), findsOneWidget);
-    expect(find.text('Upcoming (1)'), findsOneWidget);
+    expect(sidebarCount(tester, const ListSection(TaskList.inbox)), 1);
+    expect(sidebarCount(tester, const ListSection(TaskList.upcoming)), 1);
     await selectSection(
       tester,
       container,
       const ListSection(TaskList.upcoming),
     );
-    expect(find.text('Pay rent !2026-09-01'), findsOneWidget);
+    expect(find.text('Pay rent'), findsOneWidget);
   });
 
   testWidgets('a blank line captures nothing', (tester) async {
     final container = await pumpApp(tester);
     await capture(tester, container, '   ');
-    expect(find.text('sai 2.0.0-dev — nothing here yet'), findsOneWidget);
-    expect(find.text('Inbox (0)'), findsOneWidget);
+    expect(find.text('Nothing planned for today.'), findsOneWidget);
+    expect(sidebarCount(tester, const ListSection(TaskList.inbox)), 0);
     expect(archiveLines(container.read(archiveRootProvider)), isEmpty);
   });
 
@@ -94,8 +94,8 @@ void main() {
     expect(tester.widget<TextButton>(undo).onPressed, isNotNull);
 
     await settleUndo(tester, container, () => tester.tap(undo), depth: 0);
-    expect(find.text('Nothing in Inbox'), findsOneWidget);
-    expect(find.text('Trash (1)'), findsOneWidget);
+    expect(find.text('Inbox is clear.'), findsOneWidget);
+    expect(sidebarCount(tester, const TrashSection()), 1);
     final projection = container.read(tasksProvider).value!;
     expect(projection.trash().single.title, 'Buy oat milk');
     expect(tester.widget<TextButton>(undo).onPressed, isNull);
@@ -143,16 +143,16 @@ void main() {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Ring dentist @tomorrow');
     await capture(tester, container, 'Learn the violin @someday');
-    expect(find.text('Upcoming (1)'), findsOneWidget);
-    expect(find.text('Someday (1)'), findsOneWidget);
+    expect(sidebarCount(tester, const ListSection(TaskList.upcoming)), 1);
+    expect(sidebarCount(tester, const ListSection(TaskList.someday)), 1);
     await selectSection(
       tester,
       container,
       const ListSection(TaskList.upcoming),
     );
-    expect(find.text('Ring dentist @tomorrow'), findsOneWidget);
+    expect(find.text('Ring dentist'), findsOneWidget);
     await selectSection(tester, container, const ListSection(TaskList.someday));
-    expect(find.text('Learn the violin @someday'), findsOneWidget);
+    expect(find.text('Learn the violin'), findsOneWidget);
   });
 
   testWidgets('a failed capture keeps the line and says so', (tester) async {

@@ -1,26 +1,34 @@
+import 'dart:ui' show Tristate;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/sidebar.dart';
+import 'package:sai_app/theme/sai_tokens.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
 
 void main() {
+  const inbox = ListSection(TaskList.inbox);
+  const today = ListSection(TaskList.today);
+
   testWidgets('the sidebar lists every standard list, then the Trash', (
     tester,
   ) async {
     await pumpApp(tester);
-    for (final label in [
-      'Inbox (0)',
-      'Today (0)',
-      'Upcoming (0)',
-      'Anytime (0)',
-      'Someday (0)',
-      'Logbook (0)',
-      'Trash (0)',
+    expect(find.text('LISTS'), findsOneWidget);
+    var lastY = 0.0;
+    for (final section in [
+      for (final list in TaskList.values) ListSection(list),
+      const TrashSection(),
     ]) {
-      expect(find.text(label), findsOneWidget);
+      expect(sidebarRow(section), findsOneWidget);
+      expect(sidebarCount(tester, section), 0);
+      final y = tester.getTopLeft(sidebarRow(section)).dy;
+      expect(y, greaterThan(lastY));
+      lastY = y;
     }
+    expect(find.text('AREAS & PROJECTS'), findsNothing);
     expect(find.byType(SaiSidebar), findsOneWidget);
   });
 
@@ -29,18 +37,14 @@ void main() {
   ) async {
     final container = await pumpApp(tester);
     await capture(tester, container, 'Buy oat milk');
-    expect(find.text('Today'), findsOneWidget);
+    expect(paneTitle(tester), 'Today');
     expect(find.text('Buy oat milk'), findsNothing);
 
-    await tester.tap(find.text('Inbox (1)'));
+    await tester.tap(sidebarRow(inbox));
     await tester.pump();
-    expect(find.text('Inbox'), findsOneWidget);
-    expect(find.text('Today'), findsNothing);
+    expect(paneTitle(tester), 'Inbox');
     expect(find.text('Buy oat milk'), findsOneWidget);
-    expect(
-      container.read(selectedSectionProvider),
-      const ListSection(TaskList.inbox),
-    );
+    expect(container.read(selectedSectionProvider), inbox);
   });
 
   testWidgets('areas render with their projects nested, then standalones', (
@@ -48,54 +52,96 @@ void main() {
   ) async {
     final container = await pumpApp(tester);
     final store = container.read(tasksProvider.notifier).store;
+    late AreaId home;
+    late ProjectId garden;
+    late ProjectId album;
     await tester.runAsync(() async {
-      final home = await store.createArea(title: 'Home');
-      final garden = await store.createProject(title: 'Garden', area: home);
-      await store.createProject(title: 'Album');
+      home = await store.createArea(title: 'Home');
+      garden = await store.createProject(title: 'Garden', area: home);
+      album = await store.createProject(title: 'Album');
       await store.createTask(title: 'plant', project: garden);
       await store.createTask(title: 'dust', area: home);
     });
     await tester.pump();
-    expect(find.text('Home (1)'), findsOneWidget);
-    expect(find.text('Garden (1)'), findsOneWidget);
-    expect(find.text('Album (0)'), findsOneWidget);
-    // Projects sit to the right of their area.
+    expect(find.text('AREAS & PROJECTS'), findsOneWidget);
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.text('— Garden'), findsOneWidget);
+    expect(find.text('Album'), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('Garden (1)')).dx,
-      greaterThan(tester.getTopLeft(find.text('Home (1)')).dx),
+      tester.getTopLeft(find.text('— Garden')).dy,
+      greaterThan(tester.getTopLeft(find.text('Home')).dy),
     );
     expect(
-      tester.getTopLeft(find.text('Album (0)')).dy,
-      greaterThan(tester.getTopLeft(find.text('Garden (1)')).dy),
+      tester.getTopLeft(find.text('Album')).dy,
+      greaterThan(tester.getTopLeft(find.text('— Garden')).dy),
     );
 
-    await tester.tap(find.text('Garden (1)'));
+    await tester.tap(sidebarRow(ProjectSection(garden)));
     await tester.pump();
-    expect(find.text('Garden'), findsOneWidget);
+    expect(paneTitle(tester), 'Garden');
     expect(find.text('plant'), findsOneWidget);
     expect(find.text('dust'), findsNothing);
+    expect(sidebarRow(ProjectSection(album)), findsOneWidget);
   });
 
   testWidgets('the selection survives a capture', (tester) async {
     final container = await pumpApp(tester);
-    await tester.tap(find.text('Inbox (0)'));
+    await tester.tap(sidebarRow(inbox));
     await tester.pump();
     await capture(tester, container, 'Buy oat milk');
-    expect(find.text('Inbox'), findsOneWidget);
+    expect(paneTitle(tester), 'Inbox');
     expect(find.text('Buy oat milk'), findsOneWidget);
-    expect(find.text('Inbox (1)'), findsOneWidget);
+    expect(sidebarCount(tester, inbox), 1);
   });
 
-  testWidgets('the selected row is tinted', (tester) async {
+  testWidgets('the selected row is ink with a red bar; the rest are bare', (
+    tester,
+  ) async {
     await pumpApp(tester);
-    Color? tint(String label) => tester
-        .widget<Container>(
-          find
-              .ancestor(of: find.text(label), matching: find.byType(Container))
-              .first,
-        )
-        .color;
-    expect(tint('Today (0)'), isNotNull);
-    expect(tint('Inbox (0)'), isNull);
+    BoxDecoration decoration(SidebarSection section) =>
+        tester
+                .widget<Container>(
+                  find
+                      .descendant(
+                        of: sidebarRow(section),
+                        matching: find.byType(Container),
+                      )
+                      .first,
+                )
+                .decoration
+            as BoxDecoration;
+    expect(decoration(today).color, SaiColors.ink);
+    expect((decoration(today).border! as Border).left.color, SaiColors.red);
+    expect(decoration(inbox).color, isNull);
+    final row = tester.getSemantics(sidebarRow(today));
+    expect(row.label, 'Today, 0');
+    expect(row.flagsCollection.isSelected, Tristate.isTrue);
+  });
+
+  testWidgets('the sidebar renders in the reference treatment', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1100, 700);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final container = await pumpApp(tester);
+    final store = container.read(tasksProvider.notifier).store;
+    await tester.runAsync(() async {
+      final work = await store.createArea(title: 'Work');
+      await store.createProject(title: 'Q3 report', area: work);
+      await store.createProject(title: 'Website refresh', area: work);
+      final home = await store.createArea(title: 'Home');
+      await store.createProject(title: 'Kitchen redo', area: home);
+      await store.createArea(title: 'Learning');
+      await store.createProject(title: 'Read more');
+      await store.createTask(
+        title: 'Book the dentist',
+        when: TaskWhen.date(container.read(todayProvider)),
+      );
+    });
+    await tester.pump();
+    await expectLater(
+      find.byType(SaiSidebar),
+      matchesGoldenFile('goldens/sidebar.png'),
+    );
   });
 }

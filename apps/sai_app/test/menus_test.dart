@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sai_app/chat_pane.dart';
+import 'package:sai_app/assistant/assistant_band.dart';
 import 'package:sai_app/commands.dart';
 import 'package:sai_app/menus.dart';
 import 'package:sai_core/sai_core.dart';
@@ -27,17 +27,13 @@ void main() {
       showProviders: () => calls.add('providers'),
       select: (section) => calls.add('select $section'),
     );
-    List<PlatformMenuItem> menus({
-      bool canUndo = false,
-      bool chat = true,
-      bool fits = true,
-    }) => saiMenus(
-      commands: commands,
-      canUndo: canUndo,
-      chatShown: chat && fits,
-      chatFits: fits,
-      reasoningOn: false,
-    );
+    List<PlatformMenuItem> menus({bool canUndo = false, bool chat = true}) =>
+        saiMenus(
+          commands: commands,
+          canUndo: canUndo,
+          chatShown: chat,
+          reasoningOn: false,
+        );
 
     setUp(calls.clear);
 
@@ -104,22 +100,16 @@ void main() {
       expect(calls, ['undo']);
     });
 
-    test('View flips between Hide Chat and Show Chat on ⌘J', () {
-      final hide = menuItem(menus(chat: true), ['View', 'Hide Chat']);
+    test('View flips between Hide Assistant and Show Assistant on ⌘J', () {
+      final hide = menuItem(menus(chat: true), ['View', 'Hide Assistant']);
       expect(
         chord(hide),
         containsPair('shortcutTrigger', LogicalKeyboardKey.keyJ.keyId),
       );
       hide.onSelected!();
-      final show = menuItem(menus(chat: false), ['View', 'Show Chat']);
+      final show = menuItem(menus(chat: false), ['View', 'Show Assistant']);
       show.onSelected!();
       expect(calls, ['chat', 'chat']);
-      // Too narrow for the pane: the item is honest and inert.
-      final narrow = menuItem(menus(chat: true, fits: false), [
-        'View',
-        'Show Chat',
-      ]);
-      expect(narrow.onSelected, isNull);
       final view = menuItem(menus(), ['View']) as PlatformMenu;
       expect(
         (view.menus.last as PlatformMenuItemGroup).members.single,
@@ -179,7 +169,7 @@ void main() {
       expect(find.text('Buy oat milk'), findsNothing);
       menuItem(menuDelegate.menus, ['Go', 'Inbox']).onSelected!();
       await tester.pump();
-      expect(find.text('Inbox'), findsOneWidget);
+      expect(paneTitle(tester), 'Inbox');
       expect(find.text('Buy oat milk'), findsOneWidget);
     });
 
@@ -199,16 +189,16 @@ void main() {
       expect(menuItem(menuDelegate.menus, ['Edit', 'Undo']).onSelected, isNull);
     });
 
-    testWidgets('View > Hide Chat collapses the pane and the label flips', (
+    testWidgets('View > Hide Assistant tucks the band away, label flips', (
       tester,
     ) async {
       await pumpApp(tester);
-      menuItem(menuDelegate.menus, ['View', 'Hide Chat']).onSelected!();
+      menuItem(menuDelegate.menus, ['View', 'Hide Assistant']).onSelected!();
       await tester.pump();
-      expect(find.byType(ChatPane), findsNothing);
-      menuItem(menuDelegate.menus, ['View', 'Show Chat']).onSelected!();
+      expect(find.byKey(chatFieldKey), findsNothing);
+      menuItem(menuDelegate.menus, ['View', 'Show Assistant']).onSelected!();
       await tester.pump();
-      expect(find.byType(ChatPane), findsOneWidget);
+      expect(find.byKey(chatFieldKey), findsOneWidget);
     });
 
     testWidgets('Help > Keyboard Shortcuts opens the dialog', (tester) async {
@@ -219,7 +209,13 @@ void main() {
       ]).onSelected!();
       await tester.pump();
       expect(find.byType(AlertDialog), findsOneWidget);
-      expect(find.textContaining('⌘J'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.textContaining('⌘J'),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(find.text('Close'));
       await tester.pump();
       expect(find.byType(AlertDialog), findsNothing);

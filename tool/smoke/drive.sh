@@ -5,6 +5,10 @@
 #   tool/smoke/drive.sh shot <name.png>        screenshot of the sai window
 #   tool/smoke/drive.sh click <x> <y> [name]   real mouse click at window-
 #                                              relative points, then shot
+#   tool/smoke/drive.sh drag <x1> <y1> <x2> <y2> [name]  real mouse drag
+#                                              between window-relative points
+#   tool/smoke/drive.sh record <secs> <file.mov>  clip of the sai window's
+#                                              screen rect, for a PR
 #   tool/smoke/drive.sh quit
 #
 # Points are logical (pt) from the window's top-left, title bar included;
@@ -19,6 +23,7 @@ bin=$root/apps/sai_app/build/macos/Build/Products/Debug/sai.app/Contents/MacOS/s
 tools=${TMPDIR:-/tmp}/sai-smoke-tools
 mkdir -p "$tools"
 [ -x "$tools/click" ] || swiftc -O -o "$tools/click" "$here/click.swift"
+[ -x "$tools/drag" ] || swiftc -O -o "$tools/drag" "$here/drag.swift"
 
 wid() { swift "$here/wid.swift"; }
 frame() {
@@ -49,6 +54,27 @@ case $1 in
     "$tools/click" $((wx + $2)) $((wy + $3))
     sleep 1
     [ -n "$4" ] && shot "$4" || true ;;
+  drag)
+    read wx wy ww wh <<< "$(frame)"
+    [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no sai window frame; not dragging" >&2; exit 1; }
+    for p in $2 $3 $4 $5; do
+      [[ "$p" =~ ^[0-9]+$ ]] || { echo "usage: drive.sh drag <x1> <y1> <x2> <y2> [name]" >&2; exit 2; }
+    done
+    if (( $2 >= ww || $3 >= wh || $4 >= ww || $5 >= wh )); then
+      echo "a point is outside the ${ww}x${wh} window; not dragging" >&2; exit 1
+    fi
+    osascript -e 'tell application "System Events" to set frontmost of process "sai" to true'
+    "$tools/drag" $((wx + $2)) $((wy + $3)) $((wx + $4)) $((wy + $5))
+    sleep 1
+    [ -n "$6" ] && shot "$6" || true ;;
+  record)
+    read wx wy ww wh <<< "$(frame)"
+    [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no sai window frame; not recording" >&2; exit 1; }
+    [ -n "$3" ] || { echo "usage: drive.sh record <secs> <file.mov>" >&2; exit 2; }
+    # Video capture takes a screen rect, not a window id; the rect is the
+    # window's frame, so keep other windows off it while it runs.
+    screencapture -x -V "$2" -R "$wx,$wy,$ww,$wh" "$3"
+    echo "recorded $3" ;;
   quit) pkill -f "$bin" || true; sleep 1; ! pgrep -f "$bin" >/dev/null && echo "sai closed" ;;
   *) sed -n 2,14p "$0"; exit 2 ;;
 esac

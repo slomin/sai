@@ -29,7 +29,8 @@ the layout and the toolchain; this file has the rules.
   `tool/smoke/drive.sh launch <dir>` starts the debug bundle with that env
   (`open` drops env vars), `shot` captures the sai window, `click x y`
   posts a real mouse click at window-relative points (System Events'
-  `click at` never reaches Flutter), `quit` closes it. Re-read the window
+  `click at` never reaches Flutter), `record <secs> <file.mov>` clips
+  the window's screen rect for a PR, `quit` closes it. Re-read the window
   frame before clicking and never click into another app.
 - Evidence is the archive and the settings file after the pass plus a
   screenshot per step; put the results, not the claim, in the PR. A fake

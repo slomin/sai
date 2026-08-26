@@ -24,6 +24,7 @@ import 'settings/settings.dart';
 import 'settings/store.dart';
 import 'tasks/date.dart';
 import 'tasks/lists.dart';
+import 'tasks/model.dart';
 import 'tasks/projection.dart';
 import 'tasks/sidebar.dart';
 import 'tasks/store.dart';
@@ -142,6 +143,24 @@ final canUndoProvider = Provider<bool>((ref) {
 /// so the clients (#37, #41) and their menus steer the same state.
 final selectedSectionProvider =
     NotifierProvider<SelectedSection, SidebarSection>(SelectedSection.new);
+
+/// How many lines the archive holds, for the clients' archive line. Every
+/// writer appends there — the task store, the chat, the recorder — so the
+/// count is read from the log's head and refreshed whenever the tasks or
+/// the conversation move on, not derived from the task projection alone.
+final archiveLineCountProvider = FutureProvider<int>((ref) async {
+  final archive = await ref.watch(archiveProvider.future);
+  ref.watch(tasksProvider);
+  ref.watch(chatProvider);
+  return (await archive.head()).count;
+});
+
+/// The task row a client has selected, or null. A client clears it when
+/// the task leaves the view it is showing (#72); the inspector (#74) and
+/// restored workspace state (#76) read the same value.
+final selectedTaskProvider = NotifierProvider<SelectedTask, TaskId?>(
+  SelectedTask.new,
+);
 
 /// Whether a model may think before it answers, as settings hold it
 /// (`reasoning`, off by default): off is sent to the backend as
@@ -558,6 +577,15 @@ class SelectedSection extends Notifier<SidebarSection> {
   SidebarSection build() => const ListSection(TaskList.today);
 
   void select(SidebarSection section) => state = section;
+}
+
+class SelectedTask extends Notifier<TaskId?> {
+  @override
+  TaskId? build() => null;
+
+  void select(TaskId task) => state = task;
+
+  void clear() => state = null;
 }
 
 /// Owns the one-shot timer that turns the wall clock into a reactive local
