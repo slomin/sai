@@ -47,11 +47,11 @@ jobs:
           tar xzf gitleaks.tgz gitleaks && rm gitleaks.tgz
       - name: Scan the checked-out tree
         run: ./gitleaks dir . --config .gitleaks.toml --no-banner --redact
-      - name: Scan the commits this PR adds
-        if: github.event_name == 'pull_request'
-        run: |
-          ./gitleaks git . --config .gitleaks.toml --no-banner --redact \
-            --log-opts="--no-merges --first-parent ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+      - name: Scan the whole history
+        # Every commit reachable from the checkout, merges and side
+        # branches included, on pushes and pull requests alike; the
+        # repository is small enough that a full scan is instant.
+        run: ./gitleaks git . --config .gitleaks.toml --no-banner --redact
 
   dart:
     name: Analyze and test (core, tui)
