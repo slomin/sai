@@ -52,7 +52,24 @@ String? locateThingsDatabase({
           .where((path) => File(path).existsSync())
           .toList()
         ..sort();
+  if (candidates.length > 1) {
+    // Nothing in the directory names says which one Things is using;
+    // guessing could import a database left behind by an old install.
+    throw ThingsAmbiguousDatabase(candidates.length);
+  }
   return candidates.isEmpty ? null : candidates.first;
+}
+
+/// More than one `ThingsData-*` database exists and none can be picked
+/// without guessing; the caller has to name one.
+final class ThingsAmbiguousDatabase implements Exception {
+  ThingsAmbiguousDatabase(this.count);
+
+  final int count;
+
+  @override
+  String toString() =>
+      'ThingsAmbiguousDatabase: $count ThingsData-* databases found';
 }
 
 /// The database is not a Things 3 database this reader understands. The
@@ -242,15 +259,27 @@ final class ThingsDatabase {
       final copy = Directory.systemTemp.createTempSync('sai_things_copy_');
       try {
         final target = p.join(copy.path, 'main.sqlite');
+        // A checkpoint between the copies rewrites main.sqlite and may
+        // remove the WAL, leaving a copy that is consistent but old.
+        // The main file's generation is read before and after the
+        // companions are copied; a change means the set is not one
+        // snapshot and is taken again.
+        final before = _generation(source);
         source.copySync(target);
         for (final suffix in const ['-wal', '-shm']) {
           final companion = File('$path$suffix');
           try {
             companion.copySync('$target$suffix');
           } on FileSystemException {
-            // Gone since the main file was copied; a checkpoint folded
-            // it into main.sqlite, which the check below confirms.
+            // Gone since the existence check: either it never existed
+            // (not a WAL database) or a checkpoint removed it — the
+            // generation check below tells the two apart.
           }
+        }
+        if (_generation(source) != before) {
+          throw ThingsSchemaException.inconsistent(
+            'the database changed while it was being copied',
+          );
         }
         final Database db;
         try {
@@ -294,6 +323,26 @@ final class ThingsDatabase {
       'no consistent snapshot after $snapshotAttempts attempts '
       '(${last!.message})',
     );
+  }
+
+  /// What identifies one generation of the main file: its size, its
+  /// modification time and SQLite's file change counter (header bytes
+  /// 24–27). A checkpoint rewrites pages of the main file, which shows
+  /// in the modification time and often the size; the counter covers
+  /// writes in rollback mode, where it is bumped on every commit.
+  static (int, DateTime, int) _generation(File main) {
+    final stat = main.statSync();
+    final raw = main.openSync();
+    try {
+      raw.setPositionSync(24);
+      final bytes = raw.readSync(4);
+      final counter = bytes.length == 4
+          ? (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]
+          : -1;
+      return (stat.size, stat.modified, counter);
+    } finally {
+      raw.closeSync();
+    }
   }
 
   /// How often [snapshot] retries a copy SQLite reports as inconsistent.

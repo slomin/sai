@@ -386,12 +386,21 @@ Future<int> runCli(
           }
         }
         final environment = container.read(environmentProvider);
-        final path =
-            explicit ??
-            locateThingsDatabase(
-              environment: environment,
-              home: environment['HOME'] ?? '',
-            );
+        final String? path;
+        try {
+          path =
+              explicit ??
+              locateThingsDatabase(
+                environment: environment,
+                home: environment['HOME'] ?? '',
+              );
+        } on ThingsAmbiguousDatabase catch (e) {
+          err.writeln(
+            'sai_tui: ${e.count} Things databases found under the group '
+            'container; pass --db <main.sqlite> to say which one',
+          );
+          return cliFailed;
+        }
         if (path == null) {
           err.writeln(
             'sai_tui: no Things 3 database found; pass --db <main.sqlite> '
@@ -449,7 +458,10 @@ Future<int> runCli(
         final elapsed = DateTime.now().difference(started);
         out.writeln(
           result.plan.isEmpty
-              ? 'nothing to do — sai already matches Things'
+              ? result.report.unsupported.isEmpty
+                    ? 'nothing to do — sai already matches Things'
+                    : 'nothing to do — sai already holds everything '
+                          'this run would import; the rows above stay behind'
               : dryRun
               ? '${result.plan.length} operations would run; nothing written'
               : '${result.plan.length} operations, '

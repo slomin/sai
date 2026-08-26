@@ -26,8 +26,28 @@ void main() {
       );
     });
 
-    test('finds the first ThingsData-* database under the container', () {
+    test('refuses two ThingsData-* databases rather than guess', () {
       for (final data in ['ThingsData-ZZZZZ', 'ThingsData-AAAAA']) {
+        final dir = Directory(
+          p.join(
+            tmp.path,
+            thingsContainerRelative,
+            data,
+            'Things Database.thingsdatabase',
+          ),
+        )..createSync(recursive: true);
+        File(p.join(dir.path, 'main.sqlite')).writeAsStringSync('');
+      }
+      expect(
+        () => locateThingsDatabase(environment: const {}, home: tmp.path),
+        throwsA(
+          isA<ThingsAmbiguousDatabase>().having((e) => e.count, 'count', 2),
+        ),
+      );
+    });
+
+    test('finds the one ThingsData-* database under the container', () {
+      for (final data in ['ThingsData-AAAAA']) {
         final dir = Directory(
           p.join(
             tmp.path,
@@ -141,6 +161,26 @@ void main() {
           ),
         ),
       );
+    });
+
+    test('a copy whose source changed underneath is retried', () {
+      final path = p.join(tmp.path, 'main.sqlite');
+      final f = ThingsFixture(path);
+      f.item('Buy oat milk');
+      f.close();
+      // The race itself (a checkpoint between the main and companion
+      // copies) cannot be staged from outside; prove what the generation
+      // check relies on — a checkpoint rewrites main.sqlite — and that
+      // a snapshot taken afterwards sees the folded-in rows.
+      final before = File(path).readAsBytesSync();
+      final g = ThingsFixture.reopen(path);
+      g.item('Buy bread');
+      g.db.execute('pragma wal_checkpoint(truncate)');
+      g.close();
+      expect(File(path).readAsBytesSync(), isNot(before));
+      final db = ThingsDatabase.snapshot(path);
+      addTearDown(db.dispose);
+      expect(db.read().items, hasLength(2));
     });
 
     test('a torn copy is retried and then refused, never trusted', () {

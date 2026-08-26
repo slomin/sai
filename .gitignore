@@ -17,10 +17,7 @@ ref_code_examples_only/
 
 # Never a Things 3 database, its WAL, or a scratch copy — private data in
 # a public repository (#18). Test fixtures are generated, never committed.
-*.sqlite
-*.sqlite-wal
-*.sqlite-shm
-*.sqlite-journal
+*.sqlite*
 *.thingsdatabase/
 
 # Per-machine Xcode signing overrides (ADR 0008)

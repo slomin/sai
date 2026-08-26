@@ -89,10 +89,26 @@ void main() {
       expect(archiveLines(container), hasLength(3));
       expect(
         out.toString().trim().split('\n').last,
-        'nothing to do — sai already matches Things',
+        'nothing to do — sai already holds everything this run would '
+        'import; the rows above stay behind',
       );
     },
   );
+
+  test('two ThingsData directories are refused without --db', () async {
+    for (final data in ['ThingsData-AAAAA', 'ThingsData-BBBBB']) {
+      final dir = Directory(
+        '${tmp.path}/$thingsContainerRelative/$data/Things Database.thingsdatabase',
+      )..createSync(recursive: true);
+      File('${dir.path}/main.sqlite').writeAsStringSync('');
+    }
+    expect(await run('things import --dry-run'), cliFailed);
+    expect(
+      err.toString().trim(),
+      'sai_tui: 2 Things databases found under the group container; pass '
+      '--db <main.sqlite> to say which one',
+    );
+  });
 
   test('the database is found through SAI_THINGS_DB', () async {
     final path = seed();
