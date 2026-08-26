@@ -72,12 +72,10 @@ the layout and the toolchain; this file has the rules.
   `security` command. Tests use `InMemorySecretStore` or a throwaway
   keychain file; nothing under `test/` touches the login keychain.
 - Agents never hold a credential (#56). An agent never receives or asks
-  for a real key; never reads `~/.claude`, `~/.claude.json`, `~/.codex`,
-  `~/.hermes` or `~/.local/share/opencode`, nor the
-  `Claude Code-credentials` or `Codex Auth` Keychain items, and never
-  runs `security find-generic-password`; never spawns `claude` or
-  `codex app-server` against a real home — provider tests go through
-  the fake process runner (`test/no_spawn_test.dart` lists the only
+  for a real key, never reads a vendor's credential store or Keychain
+  item, never runs `security find-generic-password`, and never spawns
+  `claude` or `codex app-server` against a real home — provider tests
+  go through the fake process runner (`test/no_spawn_test.dart` lists the only
   files that may start a process). Agents run keyless smokes only; a
   person runs the cloud ones (`docs/smoke/cloud.md`). Enforced, not
   just written: `.claude/settings.json` turns on the Bash sandbox with
@@ -118,6 +116,14 @@ the layout and the toolchain; this file has the rules.
 - A request is built by `assembleContext` and nowhere else (ADR 0011):
   profile, memory, lists and conversation in one deterministic, hashed
   shape. A client sends what it is given; it never assembles a prompt.
+- The Things 3 database is private data and this repository is public
+  (#18). Nothing read from it — a row, a title, a copy of the file, a
+  dry-run listing — goes into the tree, a test, a PR, an issue or a
+  screenshot; evidence from a real import is counts only. Tests build
+  their Things databases with `package:sai_core/things_testing.dart`,
+  and `.gitignore` refuses `*.sqlite*` and `*.thingsdatabase/`. The
+  importer reads a private copy under the system temp dir and never
+  opens the file in the Things container.
 - `spikes/` are frozen evidence behind a decision. They stay out of the
   workspace and nothing imports them.
 - The archive (`sai_core`'s event log) is append-only: no API updates or

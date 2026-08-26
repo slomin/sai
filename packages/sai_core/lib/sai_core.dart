@@ -13,3 +13,4 @@ export 'src/providers.dart';
 export 'src/secrets.dart';
 export 'src/settings.dart';
 export 'src/tasks.dart';
+export 'src/things.dart';

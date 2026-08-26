@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
@@ -19,6 +20,10 @@ usage: sai_tui                       open the terminal client
                                     (or from stdin when piped)
        sai_tui secret clear <id>
        sai_tui secret status <id>
+       sai_tui things import [--dry-run] [--db <main.sqlite>]
+                            [--open-only] [--skip-repeat-history]
+                            [--logbook-since YYYY-MM-DD]
+                                    bring the Things 3 database over
        sai_tui help
 
 Provider settings go to settings.json; keys go to the Keychain and are
@@ -31,7 +36,17 @@ provider that is no longer configured. A cloud provider sees your tasks
 only while share-tasks is on (off by default). --privacy says where a
 provider's inference happens; without it the fake is local and an
 openai_compatible endpoint is local on this machine or the LAN and cloud
-on any other host.''';
+on any other host.
+
+things import reads a private copy of the Things 3 database (the one
+under ~/Library/Group Containers, or --db / SAI_THINGS_DB) and writes
+what is new or changed into the archive as system events; run it again
+and only the differences land. --dry-run prints what a run would do and
+writes nothing. Things itself is never written to. For a switch rather
+than a mirror, leave history behind: --open-only imports no finished
+task, --skip-repeat-history drops the completion history of repeating
+tasks (their open next instances still come), --logbook-since keeps
+only tasks finished on or after that day; each reports what it left.''';
 
 /// What `privacy` prints for each position of the switch.
 String privacyLine(PrivacyPolicy policy) => policy.shareTasksWithCloud
@@ -339,6 +354,120 @@ Future<int> runCli(
               CredentialStatus.none => 'none',
             });
         }
+        return cliOk;
+
+      case ['things', 'import', ...final rest]:
+        var dryRun = false;
+        var openOnly = false;
+        var skipRepeatHistory = false;
+        CalendarDate? logbookSince;
+        String? explicit;
+        for (var i = 0; i < rest.length; i++) {
+          switch (rest[i]) {
+            case '--dry-run':
+              dryRun = true;
+            case '--open-only':
+              openOnly = true;
+            case '--skip-repeat-history':
+              skipRepeatHistory = true;
+            case '--logbook-since':
+              if (i + 1 >= rest.length) {
+                throw _Usage('--logbook-since needs a day (YYYY-MM-DD)');
+              }
+              logbookSince = CalendarDate.tryParse(rest[++i]);
+              if (logbookSince == null) {
+                throw _Usage('--logbook-since takes a day as YYYY-MM-DD');
+              }
+            case '--db':
+              if (i + 1 >= rest.length) throw _Usage('--db needs a path');
+              explicit = rest[++i];
+            default:
+              throw _Usage('unknown option: ${rest[i]}');
+          }
+        }
+        final environment = container.read(environmentProvider);
+        final String? path;
+        try {
+          path =
+              explicit ??
+              locateThingsDatabase(
+                environment: environment,
+                home: environment['HOME'] ?? '',
+              );
+        } on ThingsAmbiguousDatabase catch (e) {
+          err.writeln(
+            'sai_tui: ${e.count} Things databases found under the group '
+            'container; pass --db <main.sqlite> to say which one',
+          );
+          return cliFailed;
+        }
+        if (path == null) {
+          err.writeln(
+            'sai_tui: no Things 3 database found; pass --db <main.sqlite> '
+            'or set $thingsDatabaseEnv',
+          );
+          return cliFailed;
+        }
+        final ThingsSnapshot snapshot;
+        final started = DateTime.now();
+        try {
+          final db = ThingsDatabase.snapshot(path);
+          try {
+            snapshot = db.read();
+          } finally {
+            db.dispose();
+          }
+        } on FileSystemException {
+          err.writeln('sai_tui: cannot read the Things database at $path');
+          return cliFailed;
+        } on ThingsSchemaException catch (e) {
+          err.writeln('sai_tui: not a Things 3 database (${e.message})');
+          return cliFailed;
+        }
+        await container.read(tasksProvider.future);
+        final store = container.read(tasksProvider.notifier).store;
+        final ThingsImportResult result;
+        try {
+          result = await importThings(
+            snapshot,
+            store: store,
+            now: DateTime.now().toUtc(),
+            dryRun: dryRun,
+            options: ThingsImportOptions(
+              openOnly: openOnly,
+              skipRepeatHistory: skipRepeatHistory,
+              logbookSince: logbookSince,
+            ),
+          );
+        } on ThingsImportException catch (e) {
+          err.writeln('sai_tui: import stopped: $e');
+          return cliFailed;
+        }
+        out.writeln(
+          'things import${dryRun ? ' (dry run)' : ''}: $path '
+          '(mapping verified against Things $thingsVerifiedVersion)',
+        );
+        if (dryRun) {
+          for (final op in result.plan.ops) {
+            out.writeln(op.describe());
+          }
+        }
+        for (final line in result.report.render()) {
+          out.writeln(line);
+        }
+        final elapsed = DateTime.now().difference(started);
+        out.writeln(
+          result.plan.isEmpty
+              ? result.report.unsupported.isEmpty
+                    ? 'nothing to do — sai already matches Things'
+                    : 'nothing to do — sai already holds everything '
+                          'this run would import; the rows above stay behind'
+              : dryRun
+              ? '${result.plan.length} operations would run; nothing written'
+              : '${result.plan.length} operations, '
+                    '${result.eventsAppended} events appended in '
+                    '${elapsed.inMilliseconds} ms',
+        );
         return cliOk;
 
       default:

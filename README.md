@@ -14,7 +14,7 @@ This repository is a Dart workspace:
 | -------------------- | -------------------------------------------------------------------------- |
 | `packages/sai_core`  | Pure Dart. Task model, archive, provider routing, and the shared riverpod layer. No Flutter. |
 | `apps/sai_app`       | The Flutter macOS app. Depends on `sai_core`.                              |
-| `apps/sai_tui`       | The terminal client on [nocterm](https://pub.dev/packages/nocterm). Depends on `sai_core`; built with `dart compile exe`. |
+| `apps/sai_tui`       | The terminal client on [nocterm](https://pub.dev/packages/nocterm). Depends on `sai_core`; built with `dart build cli`. |
 | `spikes/`            | Throwaway experiments that settled a decision. Not part of the workspace; each keeps its own `pubspec.lock`. |
 | `docs/archive/`      | The archive format contract ([event log v0](docs/archive/event-log-v0.md)). |
 | `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
@@ -59,8 +59,11 @@ In the terminal client, the top line captures (Enter saves, `@today`,
 `!2026-09-01`), `↑`/`↓` move the cursor over the tasks below, `^D`
 completes the selected one and `^U` undoes; the last two rows name the
 active provider with its `local`/`cloud` tag and the keys. It ships as
-one binary — `dart compile exe apps/sai_tui/bin/sai_tui.dart -o
-build/sai_tui`, or signed via `tool/sign-tui.sh` (below). To try one against a scratch archive instead of the real one,
+a bundle, the binary beside the SQLite it bundles — `dart build cli -t
+apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui` puts
+it at `build/tui/bundle/bin/sai_tui` (`dart compile exe` refuses the
+build hook `package:sqlite3` needs) — or signed via `tool/sign-tui.sh`
+(below). To try one against a scratch archive instead of the real one,
 point `SAI_ARCHIVE_ROOT` at a throwaway directory, e.g.
 `SAI_ARCHIVE_ROOT=/tmp/sai-demo/archive`. Non-secret settings live in
 `settings.json` in the same data directory as the default archive;
@@ -145,8 +148,8 @@ the tree:
 ```sh
 # app: gitignored per-machine override, picked up by Debug and Release
 echo 'CODE_SIGN_IDENTITY = sai-dev' > apps/sai_app/macos/Runner/Configs/Local.xcconfig
-# terminal client: compile and sign in one step
-SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/sai_tui
+# terminal client: build the bundle and sign it in one step
+SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/tui
 ```
 
 Build a debug app bundle (what CI does): `cd apps/sai_app && flutter build
@@ -170,6 +173,19 @@ to unless the reasoning switch is on — in the Providers dialog, View ›
 **Enable Reasoning** (⌘R), or `sai_tui reasoning on`; off is faster and
 the default. On, the thinking streams too, is recorded on the response
 line, and shows dimmed above the answer (`thinking…` while it waits).
+
+## Importing from Things 3
+
+`sai_tui things import --dry-run` shows what the archive would gain from
+the Things 3 database on this Mac; without `--dry-run` it writes it, as
+`system` events carrying each item's Things uuid, so a second run adds
+only what changed. Things is never written to — the command reads a
+private copy — and the report is counts only (`--db <main.sqlite>` or
+`SAI_THINGS_DB` names another file). Repeating rules, reminders,
+completed projects and the Trash are reported, not imported. For a
+fresh start rather than a mirror, `--open-only`, `--skip-repeat-history`
+and `--logbook-since YYYY-MM-DD` leave finished tasks behind (and say how
+many); the mapping is in `docs/tasks/task-model-v0.md` § Imports.
 
 ## Verify
 

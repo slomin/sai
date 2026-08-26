@@ -59,7 +59,6 @@
   },
   "permissions": {
     "deny": [
-      "Read(~/.claude/**)",
       "Read(~/.claude.json)",
       "Read(~/.codex/**)",
       "Read(~/.hermes/**)",

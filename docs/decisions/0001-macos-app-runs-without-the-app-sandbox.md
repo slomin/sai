@@ -30,3 +30,15 @@ sandbox is not required by any store policy.
   so nothing else needs a TCC grant.
 - Revisit when #18 is done: if the importer ends up running only from the
   TUI binary, the app could go back into the sandbox.
+
+## Amendment (2026-08-26, #18)
+
+The importer landed as a TUI command only (`sai_tui things import`); the
+app never reads the Things container, so the reason above no longer
+applies. The app stays unsandboxed anyway, as a settled decision rather
+than a deferral: the sandbox is a build-time entitlement, not something
+one operation can opt into, and turning it on would move the app's data
+into its container and break the one archive the app and the terminal
+client share (ADR 0006). For a hand-distributed local app (#42) that
+trade is not worth it. Revisit only if App Store distribution becomes a
+goal.

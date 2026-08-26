@@ -117,6 +117,12 @@ final class ChecklistItem {
 /// idempotent. For a materialised occurrence of a repeating task,
 /// `instance` carries the occurrence date (see the model doc's
 /// repeating-tasks deferral).
+/// The `system` names this repository writes in an [ExternalRef].
+abstract final class ExternalSystems {
+  /// The Things 3 import (#18); `id` is the Things uuid.
+  static const things3 = 'things3';
+}
+
 final class ExternalRef {
   const ExternalRef({
     required this.system,
