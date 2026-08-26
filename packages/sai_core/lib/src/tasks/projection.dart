@@ -657,6 +657,7 @@ final class _Builder {
           project: event.project,
           area: event.area,
           heading: event.heading,
+          staying: task,
         );
         if (event.after case Patch(value: final after)) {
           _checkStructuralAnchor(
@@ -1182,14 +1183,35 @@ final class _Builder {
     order.insert(order.indexOf(after!) + 1, task);
   }
 
+  /// Refuses a placement into a deleted or archived container. A task
+  /// [staying] in the container it is already in (a heading change inside
+  /// an archived project) is not a new member: the container's archived
+  /// state is overlooked for it, its deletion is not.
   void _checkPlacement(
     StoredEvent stored, {
     required ProjectId? project,
     required AreaId? area,
     required HeadingId? heading,
+    Task? staying,
   }) {
-    if (project != null) _livingProject(stored, project);
-    if (area != null) _livingArea(stored, area);
+    if (project != null) {
+      if (staying?.project == project) {
+        if (_project(stored, project).deletedAt != null) {
+          _refuse(stored, 'project $project is deleted');
+        }
+      } else {
+        _livingProject(stored, project);
+      }
+    }
+    if (area != null) {
+      if (staying?.area == area) {
+        if (_area(stored, area).deletedAt != null) {
+          _refuse(stored, 'area $area is deleted');
+        }
+      } else {
+        _livingArea(stored, area);
+      }
+    }
     if (heading != null) {
       final owner = _livingHeading(stored, heading).project;
       if (owner != project) {

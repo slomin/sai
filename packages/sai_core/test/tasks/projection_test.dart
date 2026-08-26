@@ -1000,6 +1000,49 @@ void main() {
       }
     });
 
+    test('a task already in an archived project may still change heading '
+        'there; a deleted project refuses even that', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final heading = emit(HeadingCreated(project: project.id, title: 'H'));
+      final task = emit(
+        TaskCreated(title: 't', project: project.id, heading: heading.id),
+      );
+      final loose = emit(TaskCreated(title: 'l'));
+      var p = applyAll([
+        project,
+        heading,
+        task,
+        loose,
+        emit(ProjectArchived(project.id)),
+      ]);
+      p = p.apply(emit(TaskMoved(task.id, project: project.id)));
+      expect(p.tasks[task.id]!.heading, isNull);
+      expect(p.tasks[task.id]!.project, project.id);
+      expect(
+        () => p.apply(emit(TaskMoved(loose.id, project: project.id))),
+        throwsA(
+          isA<TaskProjectionError>().having(
+            (e) => e.reason,
+            'reason',
+            'project ${project.id} is archived',
+          ),
+        ),
+      );
+      p = p.apply(emit(ProjectDeleted(project.id)));
+      expect(
+        () => p.apply(
+          emit(TaskMoved(task.id, project: project.id, heading: heading.id)),
+        ),
+        throwsA(
+          isA<TaskProjectionError>().having(
+            (e) => e.reason,
+            'reason',
+            'project ${project.id} is deleted',
+          ),
+        ),
+      );
+    });
+
     test('archiving twice overwrites the stamp; unarchiving a live container '
         'is a no-op; archive and delete are independent', () {
       final area = emit(AreaCreated(title: 'A'));

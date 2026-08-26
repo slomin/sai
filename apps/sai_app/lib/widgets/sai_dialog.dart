@@ -64,14 +64,18 @@ class SaiDialog extends StatelessWidget {
   }
 }
 
-/// The red button that carries a destructive or primary action.
+/// The red button that carries a destructive or primary action. Keyed
+/// [dialogPrimaryKey] unless the caller names it, so a dialog's primary
+/// action has one canonical target.
 class SaiPrimaryButton extends StatelessWidget {
-  const SaiPrimaryButton({
-    super.key,
+  // Not const: the default key is resolved in the initializer.
+  // ignore: prefer_const_constructors_in_immutables
+  SaiPrimaryButton({
+    Key? key,
     required this.label,
     required this.onPressed,
     this.destructive = false,
-  });
+  }) : super(key: key ?? dialogPrimaryKey);
 
   final String label;
   final VoidCallback? onPressed;
@@ -80,7 +84,6 @@ class SaiPrimaryButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return FilledButton(
-      key: key == null ? dialogPrimaryKey : null,
       style: destructive
           ? FilledButton.styleFrom(
               backgroundColor: SaiColors.red,

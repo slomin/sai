@@ -8,6 +8,7 @@ import '../theme/sai_theme.dart';
 import '../theme/sai_tokens.dart';
 import '../widgets/eyebrow.dart';
 import '../widgets/sai_dialog.dart';
+import 'task_commands.dart';
 import 'dates.dart';
 import 'task_list.dart';
 
@@ -90,7 +91,7 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
       notice.clear();
     } on Object catch (error) {
       if (!mounted) return;
-      notice.show('capture failed: $error');
+      notice.show('capture failed: ${describeFailure(error)}');
       // Give the line back rather than losing it — unless the field has
       // moved on to a newer line meanwhile, which wins.
       if (_controller.text.isEmpty) _controller.text = line;

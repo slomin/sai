@@ -129,7 +129,9 @@ Areas and projects can also be **archived** (`*.archive` / `*.unarchive`,
 `archivedAt`): an archived container leaves the sidebar's main groups and
 hides its tasks exactly as a deleted container does — placement and its
 position in the sequence are kept, so unarchiving brings everything back
-where it was — and it refuses new members like a deleted one. Archiving
+where it was — and it refuses new members like a deleted one (a task
+already in it may still change heading there: that is not a new member).
+Archiving
 an area does not archive its projects; they list standalone. Archiving
 and deleting are independent (deleted wins for display); the reducer
 stays total, so archiving twice overwrites the stamp and unarchiving a

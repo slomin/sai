@@ -123,13 +123,13 @@ void main() {
       await tester.pump();
       await choose(tester, 'New area…');
       expect(
-        tester.widget<FilledButton>(find.byKey(dialogPrimaryKey)).onPressed,
+        tester.widget<SaiPrimaryButton>(find.byKey(dialogPrimaryKey)).onPressed,
         isNull,
       );
       await tester.enterText(find.byKey(dialogFieldKey), '   ');
       await tester.pump();
       expect(
-        tester.widget<FilledButton>(find.byKey(dialogPrimaryKey)).onPressed,
+        tester.widget<SaiPrimaryButton>(find.byKey(dialogPrimaryKey)).onPressed,
         isNull,
       );
       await tester.tap(find.text('Cancel'));
@@ -508,6 +508,41 @@ void main() {
       expect(store.projection.tasks[tiles.id]!.project, ids.kitchen);
       expect(rowTitles(tester), contains('Tiles'));
     });
+
+    testWidgets(
+      'a heading in an archived project deletes with its tasks kept',
+      (tester) async {
+        final container = await pumpApp(tester);
+        final ids = await seed(tester, container);
+        final store = storeOf(container);
+        final tiles = store.projection.tasks.values.firstWhere(
+          (t) => t.title == 'Tiles',
+        );
+        final prep = await tester.runAsync(() async {
+          final prep = await store.createHeading(
+            project: ids.kitchen,
+            title: 'Prep',
+          );
+          await store.moveTask(tiles.id, project: ids.kitchen, heading: prep);
+          await store.archiveProject(ids.kitchen);
+          return prep;
+        });
+        await selectSection(tester, container, ProjectSection(ids.kitchen));
+        await tester.tap(find.byKey(headingMenuKey(prep!)));
+        await tester.pump();
+        await choose(tester, 'Delete…');
+        await settleEvents(
+          tester,
+          container,
+          () => tester.tap(find.byKey(dialogPrimaryKey)),
+          count: 2,
+        );
+        expect(store.projection.headings[prep]!.deletedAt, isNotNull);
+        expect(store.projection.tasks[tiles.id]!.heading, isNull);
+        expect(store.projection.tasks[tiles.id]!.project, ids.kitchen);
+        expect(rowTitles(tester), contains('Tiles'));
+      },
+    );
 
     testWidgets('an empty project with a heading shows the heading', (
       tester,

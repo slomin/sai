@@ -122,7 +122,7 @@ class AppCommands {
       await container.read(tasksProvider.notifier).store.undo();
       notice.clear();
     } on Object catch (error) {
-      notice.show('undo failed: $error');
+      notice.show('undo failed: ${describeFailure(error)}');
     }
   }
 
@@ -170,7 +170,7 @@ class AppCommands {
     } on Object catch (error) {
       container
           .read(noticeProvider.notifier)
-          .show('could not save the setting: $error');
+          .show('could not save the setting: ${describeFailure(error)}');
     }
   }
 
