@@ -248,10 +248,10 @@ final class ThingsDatabase {
       try {
         _checkSchema(db);
       } on SqliteException catch (e) {
-        db.dispose();
+        db.close();
         throw ThingsSchemaException('not an SQLite database (${e.message})');
       } catch (_) {
-        db.dispose();
+        db.close();
         rethrow;
       }
       return ThingsDatabase._(db, copy, path);
@@ -430,7 +430,7 @@ final class ThingsDatabase {
 
   /// Closes the copy and deletes it.
   void dispose() {
-    _db.dispose();
+    _db.close();
     if (_copy.existsSync()) _copy.deleteSync(recursive: true);
   }
 }

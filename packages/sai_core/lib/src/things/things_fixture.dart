@@ -227,5 +227,5 @@ final class ThingsFixture {
 
   /// Flushes without checkpointing, so the newest rows live only in the
   /// WAL — what a running Things leaves behind.
-  void close() => _db.dispose();
+  void close() => _db.close();
 }

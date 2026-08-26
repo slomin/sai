@@ -11,7 +11,7 @@ void main() {
     db.execute('create table t (x integer)');
     db.execute('insert into t values (1)');
     expect(db.select('select x from t').single['x'], 1);
-    db.dispose();
+    db.close();
     expect(sqlite3.version.versionNumber, greaterThan(3040000));
   });
 }

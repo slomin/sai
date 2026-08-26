@@ -119,7 +119,7 @@ void main() {
       final path = p.join(tmp.path, 'other.sqlite');
       sqlite3.open(path)
         ..execute('create table t (x)')
-        ..dispose();
+        ..close();
       expect(
         () => ThingsDatabase.snapshot(path),
         throwsA(
@@ -138,7 +138,7 @@ void main() {
         ..execute(
           thingsFixtureDdl.replaceFirst('"rt1_repeatingTemplate" TEXT,', ''),
         )
-        ..dispose();
+        ..close();
       expect(
         () => ThingsDatabase.snapshot(path),
         throwsA(

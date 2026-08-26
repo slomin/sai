@@ -65,10 +65,6 @@ jobs:
           cache: true
       - name: Resolve the workspace
         run: dart pub get
-      - name: Provide the system SQLite the Things reader loads (#18)
-        # package:sqlite3 2.x opens the OS library at run time; macOS
-        # ships it, the runner needs the dev package for the .so link.
-        run: sudo apt-get install -y --no-install-recommends libsqlite3-dev
       - name: Format
         run: dart format --output=none --set-exit-if-changed packages apps/sai_tui apps/sai_app/lib apps/sai_app/test
       - name: Analyze
@@ -79,13 +75,15 @@ jobs:
       - name: Test sai_tui
         working-directory: apps/sai_tui
         run: dart test
-      - name: Compile sai_tui
-        # The terminal client ships as one binary (#41); prove it builds
-        # and starts. The settings path keeps the run off any real file.
+      - name: Build sai_tui
+        # The terminal client ships as a bundle (#41, #18): the binary
+        # plus the SQLite package:sqlite3 builds through a Dart hook,
+        # which `dart compile exe` refuses — hence `dart build cli`.
+        # Prove it builds and starts; the settings path keeps the run
+        # off any real file.
         run: |
-          mkdir -p build
-          dart compile exe apps/sai_tui/bin/sai_tui.dart -o build/sai_tui
-          SAI_SETTINGS_FILE="$RUNNER_TEMP/settings.json" build/sai_tui reasoning
+          dart build cli -t apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui
+          SAI_SETTINGS_FILE="$RUNNER_TEMP/settings.json" build/tui/bundle/bin/sai_tui reasoning
 
   macos:
     name: Test and build (app)
