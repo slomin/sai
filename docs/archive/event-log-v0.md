@@ -275,14 +275,21 @@ types. Payload schemas:
 | `task.checklist` | user / system / assistant | `payload.task`, `payload.items` — the whole checklist, in order |
 | `area.create` | user / system | `payload.title`; optional `created_at`, `external` |
 | `area.edit` | user / system | `payload.area` plus changed fields |
+| `area.reorder` | user / system | `payload.area`, required nullable `after` — first, or immediately after that live area in the sidebar's persisted order |
+| `area.archive` | user / system | `payload.area`; soft — the area leaves the sidebar and its tasks hide like a deleted container's, placement kept |
+| `area.unarchive` | user / system | `payload.area`; undoes `area.archive`, at the area's unchanged position |
 | `area.delete` | user / system | `payload.area`; soft |
 | `area.restore` | user / system | `payload.area` |
 | `project.create` | user / system | `payload.title`; optional `notes`, `area`, `when`, `deadline`, `tags`, `created_at`, `external` |
-| `project.edit` | user / system | `payload.project` plus changed fields |
+| `project.edit` | user / system | `payload.project` plus changed fields; a changed `area` appends the project to the end of its new group |
+| `project.reorder` | user / system | `payload.project`, required nullable `after` — first, or immediately after that live sibling in the same area (or in the standalone group) |
+| `project.archive` | user / system | `payload.project`; soft — hides like `area.archive` |
+| `project.unarchive` | user / system | `payload.project`; undoes `project.archive` |
 | `project.delete` | user / system | `payload.project`; soft |
 | `project.restore` | user / system | `payload.project` |
 | `heading.create` | user / system | `payload.project`, `payload.title`; optional `created_at`, `external` |
 | `heading.edit` | user / system | `payload.heading` plus changed fields |
+| `heading.reorder` | user / system | `payload.heading`, required nullable `after` — first, or immediately after that live heading of the same project |
 | `heading.delete` | user / system | `payload.heading`; soft |
 | `heading.restore` | user / system | `payload.heading` |
 | `tag.create` | user / system | `payload.title`; optional `parent`, `created_at`, `external` |
