@@ -48,7 +48,11 @@ class TopBar extends ConsumerWidget {
     final commands = AppCommands.of(context);
     final canUndo = ref.watch(canUndoProvider);
     final shown = ref.watch(chatVisibleProvider);
-    final lines = projection.eventCount;
+    // Every writer appends to the archive, not only the task store, so
+    // the count comes from the log's head (archiveLineCountProvider); the
+    // projection's own count stands in until the first read lands.
+    final lines =
+        ref.watch(archiveLineCountProvider).value ?? projection.eventCount;
     return Container(
       height: 60,
       padding: const EdgeInsets.symmetric(horizontal: 20),

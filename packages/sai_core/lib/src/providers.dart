@@ -144,6 +144,17 @@ final canUndoProvider = Provider<bool>((ref) {
 final selectedSectionProvider =
     NotifierProvider<SelectedSection, SidebarSection>(SelectedSection.new);
 
+/// How many lines the archive holds, for the clients' archive line. Every
+/// writer appends there — the task store, the chat, the recorder — so the
+/// count is read from the log's head and refreshed whenever the tasks or
+/// the conversation move on, not derived from the task projection alone.
+final archiveLineCountProvider = FutureProvider<int>((ref) async {
+  final archive = await ref.watch(archiveProvider.future);
+  ref.watch(tasksProvider);
+  ref.watch(chatProvider);
+  return (await archive.head()).count;
+});
+
 /// The task row a client has selected, or null. A client clears it when
 /// the task leaves the view it is showing (#72); the inspector (#74) and
 /// restored workspace state (#76) read the same value.

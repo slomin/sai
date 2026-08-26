@@ -5,10 +5,8 @@ import 'package:sai_core/sai_core.dart';
 import '../commands.dart';
 import '../theme/sai_theme.dart';
 import '../theme/sai_tokens.dart';
-import '../widgets/empty_state.dart';
 import '../widgets/eyebrow.dart';
 import 'dates.dart';
-import 'empty_states.dart';
 import 'task_list.dart';
 
 /// The quick-capture field, so tests and the chrome can find the one
@@ -142,11 +140,9 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
           ),
         ),
         Expanded(
+          // The body shows the empty state itself, so a row finishing as
+          // the last one keeps its place through the confirmation.
           child: switch (view) {
-            AsyncData(:final value) when value.tasks.isEmpty => _Empty(
-              section: section,
-              title: value.title,
-            ),
             AsyncData(:final value) => TaskListBody(
               view: value,
               projection: widget.projection,
@@ -159,29 +155,6 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
           },
         ),
       ],
-    );
-  }
-}
-
-class _Empty extends StatelessWidget {
-  const _Empty({required this.section, required this.title});
-
-  final SidebarSection section;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = emptyCopy(section, title);
-    // Scrolls rather than overflows when the window is short.
-    return SingleChildScrollView(
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: EmptyState(
-          eyebrow: copy.eyebrow,
-          title: copy.title,
-          body: copy.body,
-        ),
-      ),
     );
   }
 }

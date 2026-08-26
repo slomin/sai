@@ -36,7 +36,8 @@ double assistantBandHeight(double height) => (height * 0.4).clamp(160.0, 360.0);
 /// list, docked under it. The header names the provider and stays when
 /// the band is tucked away (⌘J); the body is the conversation (#34) —
 /// the transcript from [chatProvider], the answer as it streams, and the
-/// composer. Opening and closing animate through [SaiMotion]; the draft
+/// composer (one line for now — a multi-line draft is the assistant's own
+/// ticket, #39). Opening and closing animate through [SaiMotion]; the draft
 /// and focus live in `commands.dart`, so nothing is lost either way.
 class AssistantBand extends ConsumerWidget {
   const AssistantBand({super.key, required this.bodyHeight});
@@ -255,7 +256,7 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
                     suffixIcon: Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: Text(
-                        '⏎ SEND · ⇧⏎ NEWLINE',
+                        '⏎ SEND',
                         style: context.saiText.chip.copyWith(
                           color: SaiColors.sheetDim,
                         ),

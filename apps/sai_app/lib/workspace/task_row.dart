@@ -93,14 +93,26 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
     hold.forward().whenComplete(() {
       if (!mounted) return;
       _size.duration = SaiMotion.resolve(context, SaiDurations.collapse);
-      _size.reverse().whenComplete(() {
-        if (mounted) widget.onGone?.call();
-      });
+      _size.reverse().whenComplete(_gone);
     });
+  }
+
+  var _reportedGone = false;
+
+  void _gone() {
+    if (_reportedGone) return;
+    _reportedGone = true;
+    widget.onGone?.call();
   }
 
   @override
   void dispose() {
+    // A collapsed row is a zero-extent leading child, which the sliver
+    // collects before the animation's future settles — so the report goes
+    // out from here as well, after the frame that dropped the row.
+    if (widget.finishing != null && !_reportedGone) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _gone());
+    }
     _hold?.dispose();
     _size.dispose();
     super.dispose();

@@ -326,6 +326,37 @@ void main() {
       expect(container.read(selectedSectionProvider), const TrashSection());
     });
 
+    test(
+      'archiveLineCountProvider counts every writer, not just tasks',
+      () async {
+        final tmp = Directory.systemTemp.createTempSync('sai_archive_count');
+        addTearDown(() => tmp.deleteSync(recursive: true));
+        final container = ProviderContainer.test(
+          overrides: [
+            archiveRootProvider.overrideWithValue(tmp),
+            eventSourceProvider.overrideWithValue(EventSources.tui),
+          ],
+        );
+        container.listen(archiveLineCountProvider, (_, _) {});
+        expect(await container.read(archiveLineCountProvider.future), 0);
+        final store = container.read(tasksProvider.notifier).store;
+        await store.createTask(title: 'one');
+        expect(await container.read(archiveLineCountProvider.future), 1);
+        // A line no task command wrote still counts once the tasks move.
+        final archive = await container.read(archiveProvider.future);
+        await archive.append(
+          EventDraft(
+            type: 'chat.message',
+            actor: Actor.user,
+            source: 'sai/tui',
+            payload: {},
+          ),
+        );
+        await store.createTask(title: 'two');
+        expect(await container.read(archiveLineCountProvider.future), 3);
+      },
+    );
+
     test('selectedTaskProvider starts empty, selects and clears', () {
       final container = ProviderContainer.test();
       expect(container.read(selectedTaskProvider), isNull);

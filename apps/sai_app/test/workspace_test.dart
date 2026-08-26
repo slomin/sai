@@ -394,6 +394,110 @@ void main() {
     });
   });
 
+  group('ghosts', () {
+    testWidgets('a day that empties keeps its ghost under that day', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester, reduceMotion: false);
+      final store = container.read(tasksProvider.notifier).store;
+      final day = container.read(todayProvider);
+      late TaskId soon;
+      await tester.runAsync(() async {
+        soon = await store.createTask(
+          title: 'Soon',
+          when: TaskWhen.date(day.addDays(1)),
+        );
+        await store.createTask(
+          title: 'Later',
+          when: TaskWhen.date(day.addDays(3)),
+        );
+      });
+      await selectSection(tester, container, upcoming);
+      await tester.pump(SaiDurations.enter);
+      await settleEvents(tester, container, () => tester.tap(check(soon)));
+      // The view lost tomorrow; the ghost still confirms under it, above
+      // the later day, not under the later day's header.
+      expect(find.byType(TaskSectionHeader), findsNWidgets(2));
+      expect(find.textContaining('· TOMORROW'), findsOneWidget);
+      expect(find.text('COMPLETED'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('COMPLETED')).dy,
+        lessThan(tester.getTopLeft(find.byType(TaskSectionHeader).last).dy),
+      );
+      await pumpUntil(tester, () => find.text('COMPLETED').evaluate().isEmpty);
+      await tester.pump();
+      expect(find.byType(TaskSectionHeader), findsOneWidget);
+      expect(rowTitles(tester), ['Later']);
+    });
+
+    testWidgets('the last row confirms before the empty state shows', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester, reduceMotion: false);
+      await selectSection(tester, container, inbox);
+      await capture(tester, container, 'Only one');
+      await tester.pump(SaiDurations.enter);
+      final id = container.read(tasksProvider).value!.tasks.keys.single;
+      await settleEvents(tester, container, () => tester.tap(check(id)));
+      expect(find.text('COMPLETED'), findsOneWidget);
+      expect(find.byType(EmptyState), findsNothing);
+      await pumpUntil(
+        tester,
+        () => find.byType(EmptyState).evaluate().isNotEmpty,
+      );
+      expect(find.byType(TaskRow), findsNothing);
+      expect(find.text('Inbox is clear.'), findsOneWidget);
+    });
+
+    testWidgets('a ghost stays in the view it left', (tester) async {
+      final container = await pumpApp(tester, reduceMotion: false);
+      final store = container.read(tasksProvider.notifier).store;
+      final day = container.read(todayProvider);
+      late TaskId id;
+      await tester.runAsync(() async {
+        id = await store.createTask(title: 'Gone');
+        await store.createTask(title: 'Stays', when: TaskWhen.date(day));
+      });
+      await selectSection(tester, container, inbox);
+      await tester.pump(SaiDurations.enter);
+      await settleEvents(tester, container, () => tester.tap(check(id)));
+      expect(find.text('COMPLETED'), findsOneWidget);
+      await selectSection(tester, container, today);
+      expect(find.text('COMPLETED'), findsNothing);
+      expect(rowTitles(tester), ['Stays']);
+      await tester.pump(SaiDurations.hold);
+      await tester.pump(SaiDurations.collapse);
+    });
+  });
+
+  group('scrolling', () {
+    testWidgets('each list opens at its top', (tester) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      final day = container.read(todayProvider);
+      await tester.runAsync(() async {
+        for (var i = 0; i < 30; i++) {
+          await store.createTask(title: 'T$i', when: TaskWhen.date(day));
+          await store.createTask(title: 'I$i');
+        }
+      });
+      await tester.pump();
+      Finder list() => find.descendant(
+        of: find.byType(TaskListBody),
+        matching: find.byType(Scrollable),
+      );
+      await tester.drag(list(), const Offset(0, -600));
+      await tester.pump();
+      expect(
+        tester.state<ScrollableState>(list()).position.pixels,
+        greaterThan(0),
+      );
+      await selectSection(tester, container, inbox);
+      expect(tester.state<ScrollableState>(list()).position.pixels, 0);
+      expect(find.text('I0'), findsOneWidget);
+    });
+  });
+
   group('reordering', () {
     testWidgets('dragging a row by its check reorders Today, and it persists', (
       tester,

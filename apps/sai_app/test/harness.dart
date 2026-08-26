@@ -239,3 +239,19 @@ List<String> rowTitles(WidgetTester tester) {
     );
   return [for (final e in rows) (e.widget as TaskRow).task.title];
 }
+
+/// Pumps frames of [step] until [ready], or fails after [limit] of fake
+/// time — for motion whose exact frame count is not the point.
+Future<void> pumpUntil(
+  WidgetTester tester,
+  bool Function() ready, {
+  Duration step = const Duration(milliseconds: 50),
+  Duration limit = const Duration(seconds: 3),
+}) async {
+  var elapsed = Duration.zero;
+  while (!ready()) {
+    if (elapsed > limit) fail('not ready after $limit');
+    await tester.pump(step);
+    elapsed += step;
+  }
+}

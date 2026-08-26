@@ -233,6 +233,11 @@ void main() {
         log.singleWhere((l) => l.contains('"provider.request"')),
         contains('"context_hash":"sha256-'),
       );
+      // The top bar counts every line, the chat's included.
+      await until(
+        tester,
+        () => find.text('ARCHIVE · ${log.length} LINES').evaluate().isNotEmpty,
+      );
     });
 
     testWidgets('Stop cancels a slow answer', (tester) async {
