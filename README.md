@@ -192,6 +192,12 @@ fresh start rather than a mirror, `--open-only`, `--skip-repeat-history`
 and `--logbook-since YYYY-MM-DD` leave finished tasks behind (and say how
 many); the mapping is in `docs/tasks/task-model-v0.md` § Imports.
 
+The task inspector (#74) opens on the selected row (⌘I opens it on the
+first row) and edits in place: a field commits when it is left, so every
+edit is one archive event and one undo step. Areas, projects and headings
+are organised from the sidebar rows' `…` menu (or a secondary click) and
+a project view's heading headers; tags from the inspector's `Manage…`.
+
 ## Verify
 
 Same commands CI runs, from the repository root:

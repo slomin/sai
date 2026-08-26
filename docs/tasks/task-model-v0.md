@@ -163,9 +163,12 @@ sidebar section:
   calendar day, newest day first and newest finish first within the day.
 
 A client's row selection is `selectedTaskProvider` (#72), a task id or
-null beside the section selection: the client clears it when the task
-leaves the view it is showing, and later surfaces (the inspector, restored
-workspace state) read the same value. Dragging a row in the macOS app maps
+null beside the section selection. Selection is the inspector's open
+state (#74): the app keeps it while the task still exists — an edit that
+moves the task out of the list being shown leaves the inspector on it —
+and clears it when the task is deleted (unless the Trash is showing),
+unknown, or the person moves to a section that does not show it.
+Restored workspace state (#76) reads the same value. Dragging a row in the macOS app maps
 onto the two orders above — Today through `reorderToday`, the Inbox and
 every structural group shown on its own (a project's unheaded tasks, a
 heading, an area's direct tasks) through `reorderTask`, `after` being the
