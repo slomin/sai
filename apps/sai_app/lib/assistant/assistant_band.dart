@@ -102,34 +102,37 @@ class _Header extends StatelessWidget {
         onTap: onTap,
         child: SizedBox(
           height: 44,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              children: [
-                Container(width: 9, height: 9, color: SaiColors.red),
-                const SizedBox(width: 10),
-                Text(
-                  'ASSISTANT',
-                  style: mono.copyWith(
-                    color: SaiColors.sheetText,
-                    fontWeight: FontWeight.w700,
+          // The header's own label speaks for it.
+          child: ExcludeSemantics(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  Container(width: 9, height: 9, color: SaiColors.red),
+                  const SizedBox(width: 10),
+                  Text(
+                    'ASSISTANT',
+                    style: mono.copyWith(
+                      color: SaiColors.sheetText,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    status,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      status,
+                      style: mono.copyWith(color: SaiColors.sheetDim),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    open ? '⌘J TO TUCK AWAY' : '⌘J TO OPEN',
                     style: mono.copyWith(color: SaiColors.sheetDim),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  open ? '⌘J TO TUCK AWAY' : '⌘J TO OPEN',
-                  style: mono.copyWith(color: SaiColors.sheetDim),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

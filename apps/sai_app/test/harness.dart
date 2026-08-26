@@ -7,7 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/platform/reduce_motion.dart';
 import 'package:sai_app/sai_app.dart';
 import 'package:sai_app/sidebar.dart';
+import 'package:sai_app/widgets/check_mark.dart';
 import 'package:sai_app/workspace/task_list_pane.dart';
+import 'package:sai_app/workspace/task_row.dart';
 import 'package:sai_core/sai_core.dart';
 
 /// Stands in for the platform's menu: records what the app would have
@@ -197,3 +199,43 @@ int sidebarCount(WidgetTester tester, SidebarSection section) {
 /// The title of the list the pane is showing.
 String paneTitle(WidgetTester tester) =>
     tester.widget<Text>(find.byKey(paneTitleKey)).data!;
+
+/// Runs [act] (a tap, a drag) under real async and waits until the store
+/// has committed [count] more events, then pumps a frame.
+Future<void> settleEvents(
+  WidgetTester tester,
+  ProviderContainer container,
+  Future<void> Function() act, {
+  int count = 1,
+}) async {
+  final store = container.read(tasksProvider.notifier).store;
+  final expected = store.projection.eventCount + count;
+  await tester.runAsync(() async {
+    await act();
+    while (store.projection.eventCount < expected) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+  });
+  await tester.pump();
+}
+
+/// The row showing [task].
+Finder row(TaskId task) => find.byKey(taskRowKey(task));
+
+/// The check at the head of [task]'s row.
+Finder check(TaskId task) =>
+    find.descendant(of: row(task), matching: find.byType(CheckMark));
+
+/// The titles on screen, top to bottom, of the rows in the list.
+List<String> rowTitles(WidgetTester tester) {
+  final rows = find.byType(TaskRow).evaluate().toList()
+    ..sort(
+      (a, b) => (a.renderObject as RenderBox)
+          .localToGlobal(Offset.zero)
+          .dy
+          .compareTo(
+            (b.renderObject as RenderBox).localToGlobal(Offset.zero).dy,
+          ),
+    );
+  return [for (final e in rows) (e.widget as TaskRow).task.title];
+}

@@ -68,14 +68,20 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
     final view = ref.watch(taskViewProvider(section));
     // The selection follows the task; when it leaves the view, so does
     // the selection (an effect, so it lives in listen, not build).
-    ref.listen(taskViewProvider(section), (_, next) {
+    void follow(AsyncValue<TaskView> view) {
       final selected = ref.read(selectedTaskProvider);
       if (selected == null) return;
-      final tasks = next.value?.tasks;
+      final tasks = view.value?.tasks;
       if (tasks != null && !tasks.any((t) => t.id == selected)) {
         ref.read(selectedTaskProvider.notifier).clear();
       }
-    });
+    }
+
+    ref.listen(taskViewProvider(section), (_, next) => follow(next));
+    ref.listen(
+      selectedSectionProvider,
+      (_, next) => follow(ref.read(taskViewProvider(next))),
+    );
     final text = context.saiText;
     final title = view.value?.title ?? sectionTitle(widget.projection, section);
     final tasks = view.value?.tasks ?? const <Task>[];

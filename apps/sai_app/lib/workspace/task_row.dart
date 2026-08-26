@@ -163,6 +163,7 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
                 check,
                 const SizedBox(width: 8),
                 Expanded(
+                  flex: 3,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -195,8 +196,11 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
                   ),
                 ),
                 const SizedBox(width: 12),
+                // The chips share the width with the title and wrap
+                // inside their share, so a long title or large text never
+                // pushes them out of the row.
                 Flexible(
-                  flex: 0,
+                  flex: 2,
                   child: Wrap(
                     spacing: 6,
                     runSpacing: 4,
