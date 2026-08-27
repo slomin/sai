@@ -17,7 +17,9 @@
 # (ADR 0008). Nothing is notarised: the first launch on another Mac is
 # the Gatekeeper step in docs/release/README.md. A dirty worktree is
 # refused unless SAI_RELEASE_DIRTY=1, so a release is what its commit
-# says it is. `publish` refuses a commit that is not on origin/main.
+# says it is; the build records its commit under dist/, and `publish`
+# refuses a dist built from another commit, a HEAD that is not on
+# origin/main, or an existing v<version> tag that points elsewhere.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -60,6 +62,7 @@ build() {
   tar -C "$dist/tui" -czf "$dist/sai_tui-v$version-macos-$(uname -m).tar.gz" bundle
 
   (cd "$dist" && shasum -a 256 *.zip *.tar.gz > checksums.txt)
+  git rev-parse HEAD > "$dist/commit"
   {
     echo "Pre-release build of sai v$version (commit $commit)."
     echo
@@ -78,13 +81,24 @@ build() {
 
 publish() {
   [ -f "$dist/checksums.txt" ] || { echo "release: nothing built in $dist; run the build first" >&2; exit 1; }
+  head=$(git rev-parse HEAD)
+  built=$(cat "$dist/commit" 2>/dev/null || true)
+  if [ "$built" != "$head" ]; then
+    echo "release: $dist was built from ${built:-an unknown commit}, not $head; run the build again" >&2
+    exit 1
+  fi
   git fetch -q origin main
-  if ! git merge-base --is-ancestor HEAD origin/main; then
+  if ! git merge-base --is-ancestor "$head" origin/main; then
     echo "release: HEAD is not on origin/main; merge first" >&2
     exit 1
   fi
+  tag=$(git ls-remote --tags origin "refs/tags/v$version" "refs/tags/v$version^{}" | tail -n 1 | cut -f1)
+  if [ -n "$tag" ] && [ "$tag" != "$head" ]; then
+    echo "release: tag v$version already exists on origin at $tag, not at $head; delete or move it first" >&2
+    exit 1
+  fi
   gh release create "v$version" --prerelease --title "sai v$version" \
-    --target "$(git rev-parse HEAD)" --notes-file "$dist/notes.md" \
+    --target "$head" --notes-file "$dist/notes.md" \
     "$dist"/*.zip "$dist"/*.tar.gz "$dist/checksums.txt"
 }
 

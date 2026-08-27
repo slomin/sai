@@ -69,12 +69,17 @@ What the older build finds:
 
 - **The archive** is fine: lines it does not know it skips, everything
   else it reads. Nothing is rewritten in place, ever.
-- **The settings file** may be refused when the newer build raised its
-  `version`: the older build then quarantines the file beside itself
-  (`settings.json.quarantine-<timestamp>`, see
-  [settings v0](../settings/settings-v0.md)), starts from defaults and
-  shows the reason on the Settings › General page. Provider keys stay in
-  the Keychain; re-adding a provider with the same id reconnects them.
+- **The settings file** is refused when the newer build raised its
+  `version`: the older build leaves it untouched, runs on defaults, says
+  so on the Settings › General page, and **will not save** — any change
+  to a setting fails until the file is dealt with (see
+  [settings v0](../settings/settings-v0.md)). To keep using the older
+  build, quit it and move the file aside by hand
+  (`mv ~/Library/Application\ Support/sai/settings.json settings.json.newer`),
+  then relaunch and set things up again; provider keys stay in the
+  Keychain and re-adding a provider with the same id picks them up.
+  Going back to the newer build later reads the moved file again once
+  it is moved back.
 
 ## Where the data lives
 
@@ -125,7 +130,9 @@ SAI_CODESIGN_IDENTITY="…" tool/release.sh publish
 
 creates the `v<version>` tag on that commit and the pre-release with the
 three files attached. Publish from the merged commit, never from a
-branch: the script checks that `HEAD` is on `origin/main`.
+branch: the script refuses a `dist/` built from another commit (the
+build writes its commit there), a `HEAD` that is not on `origin/main`,
+and an existing `v<version>` tag that points anywhere else.
 
 Why not Developer ID and notarisation: one person installs this, on
 their own Macs. The paid program, the notarisation round-trip and the
