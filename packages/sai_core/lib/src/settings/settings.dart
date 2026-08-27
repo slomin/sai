@@ -2,6 +2,7 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'provider_config.dart';
+import 'workspace.dart';
 
 /// The file's content was not settings: not JSON, not an object, or a
 /// known key with the wrong type. The store quarantines such a file.
@@ -36,6 +37,7 @@ final class Settings {
     this.providers = const [],
     this.shareTasksWithCloud = false,
     this.reasoningOn = false,
+    this.workspace = WorkspaceState.empty,
     this.problem,
     this.extra = const {},
   });
@@ -63,6 +65,10 @@ final class Settings {
   /// default: faster, and the answer is what matters.
   final bool reasoningOn;
 
+  /// Where the workspace was left (#76): ids and UI preferences a client
+  /// restores at launch after checking them against the projection.
+  final WorkspaceState workspace;
+
   /// The configured provider with [id], or null.
   ProviderConfig? provider(String id) {
     for (final p in providers) {
@@ -85,6 +91,7 @@ final class Settings {
     providers: providers,
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: reasoningOn,
+    workspace: workspace,
     extra: extra,
   );
 
@@ -95,6 +102,7 @@ final class Settings {
     providers: providers,
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: show,
+    workspace: workspace,
     extra: extra,
   );
 
@@ -105,6 +113,7 @@ final class Settings {
     providers: providers,
     shareTasksWithCloud: share,
     reasoningOn: reasoningOn,
+    workspace: workspace,
     extra: extra,
   );
 
@@ -121,6 +130,7 @@ final class Settings {
       providers: next,
       shareTasksWithCloud: shareTasksWithCloud,
       reasoningOn: reasoningOn,
+      workspace: workspace,
       extra: extra,
     );
   }
@@ -135,6 +145,18 @@ final class Settings {
     ],
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: reasoningOn,
+    workspace: workspace,
+    extra: extra,
+  );
+
+  /// The same settings with the workspace remembered as [state]. Clears
+  /// [problem] like [withLlm].
+  Settings withWorkspace(WorkspaceState state) => Settings(
+    llm: llm,
+    providers: providers,
+    shareTasksWithCloud: shareTasksWithCloud,
+    reasoningOn: reasoningOn,
+    workspace: state,
     extra: extra,
   );
 
@@ -192,6 +214,7 @@ final class Settings {
       providers: providers,
       shareTasksWithCloud: share as bool? ?? false,
       reasoningOn: reasoning as bool? ?? false,
+      workspace: WorkspaceState.fromJson(json['workspace']),
       extra: {
         for (final e in json.entries)
           if (!_known.contains(e.key)) e.key: e.value,
@@ -205,6 +228,7 @@ final class Settings {
     'providers',
     'share_tasks_with_cloud',
     'reasoning',
+    'workspace',
   };
 
   /// The file's text: compact JSON, keys sorted, unknown keys included.
@@ -237,6 +261,7 @@ final class Settings {
       // byte-identical across sai versions.
       if (shareTasksWithCloud) 'share_tasks_with_cloud': true,
       if (reasoningOn) 'reasoning': true,
+      if (!workspace.isEmpty) 'workspace': workspace.toJson(),
     }),
   );
 }

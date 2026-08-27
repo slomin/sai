@@ -15,3 +15,4 @@ export 'tasks/store.dart';
 export 'tasks/undo.dart';
 export 'tasks/undo_state.dart';
 export 'tasks/views.dart';
+export 'tasks/workspace.dart';

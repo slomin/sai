@@ -382,6 +382,52 @@ void main() {
       expect(container.read(chatVisibleProvider), isFalse);
       container.read(chatVisibleProvider.notifier).toggle();
       expect(container.read(chatVisibleProvider), isTrue);
+      container.read(chatVisibleProvider.notifier).set(false);
+      expect(container.read(chatVisibleProvider), isFalse);
+    });
+
+    test('collapsedAreasProvider toggles and stays quiet on no change', () {
+      final container = ProviderContainer.test();
+      final areaA = BlobRef.sha256OfBytes([10]);
+      final areaB = BlobRef.sha256OfBytes([11]);
+      var notified = 0;
+      container.listen(collapsedAreasProvider, (_, _) => notified++);
+      expect(container.read(collapsedAreasProvider), isEmpty);
+      final areas = container.read(collapsedAreasProvider.notifier);
+      areas.toggle(areaA);
+      expect(container.read(collapsedAreasProvider), {areaA});
+      areas.set([areaA]);
+      areas.set({areaA});
+      expect(notified, 1, reason: 'the same set is not a change');
+      areas.set([areaB, areaA]);
+      expect(container.read(collapsedAreasProvider), {areaA, areaB});
+      areas.toggle(areaA);
+      expect(container.read(collapsedAreasProvider), {areaB});
+      expect(notified, 3);
+    });
+
+    test('workspaceStateProvider mirrors the workspace in settings form', () {
+      final container = ProviderContainer.test();
+      final areaA = BlobRef.sha256OfBytes([10]);
+      expect(
+        container.read(workspaceStateProvider),
+        const WorkspaceState(section: 'list:today', assistantVisible: true),
+      );
+      container
+          .read(selectedSectionProvider.notifier)
+          .select(AreaSection(areaA));
+      container.read(selectedTaskProvider.notifier).select(taskA);
+      container.read(collapsedAreasProvider.notifier).toggle(areaA);
+      container.read(chatVisibleProvider.notifier).toggle();
+      expect(
+        container.read(workspaceStateProvider),
+        WorkspaceState(
+          section: 'area:$areaA',
+          task: '$taskA',
+          collapsedAreas: ['$areaA'],
+          assistantVisible: false,
+        ),
+      );
     });
   });
 
@@ -482,6 +528,25 @@ void main() {
         File('${tmp.path}/settings.json').readAsStringSync(),
         '{"llm":"fake","version":0}',
       );
+    });
+
+    test('the workspace is written, once per change, and read back', () {
+      final container = make();
+      final settings = container.read(settingsProvider.notifier);
+      final file = File('${tmp.path}/settings.json');
+      settings.setWorkspace(WorkspaceState.empty);
+      expect(file.existsSync(), isFalse, reason: 'nothing to remember');
+      const left = WorkspaceState(section: 'trash', assistantVisible: false);
+      settings.setWorkspace(left);
+      expect(
+        file.readAsStringSync(),
+        '{"llm":null,"version":0,"workspace":{"assistant_visible":false,'
+        '"section":"trash"}}',
+      );
+      final stamp = file.lastModifiedSync();
+      settings.setWorkspace(left);
+      expect(file.lastModifiedSync(), stamp, reason: 'no change, no write');
+      expect(make().read(settingsProvider).workspace, left);
     });
 
     test('the selection survives into a fresh container', () {
