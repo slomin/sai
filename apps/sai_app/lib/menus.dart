@@ -156,6 +156,18 @@ List<PlatformMenuItem> saiMenus({
   PlatformMenu(
     label: 'Go',
     menus: [
+      PlatformMenuItemGroup(
+        members: [
+          PlatformMenuItem(
+            label: 'Quick Find…',
+            shortcut: const SingleActivator(
+              LogicalKeyboardKey.keyK,
+              meta: true,
+            ),
+            onSelected: () => commands.showFind(''),
+          ),
+        ],
+      ),
       for (final list in TaskList.values)
         PlatformMenuItem(
           label: listTitle(list),
@@ -244,13 +256,60 @@ class SaiChrome extends ConsumerStatefulWidget {
 class _SaiChromeState extends ConsumerState<SaiChrome> {
   (bool, bool, bool, bool)? _menuState;
   List<PlatformMenuItem> _menus = const [];
-  final _resting = FocusScopeNode(debugLabel: 'workspace');
+  // The handler lives on the node: a scope built around a node of its
+  // own reads `onKeyEvent` from the node, not the widget.
+  late final _resting = FocusScopeNode(
+    debugLabel: 'workspace',
+    onKeyEvent: (_, event) => _typed(event, AppCommands.of(context)),
+  );
 
   @override
   void dispose() {
     _resting.dispose();
     super.dispose();
   }
+
+  /// Typing while nothing has the keyboard opens Quick Find on that
+  /// character (#76). Only when the resting scope itself is the primary
+  /// focus — a field anywhere in the shell keeps its own keys — and only
+  /// for a printable character with no ⌘ or ⌃ on it; a chord falls
+  /// through to the bindings.
+  KeyEventResult _typed(KeyEvent event, AppCommands commands) {
+    if (!_resting.hasPrimaryFocus || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    final keys = HardwareKeyboard.instance;
+    if (keys.isMetaPressed || keys.isControlPressed) {
+      return KeyEventResult.ignored;
+    }
+    final character = event.character;
+    if (character == null ||
+        character.isEmpty ||
+        character.trim().isEmpty ||
+        character.codeUnitAt(0) < 0x20 ||
+        _notTyping.contains(event.logicalKey)) {
+      return KeyEventResult.ignored;
+    }
+    commands.showFind(character);
+    return KeyEventResult.handled;
+  }
+
+  static final _notTyping = {
+    LogicalKeyboardKey.escape,
+    LogicalKeyboardKey.enter,
+    LogicalKeyboardKey.numpadEnter,
+    LogicalKeyboardKey.tab,
+    LogicalKeyboardKey.backspace,
+    LogicalKeyboardKey.delete,
+    LogicalKeyboardKey.arrowUp,
+    LogicalKeyboardKey.arrowDown,
+    LogicalKeyboardKey.arrowLeft,
+    LogicalKeyboardKey.arrowRight,
+    LogicalKeyboardKey.home,
+    LogicalKeyboardKey.end,
+    LogicalKeyboardKey.pageUp,
+    LogicalKeyboardKey.pageDown,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -296,6 +355,8 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
           ): commands.cancelSelected,
           const SingleActivator(LogicalKeyboardKey.comma, meta: true):
               commands.showProviders,
+          const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () =>
+              commands.showFind(''),
           for (final list in TaskList.values)
             SingleActivator(listChord(list), meta: true): () =>
                 commands.select(ListSection(list)),
