@@ -630,12 +630,10 @@ void main() {
       var micros = DateTime.utc(2026, 8, 26, 9, 2).microsecondsSinceEpoch;
       final container = await pumpApp(
         tester,
-        overrides: [
-          clockProvider.overrideWithValue(() {
-            micros += 1000000;
-            return DateTime.fromMicrosecondsSinceEpoch(micros, isUtc: true);
-          }),
-        ],
+        clock: () {
+          micros += 1000000;
+          return DateTime.fromMicrosecondsSinceEpoch(micros, isUtc: true);
+        },
       );
       final store = storeOf(container);
       await tester.runAsync(() async {

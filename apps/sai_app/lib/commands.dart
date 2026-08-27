@@ -23,6 +23,22 @@ final chatFocusProvider = Provider<FocusNode>((ref) {
   return node;
 });
 
+/// The node above the assistant's body (#76): while focus is anywhere in
+/// it — the field, Send, Stop — the Task chords are the assistant's, and
+/// [AppCommands] leaves the selected task alone. A plain node, not a
+/// scope: a field that lets go of focus falls back to the chrome's
+/// resting scope, not to the assistant, so a click on the list is enough
+/// to make the chords the task's again.
+final assistantFocusProvider = Provider<FocusNode>((ref) {
+  final node = FocusNode(
+    debugLabel: 'assistant',
+    canRequestFocus: false,
+    skipTraversal: true,
+  );
+  ref.onDispose(node.dispose);
+  return node;
+});
+
 /// The assistant's draft. Owned here rather than by the band so a
 /// half-typed message survives the band being tucked away.
 final chatDraftProvider = Provider<TextEditingController>((ref) {
@@ -110,7 +126,9 @@ class AppCommands {
   /// selected, or closes it (⌘I). Selection is the inspector's state.
   final VoidCallback toggleInspector;
 
-  /// The Task menu (#74): the selected task, or nothing.
+  /// The Task menu (#74): the selected task, or nothing — and nothing
+  /// while the assistant holds focus (#76), whichever way the command
+  /// arrived, so the menu and the chord cannot disagree.
   final VoidCallback completeSelected;
   final VoidCallback cancelSelected;
   final VoidCallback deleteSelected;
@@ -185,7 +203,11 @@ class AppCommands {
     if (first != null && first.isNotEmpty) selection.select(first.first.id);
   }
 
+  /// The task a Task command acts on: the selection, unless the assistant
+  /// pane has the keyboard — then a chord is a chat keystroke, not a
+  /// verdict on a task.
   static Task? _selectedTask(ProviderContainer container) {
+    if (container.read(assistantFocusProvider).hasFocus) return null;
     final id = container.read(selectedTaskProvider);
     return id == null ? null : container.read(tasksProvider).value?.task(id);
   }
@@ -241,12 +263,16 @@ class AppCommands {
         title: const Text('Keyboard Shortcuts'),
         content: const Text(
           '⌘N  New task (focus quick capture)\n'
+          '⌘1–⌘6  Inbox, Today, Upcoming, Anytime, Someday, Logbook\n'
+          '⌘7  Trash\n'
           '⌘I  Open the inspector on the first row, or close it\n'
           '⌘⏎  Complete the selected task (or reopen it)\n'
+          '⌥⌘⏎  Cancel the selected task\n'
           '⌘⌫  Delete the selected task\n'
           '⌘J  Open the assistant, or tuck it away\n'
           '⌘Z  Undo the last change\n'
           '⌘R  Let the model think before it answers, or not\n'
+          '⌘,  Providers and settings\n'
           'Esc  Stop the assistant\'s answer, or leave a field',
         ),
         actions: [

@@ -145,7 +145,7 @@ void main() {
     ) async {
       final container = await pumpApp(tester);
       final store = container.read(tasksProvider.notifier).store;
-      final now = DateTime.now();
+      final now = container.read(clockProvider)();
       await tester.runAsync(() async {
         final old = await store.createTask(title: 'Old');
         final fresh = await store.createTask(title: 'Fresh');

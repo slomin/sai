@@ -138,7 +138,7 @@ void main() {
       );
     });
 
-    test('Go lists every standard list, then the Trash, unbound', () {
+    test('Go lists every standard list, then the Trash, on ⌘1–⌘7', () {
       final go = menuItem(menus(), ['Go']) as PlatformMenu;
       final items = go.menus
           .expand((m) => m is PlatformMenuItemGroup ? m.members : [m])
@@ -152,7 +152,14 @@ void main() {
         'Logbook',
         'Trash',
       ]);
-      expect(items.map((i) => i.shortcut), everyElement(isNull));
+      for (final (i, item) in items.indexed) {
+        expect(
+          chord(item),
+          containsPair('shortcutTrigger', LogicalKeyboardKey.digit1.keyId + i),
+          reason: item.label,
+        );
+        expect(chord(item), containsPair('shortcutModifiers', 1));
+      }
       for (final item in items) {
         item.onSelected!();
       }
@@ -167,9 +174,25 @@ void main() {
       expect(calls, ['shortcuts']);
     });
 
-    test('sai > Providers…', () {
-      menuItem(menus(), ['sai', 'Providers…']).onSelected!();
+    test('sai > Providers… on ⌘,', () {
+      final item = menuItem(menus(), ['sai', 'Providers…']);
+      item.onSelected!();
       expect(calls, ['providers']);
+      expect(
+        chord(item),
+        containsPair('shortcutTrigger', LogicalKeyboardKey.comma.keyId),
+      );
+      expect(chord(item), containsPair('shortcutModifiers', 1));
+    });
+
+    test('Task > Cancel on ⌥⌘⏎', () {
+      final item = menuItem(menus(task: true), ['Task', 'Cancel']);
+      expect(
+        chord(item),
+        containsPair('shortcutTrigger', LogicalKeyboardKey.enter.keyId),
+      );
+      // meta and alt, in Flutter's serialisation of the modifier mask.
+      expect(chord(item), containsPair('shortcutModifiers', 1 | 4));
     });
   });
 

@@ -9,9 +9,8 @@ import 'commands.dart';
 /// the platform's own; everything else routes to [commands]. Built to
 /// grow: new items slot into these menus rather than new ones.
 ///
-/// The Go menu carries no accelerators yet — list switching by key is
-/// deferred to #76; the items keep every list
-/// reachable from the keyboard through the menu bar.
+/// The Go menu binds ⌘1–⌘6 to the standard lists and ⌘7 to the Trash
+/// (#76); the items keep every list discoverable from the menu bar.
 ///
 /// [chatShown] is whether the assistant's band is open right now;
 /// [taskSelected] whether the Task menu has a task to act on.
@@ -29,8 +28,14 @@ List<PlatformMenuItem> saiMenus({
       // Where Settings… goes on macOS; #40 replaces it with the screen.
       PlatformMenuItemGroup(
         members: [
+          // ⌘, is where Settings lives on macOS; the dialog is what
+          // holds sai's settings until #40 gives them a screen.
           PlatformMenuItem(
             label: 'Providers…',
+            shortcut: const SingleActivator(
+              LogicalKeyboardKey.comma,
+              meta: true,
+            ),
             onSelected: commands.showProviders,
           ),
         ],
@@ -96,6 +101,11 @@ List<PlatformMenuItem> saiMenus({
       ),
       PlatformMenuItem(
         label: 'Cancel',
+        shortcut: const SingleActivator(
+          LogicalKeyboardKey.enter,
+          meta: true,
+          alt: true,
+        ),
         onSelected: taskSelected ? commands.cancelSelected : null,
       ),
       PlatformMenuItemGroup(
@@ -149,12 +159,14 @@ List<PlatformMenuItem> saiMenus({
       for (final list in TaskList.values)
         PlatformMenuItem(
           label: listTitle(list),
+          shortcut: SingleActivator(listChord(list), meta: true),
           onSelected: () => commands.select(ListSection(list)),
         ),
       PlatformMenuItemGroup(
         members: [
           PlatformMenuItem(
             label: trashTitle,
+            shortcut: const SingleActivator(trashChord, meta: true),
             onSelected: () => commands.select(const TrashSection()),
           ),
         ],
@@ -188,6 +200,20 @@ List<PlatformMenuItem> saiMenus({
   ),
 ];
 
+/// The digit ⌘-chord of a standard list: ⌘1 Inbox … ⌘6 Logbook, in
+/// [TaskList.values] order.
+LogicalKeyboardKey listChord(TaskList list) => const [
+  LogicalKeyboardKey.digit1,
+  LogicalKeyboardKey.digit2,
+  LogicalKeyboardKey.digit3,
+  LogicalKeyboardKey.digit4,
+  LogicalKeyboardKey.digit5,
+  LogicalKeyboardKey.digit6,
+][list.index];
+
+/// ⌘7: the Trash, after the six lists.
+const trashChord = LogicalKeyboardKey.digit7;
+
 /// The chrome around the shell: the native menu bar and the key bindings,
 /// both driving one [AppCommands]. Sits above the shell so its rebuilds
 /// are only ever about the menu's own state; the menu tree is rebuilt —
@@ -201,6 +227,11 @@ List<PlatformMenuItem> saiMenus({
 /// kept. With an empty undo stack the menu item is disabled, so the chord
 /// reaches the binding, which swallows it: otherwise Flutter's own text
 /// undo would bring the last captured line back into the field.
+///
+/// Focus rests on the chrome's own scope (#76): nothing autofocuses at
+/// launch, a field that gives focus up lands back here, and a chord
+/// reaches the bindings from here — Flutter routes a key up from the
+/// primary focus, so with focus above the bindings nothing would fire.
 class SaiChrome extends ConsumerStatefulWidget {
   const SaiChrome({super.key, required this.child});
 
@@ -213,6 +244,13 @@ class SaiChrome extends ConsumerStatefulWidget {
 class _SaiChromeState extends ConsumerState<SaiChrome> {
   (bool, bool, bool, bool)? _menuState;
   List<PlatformMenuItem> _menus = const [];
+  final _resting = FocusScopeNode(debugLabel: 'workspace');
+
+  @override
+  void dispose() {
+    _resting.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -251,11 +289,23 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
               commands.completeSelected,
           const SingleActivator(LogicalKeyboardKey.backspace, meta: true):
               commands.deleteSelected,
+          const SingleActivator(
+            LogicalKeyboardKey.enter,
+            meta: true,
+            alt: true,
+          ): commands.cancelSelected,
+          const SingleActivator(LogicalKeyboardKey.comma, meta: true):
+              commands.showProviders,
+          for (final list in TaskList.values)
+            SingleActivator(listChord(list), meta: true): () =>
+                commands.select(ListSection(list)),
+          const SingleActivator(trashChord, meta: true): () =>
+              commands.select(const TrashSection()),
         },
         // A scope of its own: a field that gives focus up (Escape, Enter,
         // a click beside it) lands here, inside the bindings, rather than
         // on the route's scope above them.
-        child: FocusScope(child: widget.child),
+        child: FocusScope(node: _resting, autofocus: true, child: widget.child),
       ),
     );
   }

@@ -68,6 +68,7 @@ Future<ProviderContainer> pumpApp(
   List<LlmProvider Function()> builtins = const [FakeLlmProvider.new],
   bool settled = true,
   bool reduceMotion = true,
+  DateTime Function()? clock,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
   // real data directory, whatever the developer's environment says.
@@ -91,6 +92,10 @@ Future<ProviderContainer> pumpApp(
       todayProvider.overrideWithBuild(
         (ref, notifier) => CalendarDate.fromLocal(ref.watch(clockProvider)()),
       ),
+      // A pinned day, advancing with real time so event timestamps keep
+      // their order: the goldens carry dates, and a golden that only
+      // matches on the day it was recorded is not a golden.
+      clockProvider.overrideWithValue(clock ?? _pinnedClock()),
       // Reduced by default, so lists settle in one frame and a test never
       // waits out a confirmation hold; the motion tests turn it back on.
       reduceMotionProvider.overrideWithBuild((ref, notifier) => reduceMotion),
@@ -286,4 +291,11 @@ Future<void> pumpUntil(
     await tester.pump(step);
     elapsed += step;
   }
+}
+
+/// Wednesday 26 August 2026, noon local, then the wall clock's progress.
+DateTime Function() _pinnedClock() {
+  final start = DateTime(2026, 8, 26, 12);
+  final elapsed = Stopwatch()..start();
+  return () => start.add(elapsed.elapsed);
 }
