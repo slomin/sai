@@ -211,6 +211,27 @@ void main() {
       expect(find.byKey(captureFieldKey), findsOneWidget);
     }, variant: macOS);
 
+    testWidgets('opening a row survives the dialog animating out', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester, reduceMotion: false);
+      final store = container.read(tasksProvider.notifier).store;
+      late ProjectId garden;
+      await tester.runAsync(() async {
+        garden = await store.createProject(title: 'Garden');
+      });
+      await tester.pump();
+      await type(tester, 'g');
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      // Mid-transition: the dialog is popped but still built.
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(tester.takeException(), isNull);
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      expect(container.read(selectedSectionProvider), ProjectSection(garden));
+    }, variant: macOS);
+
     testWidgets('nothing matching says so; Esc leaves without a trace', (
       tester,
     ) async {

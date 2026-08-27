@@ -42,6 +42,9 @@ Future<void> showQuickFind(BuildContext context, {String seed = ''}) {
   final field = TextEditingController(text: seed)
     ..selection = TextSelection.collapsed(offset: seed.length);
   gate._field = field;
+  // The route's future completes when the dialog is popped, while it is
+  // still animating out and building — so the dialog disposes the field
+  // when it unmounts; the gate only stops routing letters to it here.
   return gate._closed =
       showDialog<void>(
         context: context,
@@ -49,14 +52,13 @@ Future<void> showQuickFind(BuildContext context, {String seed = ''}) {
       ).whenComplete(() {
         gate._field = null;
         gate._closed = null;
-        field.dispose();
       });
 }
 
 /// Type, see the matches, ↑↓ to choose, ⏎ to open, Esc to leave. The raw
-/// text lives in [field], owned by [showQuickFind]; every keystroke
-/// re-runs the pure matcher over the projection, so results are never
-/// stale and nothing debounces.
+/// text lives in [field], created by [showQuickFind] and disposed here
+/// when the dialog unmounts; every keystroke re-runs the pure matcher
+/// over the projection, so results are never stale and nothing debounces.
 class QuickFindDialog extends ConsumerStatefulWidget {
   const QuickFindDialog({super.key, required this.field});
 
@@ -80,6 +82,7 @@ class _QuickFindDialogState extends ConsumerState<QuickFindDialog> {
   @override
   void dispose() {
     _controller.removeListener(_onTyped);
+    _controller.dispose();
     super.dispose();
   }
 
