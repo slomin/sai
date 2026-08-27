@@ -65,17 +65,16 @@ void main() {
       await n.preview(const ThingsImportOptions());
       final planned = c.read(thingsImportProvider) as ImportPlanned;
       expect(planned.path, path);
-      expect(planned.result.dryRun, isTrue);
-      expect(planned.result.plan.length, 4);
-      expect(planned.result.report.tasks.created, 2);
-      expect(planned.result.report.unsupported[Unsupported.trashed], 1);
+      expect(planned.operations, 4);
+      expect(planned.report.tasks.created, 2);
+      expect(planned.report.unsupported[Unsupported.trashed], 1);
       expect(await lines(c), 0, reason: 'a preview writes nothing');
 
       final seen = <ThingsImportState>[];
       c.listen(thingsImportProvider, (_, s) => seen.add(s));
       await n.run();
       final done = c.read(thingsImportProvider) as ImportDone;
-      expect(done.result.eventsAppended, 4);
+      expect(done.eventsAppended, 4);
       expect(await lines(c), 4);
       expect(seen.whereType<ImportRunning>(), isNotEmpty);
       expect(seen.whereType<ImportRunning>().last.done, 4);
@@ -83,8 +82,8 @@ void main() {
 
       await n.preview(const ThingsImportOptions());
       final again = c.read(thingsImportProvider) as ImportPlanned;
-      expect(again.result.plan.isEmpty, isTrue);
-      expect(again.result.report.tasks.unchanged, 2);
+      expect(again.operations, 0);
+      expect(again.report.tasks.unchanged, 2);
     });
 
     test('options reach the planner', () async {
@@ -98,8 +97,8 @@ void main() {
       n.useDatabase(path);
       await n.preview(const ThingsImportOptions(openOnly: true));
       final planned = c.read(thingsImportProvider) as ImportPlanned;
-      expect(planned.result.report.tasks.created, 1);
-      expect(planned.result.report.unsupported[Unsupported.openOnly], 1);
+      expect(planned.report.tasks.created, 1);
+      expect(planned.report.unsupported[Unsupported.openOnly], 1);
       expect(planned.options.openOnly, isTrue);
     });
 
@@ -163,10 +162,7 @@ void main() {
       final first = n.run();
       final second = n.run();
       await Future.wait([first, second]);
-      expect(
-        (c.read(thingsImportProvider) as ImportDone).result.eventsAppended,
-        5,
-      );
+      expect((c.read(thingsImportProvider) as ImportDone).eventsAppended, 5);
       expect(await lines(c), 5);
     });
 
@@ -200,7 +196,7 @@ void main() {
       for (final state in seen) {
         expect('$state', isNot(contains('oat milk')), reason: '$state');
         if (state is ImportPlanned) {
-          for (final line in state.result.report.render()) {
+          for (final line in state.report.render()) {
             expect(line, isNot(contains('oat milk')));
           }
         }

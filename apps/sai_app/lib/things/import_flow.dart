@@ -94,7 +94,8 @@ class _ImportFlowState extends ConsumerState<ImportFlow> {
             body: _path(path),
             actions: const [],
           ),
-          ImportPlanned(:final path, :final result) => _planned(path, result),
+          ImportPlanned(:final path, :final report, :final operations) =>
+            _planned(path, report, operations),
           ImportRunning(:final done, :final total) => _frame(
             title: 'Importing…',
             body: Column(
@@ -112,7 +113,8 @@ class _ImportFlowState extends ConsumerState<ImportFlow> {
             ),
             actions: const [],
           ),
-          ImportDone(:final result) => _done(result),
+          ImportDone(:final report, :final operations, :final eventsAppended) =>
+            _done(report, operations, eventsAppended),
           ImportFailed(:final failure, :final path) => _failed(failure, path),
         },
       ),
@@ -218,18 +220,16 @@ class _ImportFlowState extends ConsumerState<ImportFlow> {
     );
   }
 
-  Widget _planned(String path, ThingsImportResult result) {
+  Widget _planned(String path, ImportReport report, int operations) {
     final text = context.saiText;
-    final plan = result.plan;
-    final report = result.report;
-    final line = plan.isEmpty
+    final line = operations == 0
         ? report.unsupported.isEmpty
               ? 'Nothing to do — sai already matches Things.'
               : 'Nothing to do — sai already holds everything this run would '
                     'import; the rows below stay behind.'
-        : '${plan.length} operations would run. Nothing is written yet.';
+        : '$operations operations would run. Nothing is written yet.';
     return _frame(
-      title: plan.isEmpty ? 'Nothing to import' : 'What a run would do',
+      title: operations == 0 ? 'Nothing to import' : 'What a run would do',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -250,24 +250,24 @@ class _ImportFlowState extends ConsumerState<ImportFlow> {
         SaiPrimaryButton(
           key: importRunKey,
           label: 'Import',
-          onPressed: plan.isEmpty ? null : _import.run,
+          onPressed: operations == 0 ? null : _import.run,
         ),
       ],
     );
   }
 
-  Widget _done(ThingsImportResult result) {
+  Widget _done(ImportReport report, int operations, int eventsAppended) {
     final text = context.saiText;
     return _frame(
       title: 'Imported',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _counts(result.report),
+          _counts(report),
           const SizedBox(height: 10),
           Text(
-            '${result.plan.length} operations, ${result.eventsAppended} '
-            'events appended to the archive.',
+            '$operations operations, $eventsAppended events appended to the '
+            'archive.',
             style: text.bodyDim,
           ),
         ],

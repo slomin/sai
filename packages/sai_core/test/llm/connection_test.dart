@@ -36,6 +36,31 @@ final class _Probed implements LlmProvider, LlmEndpointProbe {
   }
 }
 
+/// A provider whose probes answer when the test says.
+final class _Slow implements LlmProvider, LlmEndpointProbe {
+  final answers = <Completer<EndpointInfo>>[];
+  EndpointInfo? next;
+
+  @override
+  String get id => 'probed';
+  @override
+  String get displayName => 'probed';
+  @override
+  LlmPrivacy get privacy => LlmPrivacy.local;
+  @override
+  String get defaultModel => 'm';
+  @override
+  LlmCall start(LlmRequest request) => throw UnimplementedError();
+  @override
+  Future<void> close() async {}
+  @override
+  Future<EndpointInfo> probe() {
+    final completer = Completer<EndpointInfo>();
+    answers.add(completer);
+    return completer.future;
+  }
+}
+
 void main() {
   late Directory tmp;
   setUp(() => tmp = Directory.systemTemp.createTempSync('sai_connection'));
@@ -170,6 +195,31 @@ void main() {
         expect(probed.probes, 3, reason: 'no timer after dispose');
         expect(async.pendingTimers, isEmpty);
       });
+    });
+
+    test('a slow older probe cannot overwrite a newer answer', () async {
+      final probed = _Slow();
+      final c = make(builtins: [() => probed]);
+      c.read(settingsProvider.notifier).selectLlm('probed');
+      expect(c.read(connectionProvider).text, 'probing…');
+      await settle();
+      // The first probe is still pending; a refresh asks again and that
+      // one answers first, ready.
+      probed.next = const EndpointInfo(health: EndpointHealth.ok);
+      c.read(connectionProvider.notifier).refresh();
+      await settle();
+      probed.answers[1].complete(const EndpointInfo(health: EndpointHealth.ok));
+      await settle();
+      expect(c.read(connectionProvider), const ConnectionStatus.ready('ready'));
+      // Now the stale first probe comes back unavailable: dropped.
+      probed.answers[0].complete(
+        const EndpointInfo(
+          health: EndpointHealth.unavailable,
+          failure: LlmFailure(LlmFailureKind.unreachable, 'late'),
+        ),
+      );
+      await settle();
+      expect(c.read(connectionProvider), const ConnectionStatus.ready('ready'));
     });
 
     test('a failed call turns it down without waiting for the timer', () async {

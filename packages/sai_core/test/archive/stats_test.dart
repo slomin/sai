@@ -56,6 +56,29 @@ void main() {
     });
   });
 
+  group('archiveRevisionProvider (#40)', () {
+    test('a bump re-reads the stats and the line count', () async {
+      container.listen(archiveStatsProvider, (_, _) {});
+      container.listen(archiveLineCountProvider, (_, _) {});
+      expect((await container.read(archiveStatsProvider.future)).count, 0);
+      // A writer the watchers cannot see: the recorder, straight in.
+      final recorder = await container.read(llmRecorderProvider.future);
+      final call = await recorder.start(
+        container.read(llmRegistryProvider)['fake']!,
+        providerTestRequest(reasoning: false),
+      );
+      await call.done;
+      expect((await container.read(archiveStatsProvider.future)).count, 0);
+      container.read(archiveRevisionProvider.notifier).bump();
+      final stats = await container.read(archiveStatsProvider.future);
+      expect(stats.count, greaterThan(0));
+      expect(
+        await container.read(archiveLineCountProvider.future),
+        stats.count,
+      );
+    });
+  });
+
   group('archiveVerifyProvider (#40)', () {
     test('a healthy archive verifies to its count', () async {
       final s = await store();

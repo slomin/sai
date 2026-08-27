@@ -158,6 +158,7 @@ final selectedSectionProvider =
 /// count is read from the log's head and refreshed whenever the tasks or
 /// the conversation move on, not derived from the task projection alone.
 final archiveLineCountProvider = FutureProvider<int>((ref) async {
+  ref.watch(archiveRevisionProvider);
   final archive = await ref.watch(archiveProvider.future);
   ref.watch(tasksProvider);
   ref.watch(chatProvider);
@@ -169,9 +170,23 @@ final archiveLineCountProvider = FutureProvider<int>((ref) async {
 /// restored workspace state (#76) read the same value.
 /// Events and bytes the archive holds (#40), re-read whenever the log
 /// moves for the same reasons as [archiveLineCountProvider].
+/// Bumped by a writer the log's other watchers cannot see — a provider
+/// test recorded straight through [LlmRecorder] — so the counts re-read.
+final archiveRevisionProvider = NotifierProvider<ArchiveRevision, int>(
+  ArchiveRevision.new,
+);
+
+class ArchiveRevision extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  void bump() => state = state + 1;
+}
+
 final archiveStatsProvider = FutureProvider<ArchiveStats>((ref) async {
   ref.watch(tasksProvider);
   ref.watch(chatProvider.select((s) => s.turns.length));
+  ref.watch(archiveRevisionProvider);
   final archive = await ref.watch(archiveProvider.future);
   final head = await archive.head();
   return ArchiveStats(count: head.count, bytes: await archive.byteSize());
@@ -814,7 +829,12 @@ class ThingsImportNotifier extends Notifier<ThingsImportState> {
       if (epoch != _epoch) return;
       _snapshot = snapshot;
       _snapshotPath = path;
-      state = ImportPlanned(path: path, result: result, options: options);
+      state = ImportPlanned(
+        path: path,
+        report: result.report,
+        operations: result.plan.length,
+        options: options,
+      );
     } on Object catch (error) {
       if (epoch != _epoch) return;
       _snapshot = null;
@@ -835,7 +855,7 @@ class ThingsImportNotifier extends Notifier<ThingsImportState> {
     _busy = true;
     final epoch = ++_epoch;
     final path = planned.path;
-    final total = planned.result.plan.length;
+    final total = planned.operations;
     state = ImportRunning(path: path, done: 0, total: total);
     try {
       final store = ref.read(tasksProvider.notifier).store;
@@ -852,7 +872,12 @@ class ThingsImportNotifier extends Notifier<ThingsImportState> {
         },
       );
       if (epoch != _epoch) return;
-      state = ImportDone(path: path, result: result);
+      state = ImportDone(
+        path: path,
+        report: result.report,
+        operations: result.plan.length,
+        eventsAppended: result.eventsAppended,
+      );
     } on Object catch (error) {
       if (epoch != _epoch) return;
       state = ImportFailed(classifyThingsError(error, path: path), path: path);
@@ -919,6 +944,10 @@ class Connection extends Notifier<ConnectionStatus> {
 
   /// Which selection a probe answer belongs to; an older one is dropped.
   var _epoch = 0;
+
+  /// Which probe is the newest; an older one still in flight is dropped
+  /// too, so a slow "unavailable" cannot overwrite a fresh "ready".
+  var _request = 0;
 
   @override
   ConnectionStatus build() {
@@ -988,6 +1017,7 @@ class Connection extends Notifier<ConnectionStatus> {
   Future<void> _ask(int epoch) async {
     final probe = _probe;
     if (probe == null) return;
+    final request = ++_request;
     EndpointInfo info;
     try {
       info = await probe.probe();
@@ -998,7 +1028,7 @@ class Connection extends Notifier<ConnectionStatus> {
         failure: LlmFailure(LlmFailureKind.internal, '$error'),
       );
     }
-    if (epoch != _epoch || !ref.mounted) return;
+    if (epoch != _epoch || request != _request || !ref.mounted) return;
     state = switch (info.health) {
       EndpointHealth.ok => const ConnectionStatus.ready('ready'),
       EndpointHealth.loading => const ConnectionStatus.attention('loading'),

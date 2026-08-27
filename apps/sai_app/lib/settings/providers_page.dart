@@ -382,6 +382,12 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       _testText = result.text;
       _testResult = result;
     });
+    // The test wrote its lines straight through the recorder: the archive
+    // counts re-read, and the light learns of a failure now.
+    ref.read(archiveRevisionProvider.notifier).bump();
+    if (result.failure case final failure?) {
+      ref.read(connectionProvider.notifier).callFailed(failure);
+    }
   }
 
   void _save(String id) {

@@ -50,7 +50,10 @@ class FirstRunGate extends ConsumerWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        child,
+        // Out of reach for the keyboard as well as the mouse: the chrome's
+        // chords and menus still fire above this gate, and ⌘N must not
+        // land in the capture field behind the barrier.
+        ExcludeFocus(child: child),
         const ModalBarrier(dismissible: false, color: Colors.black38),
         FocusScope(
           autofocus: true,

@@ -3,7 +3,6 @@
 /// most — never a title.
 library;
 
-import 'things_import.dart';
 import 'things_mapping.dart';
 import 'things_source.dart';
 
@@ -52,22 +51,25 @@ final class ImportReading extends ThingsImportState {
   String toString() => 'ImportReading($path)';
 }
 
-/// The dry run: what a run would do, and with which options.
+/// The dry run: what a run would do, as counts, and with which options.
+/// The plan itself — which names titles — stays inside the notifier.
 final class ImportPlanned extends ThingsImportState {
   const ImportPlanned({
     required this.path,
-    required this.result,
+    required this.report,
+    required this.operations,
     required this.options,
   });
 
   final String path;
+  final ImportReport report;
 
-  /// A dry-run result: [ThingsImportResult.eventsAppended] is 0.
-  final ThingsImportResult result;
+  /// Operations a run would apply; 0 means nothing to do.
+  final int operations;
   final ThingsImportOptions options;
 
   @override
-  String toString() => 'ImportPlanned($path, ${result.plan.length} operations)';
+  String toString() => 'ImportPlanned($path, $operations operations)';
 }
 
 /// Events are being written.
@@ -88,13 +90,20 @@ final class ImportRunning extends ThingsImportState {
 
 /// The run finished.
 final class ImportDone extends ThingsImportState {
-  const ImportDone({required this.path, required this.result});
+  const ImportDone({
+    required this.path,
+    required this.report,
+    required this.operations,
+    required this.eventsAppended,
+  });
 
   final String path;
-  final ThingsImportResult result;
+  final ImportReport report;
+  final int operations;
+  final int eventsAppended;
 
   @override
-  String toString() => 'ImportDone($path, ${result.eventsAppended} events)';
+  String toString() => 'ImportDone($path, $eventsAppended events)';
 }
 
 /// Something stood in the way; [failure] says what and what to do.

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/commands.dart';
 import 'package:sai_app/setup/first_run.dart';
@@ -37,6 +38,25 @@ void main() {
       await capture(tester, container, 'Buy oat milk');
       expect(find.text('Buy oat milk'), findsOneWidget);
     });
+
+    testWidgets('⌘N cannot reach the capture field behind the welcome', (
+      tester,
+    ) async {
+      final tmp = tempDir();
+      final container = await pumpApp(tester, tmp: tmp, firstRun: true);
+      expect(find.byKey(firstRunKey), findsOneWidget);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyN);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyN);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+      expect(container.read(captureFocusProvider).hasFocus, isFalse);
+      // The menu item is no way around it either.
+      menuItem(menuDelegate.menus, ['File', 'New Task']).onSelected!();
+      await tester.pump();
+      expect(container.read(captureFocusProvider).hasFocus, isFalse);
+      expect(find.byKey(firstRunKey), findsOneWidget);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
     testWidgets('setup done in the file: no welcome, ever', (tester) async {
       final tmp = tempDir();

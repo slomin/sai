@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import '../theme/sai_theme.dart';
+import '../theme/sai_tokens.dart';
 import '../widgets/sai_toggle.dart';
 import 'archive_page.dart';
 import 'settings_row.dart';
 
 /// The assistant-on-launch switch, for tests.
 const assistantOnLaunchKey = Key('assistant-on-launch');
+const settingsProblemKey = Key('settings-problem');
 
 /// Settings › General (#40): how sai behaves. One row for now — the
 /// assistant's band at launch — and the Archive card the reference puts
@@ -21,10 +24,25 @@ class GeneralPage extends ConsumerWidget {
     // launch (`workspace.assistant_visible`), so "starts expanded" is
     // exactly "is expanded now" — one owner, no second key to drift.
     final open = ref.watch(chatVisibleProvider);
+    final problem = ref.watch(settingsProvider.select((s) => s.problem));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SettingsPageHeader(eyebrow: 'General', title: 'How sai behaves'),
+        // A quarantined or refused settings file, said where the settings
+        // are (ADR 0006): what the status line only calls "unreadable".
+        if (problem case final problem?)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Semantics(
+              liveRegion: true,
+              child: Text(
+                problem,
+                key: settingsProblemKey,
+                style: context.saiText.note.copyWith(color: SaiColors.redInk),
+              ),
+            ),
+          ),
         SettingsRow(
           label: 'Open the assistant with the app',
           helper: 'The ink band starts expanded',

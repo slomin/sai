@@ -227,6 +227,77 @@ void main() {
       );
     });
 
+    testWidgets('a refused settings file is said on General', (tester) async {
+      final tmp = tempDir();
+      File('${tmp.path}/settings.json').writeAsStringSync('{"version":9}');
+      await pumpApp(tester, tmp: tmp);
+      await open(tester);
+      expect(
+        tester.widget<Text>(find.byKey(settingsProblemKey)).data,
+        contains('version 9'),
+      );
+    });
+
+    testWidgets('the Archive card re-reads after a provider test', (
+      tester,
+    ) async {
+      final tmp = tempDir();
+      final container = await pumpApp(tester, tmp: tmp);
+      // A fake with an endpoint: the Test button shows, nothing dials out.
+      final settings = container.read(settingsProvider.notifier);
+      settings.upsertProvider(
+        ProviderConfig(
+          id: 'lan',
+          kind: 'fake',
+          endpoint: 'http://127.0.0.1:1/v1',
+          defaultModel: 'qwen',
+        ),
+      );
+      settings.selectLlm('lan');
+      await tester.pump();
+      await open(tester);
+      await tester.tap(find.byKey(settingsNavKey(SettingsSection.archive)));
+      await tester.pump();
+      // Real I/O lands on a short real-async wait, then a pump reads it.
+      Future<void> settle() async {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 200)),
+        );
+        await tester.pump();
+      }
+
+      await settle();
+      expect(container.read(archiveStatsProvider).value?.count, 0);
+      await tester.tap(find.byKey(settingsNavKey(SettingsSection.providers)));
+      await tester.pump();
+      await tester.tap(find.text('Test'));
+      await tester.pump();
+      // The fake streams on the test clock and the recorder writes on the
+      // real one: alternate the two, bounded, until its three lines land.
+      final root = Directory('${tmp.path}/archive');
+      for (var i = 0; i < 20 && archiveLines(root).length < 3; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+        await settle();
+      }
+      final lines = archiveLines(root).length;
+      expect(
+        lines,
+        greaterThanOrEqualTo(3),
+        reason: 'request, response, usage',
+      );
+      // Back on the card, which listens: the bumped future re-reads the
+      // files on the next real-async settle.
+      await tester.tap(find.byKey(settingsNavKey(SettingsSection.archive)));
+      await tester.pump();
+      await settle();
+      expect(
+        container.read(archiveStatsProvider).value?.count,
+        lines,
+        reason: 'the bump re-read the log',
+      );
+      expect(find.textContaining('$lines LINES'), findsWidgets);
+    });
+
     testWidgets('formats', (tester) async {
       expect(thousands(18402), '18,402');
       expect(thousands(999), '999');
