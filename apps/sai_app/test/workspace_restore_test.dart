@@ -113,6 +113,16 @@ void main() {
       expect(container.read(noticeProvider), isEmpty);
     });
 
+    testWidgets('an untouched first launch writes nothing', (tester) async {
+      final tmp = tempDir();
+      await seed(Directory('${tmp.path}/archive'));
+      final file = File('${tmp.path}/settings.json');
+      await pumpApp(tester, tmp: tmp);
+      await past(tester);
+      await past(tester);
+      expect(file.existsSync(), isFalse, reason: 'nothing moved, no file');
+    });
+
     testWidgets('moving around is remembered, a little after the fact', (
       tester,
     ) async {

@@ -86,8 +86,12 @@ class _WorkspaceRestorerState extends ConsumerState<WorkspaceRestorer> {
     }
     // What was saved and what could be restored may differ — a stale id,
     // a folded area that is gone — and a restore that changes nothing
-    // notifies nobody, so the clean copy is written from here.
-    if (ref.read(workspaceStateProvider) != saved) _schedule();
+    // notifies nobody, so the clean copy is written from here. Only when
+    // something was saved: a first launch writes nothing until the person
+    // moves (settings-v0, "while the file does not exist").
+    if (!saved.isEmpty && ref.read(workspaceStateProvider) != saved) {
+      _schedule();
+    }
   }
 
   void _schedule() {
