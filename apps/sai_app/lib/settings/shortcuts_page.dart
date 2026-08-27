@@ -19,6 +19,8 @@ const shortcutRows = <(String, String)>[
   ('⌘Z', 'Undo the last change'),
   ('⌘R', 'Let the model think before it answers, or not'),
   ('⌘,', 'Settings'),
+  ('⏎', 'Send the message to the assistant'),
+  ('⇧⏎', 'New line in the message (⌥⏎ works too)'),
   ('Esc', "Stop the assistant's answer, or leave a field"),
 ];
 

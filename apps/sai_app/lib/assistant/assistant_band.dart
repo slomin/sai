@@ -6,27 +6,11 @@ import '../commands.dart';
 import '../theme/motion.dart';
 import '../theme/sai_theme.dart';
 import '../theme/sai_tokens.dart';
+import 'chat_composer.dart';
+import 'chat_keys.dart';
 import 'markdown/sai_markdown.dart';
 
-/// The chat pane's input, so tests and Cmd+J can find it.
-const chatFieldKey = Key('chat-field');
-
-/// The transcript list.
-const chatTranscriptKey = Key('chat-transcript');
-
-/// A reasoning block, when shown.
-const chatReasoningKey = Key('chat-reasoning');
-
-/// The button that sends the draft, and the one that stops an answer.
-const chatSendKey = Key('chat-send');
-const chatStopKey = Key('chat-stop');
-
-/// The band's header, which also toggles it.
-const assistantHeaderKey = Key('assistant-header');
-
-/// The connection light and its word (#40).
-const connectionDotKey = Key('connection-dot');
-const connectionTextKey = Key('connection-text');
+export 'chat_keys.dart';
 
 /// What the empty band says.
 const chatEmptyHint =
@@ -41,8 +25,7 @@ double assistantBandHeight(double height) => (height * 0.4).clamp(160.0, 360.0);
 /// list, docked under it. The header names the provider and stays when
 /// the band is tucked away (⌘J); the body is the conversation (#34) —
 /// the transcript from [chatProvider], the answer as it streams, and the
-/// composer (one line for now — a multi-line draft is the assistant's own
-/// ticket, #39). Opening and closing animate through [SaiMotion]; the draft
+/// composer (multi-line: Enter sends, ⇧⏎ breaks the line — #39). Opening and closing animate through [SaiMotion]; the draft
 /// and focus live in `commands.dart`, so nothing is lost either way.
 class AssistantBand extends ConsumerWidget {
   const AssistantBand({super.key, required this.bodyHeight});
@@ -210,7 +193,6 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
     ref.listen(chatProvider, (_, _) => _follow());
     final state = ref.watch(chatProvider);
     final reasoningOn = ref.watch(reasoningProvider);
-    final commands = AppCommands.of(context);
     final text = context.saiText;
     return Column(
       children: [
@@ -247,81 +229,7 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
                   ],
                 ),
         ),
-        if (state.error case final error?)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                error,
-                style: text.small.copyWith(color: SaiColors.red),
-              ),
-            ),
-          ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  key: chatFieldKey,
-                  controller: ref.watch(chatDraftProvider),
-                  focusNode: ref.watch(chatFocusProvider),
-                  onSubmitted: (_) => commands.sendChat(),
-                  style: text.body.copyWith(color: SaiColors.sheetText),
-                  decoration: InputDecoration(
-                    hintText: 'Ask sai…',
-                    hintStyle: text.body.copyWith(color: SaiColors.sheetDim),
-                    fillColor: SaiColors.sheetCard,
-                    enabledBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(color: SaiColors.sheetRule),
-                      borderRadius: BorderRadius.all(
-                        Radius.circular(SaiRadius.medium),
-                      ),
-                    ),
-                    focusedBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(color: SaiColors.sheetRuleMid),
-                      borderRadius: BorderRadius.all(
-                        Radius.circular(SaiRadius.medium),
-                      ),
-                    ),
-                    suffixIcon: Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: Text(
-                        '⏎ SEND',
-                        style: context.saiText.chip.copyWith(
-                          color: SaiColors.sheetDim,
-                        ),
-                      ),
-                    ),
-                    suffixIconConstraints: const BoxConstraints(minWidth: 0),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              if (state.busy)
-                FilledButton(
-                  key: chatStopKey,
-                  onPressed: commands.cancelChat,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: SaiColors.sheetCard,
-                    foregroundColor: SaiColors.sheetText,
-                  ),
-                  child: const Text('Stop'),
-                )
-              else
-                FilledButton(
-                  key: chatSendKey,
-                  onPressed: commands.sendChat,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: SaiColors.red,
-                    foregroundColor: SaiColors.white,
-                  ),
-                  child: const Text('Send'),
-                ),
-            ],
-          ),
-        ),
+        const ChatComposer(),
       ],
     );
   }
