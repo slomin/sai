@@ -136,8 +136,12 @@ class _ImportFlowState extends ConsumerState<ImportFlow> {
     child: const Text('Close'),
   );
 
-  Widget _path(String path) =>
-      Text(path, style: mono(12, color: SaiColors.inkDim), maxLines: 2);
+  Widget _path(String path) => Text(
+    path,
+    style: mono(12, color: SaiColors.inkDim),
+    maxLines: 3,
+    overflow: TextOverflow.ellipsis,
+  );
 
   Widget _source(String path) {
     final text = context.saiText;
