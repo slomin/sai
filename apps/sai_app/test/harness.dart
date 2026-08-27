@@ -87,6 +87,10 @@ Future<ProviderContainer> pumpApp(
     overrides: [
       archiveRootProvider.overrideWithValue(root),
       settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
+      // A home of its own (#40): nothing that resolves a path from the
+      // environment — the Things locator above all — may wander into the
+      // developer's real directories from a test.
+      environmentProvider.overrideWithValue({'HOME': tmp.path}),
       eventSourceProvider.overrideWithValue(EventSources.app),
       // Never the login keychain from a test.
       secretStoreProvider.overrideWithValue(InMemorySecretStore()),
