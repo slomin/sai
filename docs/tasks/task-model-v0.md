@@ -238,8 +238,9 @@ supplied. Imports write as actor `system`.
 
 #### Things 3 (#18)
 
-`sai_tui things import [--dry-run] [--db <main.sqlite>]` reads a private
-copy of the Things database (`packages/sai_core/lib/src/things/`,
+`sai_tui things import [--dry-run] [--db <main.sqlite>]` — and, since
+#40, the app's first-run welcome and Settings › Archive through the same
+`thingsImportProvider` — reads a private copy of the Things database (`packages/sai_core/lib/src/things/`,
 verified against Things 3.23.1 — 3.22.12 has the same schema) and plans
 against the projection: an entity whose `things3:<uuid>` the index knows
 gets only the events that change what differs; nothing matches, nothing
