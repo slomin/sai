@@ -19,7 +19,8 @@ This repository is a Dart workspace:
 | `docs/archive/`      | The archive format contract ([event log v0](docs/archive/event-log-v0.md)). |
 | `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
 | `docs/settings/`     | The settings file contract ([settings v0](docs/settings/settings-v0.md)).   |
-| `tool/`              | Developer scripts (`sign-tui.sh`) and the smoke drivers (`smoke/`).         |
+| `docs/release/`      | Installing, upgrading and building a release ([README](docs/release/README.md)). |
+| `tool/`              | Developer scripts (`release.sh`, `sign-tui.sh`) and the smoke drivers (`smoke/`). |
 | `docs/decisions/`    | Technical ADRs.                                                            |
 
 Both clients read the same providers from `sai_core`; nothing in `sai_core`
@@ -157,6 +158,8 @@ SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/tui
 
 Build a debug app bundle (what CI does): `cd apps/sai_app && flutter build
 macos --debug` → `apps/sai_app/build/macos/Build/Products/Debug/sai.app`.
+A signed release of both clients is `tool/release.sh`
+([docs/release](docs/release/README.md)).
 
 The app's look is the Sai visual system (`references/gui_design_v1_0/`): the
 tokens live in `apps/sai_app/lib/theme/`, and the two families it sets in —

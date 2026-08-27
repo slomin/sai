@@ -41,7 +41,9 @@ One implementation serves both clients.
   self-signed "Code Signing" certificate from Keychain Access, applied
   through the gitignored `macos/Runner/Configs/Local.xcconfig` and
   `tool/sign-tui.sh`, keeps the identity across builds in development;
-  #42 signs releases with Developer ID. No identity name is in the tree.
+  releases are signed with an Apple Development identity through
+  `tool/release.sh` (ADR [0017](0017-releases-are-signed-with-an-apple-development-identity.md)).
+  No identity name is in the tree.
 - **Every test uses a throwaway keychain** created with
   `SecKeychainCreate` under a temp directory; nothing under `test/`
   reaches the login keychain, and nothing prompts. Off macOS the
