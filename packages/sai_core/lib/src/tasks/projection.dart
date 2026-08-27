@@ -176,6 +176,12 @@ final class TaskProjection implements UndoState {
   List<Task> underHeading(HeadingId id, {bool archived = false}) =>
       _placed((t) => t.heading == id, archived: archived);
 
+  /// Open, undeleted tasks carrying [tag], visible containers only, in
+  /// structural order — the tag view Quick Find opens (#76). Tasks parked
+  /// in an archived container stay out unless [archived] says otherwise.
+  List<Task> withTag(TagId tag, {bool archived = false}) =>
+      _placed((t) => t.tags.contains(tag), archived: archived);
+
   List<Task> _placed(bool Function(Task) where, {required bool archived}) =>
       _ordered(structuralOrder, [
         for (final task in tasks.values)

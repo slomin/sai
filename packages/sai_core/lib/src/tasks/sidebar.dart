@@ -1,11 +1,12 @@
+import '../archive/blobref.dart';
 import 'date.dart';
 import 'lists.dart';
 import 'model.dart';
 import 'projection.dart';
 
 /// One place a client's attention can rest: a standard list, the Trash,
-/// an area, or a project. Value classes, so selection state compares by
-/// meaning rather than by instance.
+/// an area, a project, or a tag. Value classes, so selection state compares
+/// by meaning rather than by instance.
 sealed class SidebarSection {
   const SidebarSection();
 }
@@ -67,6 +68,58 @@ final class ProjectSection extends SidebarSection {
 
   @override
   String toString() => 'ProjectSection($project)';
+}
+
+/// The open tasks carrying one tag (#76). Reached through Quick Find, not
+/// the sidebar — [sidebarModel] lists no tags, so while a tag is selected
+/// no sidebar row is highlighted; the pane title names the tag.
+final class TagSection extends SidebarSection {
+  const TagSection(this.tag);
+
+  final TagId tag;
+
+  @override
+  bool operator ==(Object other) => other is TagSection && other.tag == tag;
+
+  @override
+  int get hashCode => Object.hash(TagSection, tag);
+
+  @override
+  String toString() => 'TagSection($tag)';
+}
+
+/// The stable text form of a section — what a settings file stores (#76):
+/// `list:<name>`, `trash`, `area:<id>`, `project:<id>`, `tag:<id>`.
+String sectionKey(SidebarSection section) => switch (section) {
+  ListSection(:final list) => 'list:${list.name}',
+  TrashSection() => 'trash',
+  AreaSection(:final area) => 'area:$area',
+  ProjectSection(:final project) => 'project:$project',
+  TagSection(:final tag) => 'tag:$tag',
+};
+
+/// The inverse of [sectionKey]; null for anything this sai does not
+/// understand — a stale preference is never a reason to fail.
+SidebarSection? sectionFromKey(String key) {
+  if (key == 'trash') return const TrashSection();
+  final colon = key.indexOf(':');
+  if (colon <= 0) return null;
+  final kind = key.substring(0, colon);
+  final rest = key.substring(colon + 1);
+  if (kind == 'list') {
+    for (final list in TaskList.values) {
+      if (list.name == rest) return ListSection(list);
+    }
+    return null;
+  }
+  final id = BlobRef.tryParse(rest);
+  if (id == null) return null;
+  return switch (kind) {
+    'area' => AreaSection(id),
+    'project' => ProjectSection(id),
+    'tag' => TagSection(id),
+    _ => null,
+  };
 }
 
 /// One sidebar row: what it is called, how many tasks it holds, and the
@@ -201,6 +254,7 @@ List<Task> sectionTasks(
     project,
     archived: true,
   ),
+  TagSection(:final tag) => projection.withTag(tag),
 };
 
 /// The heading a main pane shows for [section]. A container that is
@@ -217,6 +271,10 @@ String sectionTitle(TaskProjection projection, SidebarSection section) =>
       },
       ProjectSection(:final project) => switch (projection.projects[project]) {
         Project(deletedAt: null, :final title) => title,
+        _ => _unknown,
+      },
+      TagSection(:final tag) => switch (projection.tags[tag]) {
+        Tag(deletedAt: null, :final title) => title,
         _ => _unknown,
       },
     };

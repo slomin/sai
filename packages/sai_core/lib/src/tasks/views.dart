@@ -100,6 +100,13 @@ TaskView taskView(
       projection,
       project,
     ),
+    TagSection(:final tag) => [
+      TaskViewSection(
+        kind: TaskViewSectionKind.flat,
+        title: title,
+        tasks: projection.withTag(tag),
+      ),
+    ],
   };
   return TaskView(section: section, title: title, sections: sections);
 }

@@ -210,6 +210,72 @@ void main() {
         'plant',
       );
     });
+
+    test(
+      'a tag section lists the open, visible tasks carrying the tag',
+      () async {
+        final tag = await store.createTag(title: 'errand');
+        final project = await store.createProject(title: 'Garden');
+        await store.createTask(title: 'plant', project: project, tags: [tag]);
+        final done = await store.createTask(title: 'dig', tags: [tag]);
+        await store.completeTask(done);
+        await store.createTask(title: 'untagged');
+        final parked = await store.createProject(title: 'Attic');
+        await store.createTask(
+          title: 'sort boxes',
+          project: parked,
+          tags: [tag],
+        );
+        await store.archiveProject(parked);
+        expect(
+          sectionTasks(
+            store.projection,
+            TagSection(tag),
+            today: today,
+          ).map((t) => t.title),
+          ['plant'],
+        );
+      },
+    );
+  });
+
+  group('section keys', () {
+    test('every section kind round-trips through its key', () {
+      final id = BlobRef.sha256OfBytes([7]);
+      final sections = [
+        for (final list in TaskList.values) ListSection(list),
+        const TrashSection(),
+        AreaSection(id),
+        ProjectSection(id),
+        TagSection(id),
+      ];
+      for (final section in sections) {
+        expect(
+          sectionFromKey(sectionKey(section)),
+          section,
+          reason: '$section',
+        );
+      }
+      expect(sectionKey(const ListSection(TaskList.today)), 'list:today');
+      expect(sectionKey(const TrashSection()), 'trash');
+      expect(sectionKey(TagSection(id)), 'tag:$id');
+    });
+
+    test('a key this sai does not understand reads as nothing', () {
+      for (final bad in [
+        '',
+        'today',
+        'list:',
+        'list:tomorrow',
+        'area:',
+        'area:not-a-ref',
+        'project:sha256-abc',
+        'heading:${BlobRef.sha256OfBytes([1])}',
+        'trash:extra',
+      ]) {
+        expect(sectionFromKey(bad), isNull, reason: bad);
+      }
+    });
   });
 
   group('sectionTitle', () {
@@ -221,6 +287,14 @@ void main() {
       expect(sectionTitle(p, const TrashSection()), 'Trash');
       expect(sectionTitle(p, AreaSection(area)), 'Home');
       expect(sectionTitle(p, ProjectSection(project)), 'Garden');
+      final tag = await store.createTag(title: 'errand');
+      expect(sectionTitle(store.projection, TagSection(tag)), 'errand');
+    });
+
+    test('a deleted tag reads as gone', () async {
+      final tag = await store.createTag(title: 'errand');
+      await store.deleteTag(tag);
+      expect(sectionTitle(store.projection, TagSection(tag)), '(deleted)');
     });
 
     test('a deleted container reads as gone', () async {
@@ -258,6 +332,9 @@ void main() {
       expect(const TrashSection(), const TrashSection());
       expect(AreaSection(a), AreaSection(a));
       expect(AreaSection(a), isNot(AreaSection(b)));
+      expect(TagSection(a), TagSection(a));
+      expect(TagSection(a), isNot(TagSection(b)));
+      expect(TagSection(a), isNot(AreaSection(a)));
       expect(ProjectSection(a), ProjectSection(a));
       expect(ProjectSection(a), isNot(AreaSection(a)));
       expect({AreaSection(a), AreaSection(a), ProjectSection(a)}, hasLength(2));
