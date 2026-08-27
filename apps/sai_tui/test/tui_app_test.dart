@@ -43,7 +43,7 @@ void main() {
       await pumpTui(tester);
       expect(
         tester.terminalState,
-        containsText('sai 2.0.0-dev — nothing here yet'),
+        containsText('sai $saiVersion — nothing here yet'),
       );
       expect(tester.terminalState, containsText('Capture to Inbox'));
       expect(tester.terminalState, containsText('^C quit'));
@@ -228,7 +228,7 @@ void main() {
       expect(archiveLines(container), hasLength(0));
       expect(
         tester.terminalState,
-        containsText('sai 2.0.0-dev — nothing here yet'),
+        containsText('sai $saiVersion — nothing here yet'),
       );
     }, size: size);
   });

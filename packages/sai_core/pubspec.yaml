@@ -1,6 +1,6 @@
 name: sai_core
 description: Core of sai — task model, archive, provider routing and the shared riverpod layer. Pure Dart, no Flutter.
-version: 2.0.0-dev
+version: 0.0.1-dev.1
 publish_to: none
 resolution: workspace
 
