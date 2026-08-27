@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import '../commands.dart';
+import '../things/import_flow.dart';
 import '../platform/finder.dart';
 import '../theme/sai_theme.dart';
 import '../theme/sai_tokens.dart';
@@ -12,6 +13,7 @@ import 'settings_row.dart';
 const revealInFinderKey = Key('reveal-in-finder');
 const verifyHashesKey = Key('verify-hashes');
 const verifyStatusKey = Key('verify-status');
+const importThingsKey = Key('import-things');
 
 /// Settings › Archive (#40): where the record lives and how big it is,
 /// the Finder, the integrity pass — and nothing of what it holds.
@@ -25,6 +27,8 @@ class ArchivePage extends StatelessWidget {
       children: [
         SettingsPageHeader(eyebrow: 'Archive', title: 'The record on disk'),
         ArchiveCard(),
+        SizedBox(height: 18),
+        _ImportRow(),
       ],
     );
   }
@@ -113,6 +117,24 @@ class ArchiveCard extends ConsumerWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The import, reachable after setup too: the same flow as first run.
+class _ImportRow extends StatelessWidget {
+  const _ImportRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return SettingsRow(
+      label: 'Import from Things 3',
+      helper: 'A preview first; run it again and only the differences land',
+      control: OutlinedButton(
+        key: importThingsKey,
+        onPressed: () => showImportFlow(context),
+        child: const Text('Import…'),
       ),
     );
   }

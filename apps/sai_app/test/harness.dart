@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/platform/reduce_motion.dart';
 import 'package:sai_app/sai_app.dart';
+import 'package:sai_app/setup/first_run.dart';
 import 'package:sai_app/sidebar.dart';
 import 'package:sai_app/widgets/check_mark.dart';
 import 'package:sai_app/workspace/task_list_pane.dart';
@@ -77,6 +78,8 @@ Future<ProviderContainer> pumpApp(
   bool reduceMotion = true,
   DateTime Function()? clock,
   Directory? tmp,
+  Map<String, String> environment = const {},
+  bool firstRun = false,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
   // real data directory, whatever the developer's environment says. A
@@ -90,7 +93,7 @@ Future<ProviderContainer> pumpApp(
       // A home of its own (#40): nothing that resolves a path from the
       // environment — the Things locator above all — may wander into the
       // developer's real directories from a test.
-      environmentProvider.overrideWithValue({'HOME': tmp.path}),
+      environmentProvider.overrideWithValue({'HOME': tmp.path, ...environment}),
       eventSourceProvider.overrideWithValue(EventSources.app),
       // Never the login keychain from a test.
       secretStoreProvider.overrideWithValue(InMemorySecretStore()),
@@ -111,6 +114,9 @@ Future<ProviderContainer> pumpApp(
       // Reduced by default, so lists settle in one frame and a test never
       // waits out a confirmation hold; the motion tests turn it back on.
       reduceMotionProvider.overrideWithBuild((ref, notifier) => reduceMotion),
+      // Past the welcome (#40) unless a test is about it: an empty archive
+      // and no file is what every test starts from.
+      setupSeenProvider.overrideWithBuild((ref, notifier) => !firstRun),
       ...overrides,
     ],
   );

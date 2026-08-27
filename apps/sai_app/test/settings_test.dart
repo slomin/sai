@@ -79,7 +79,7 @@ void main() {
               )
               .first,
         ),
-        containsSemantics(label: 'Providers', isButton: true, isSelected: true),
+        isSemantics(label: 'Providers', isButton: true, isSelected: true),
       );
     });
 
@@ -130,7 +130,7 @@ void main() {
       await open(tester);
       expect(
         tester.getSemantics(find.byKey(assistantOnLaunchKey)),
-        containsSemantics(
+        isSemantics(
           label: 'Open the assistant with the app',
           isButton: true,
           isToggled: true,
