@@ -1,7 +1,7 @@
 name: sai_app
 description: sai for macOS.
 publish_to: none
-version: 2.0.0-dev+1
+version: 0.0.1-dev.1+1
 resolution: workspace
 
 environment:

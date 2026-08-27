@@ -20,7 +20,8 @@ prototype stays reachable at annotated tag `go-final`, branch
 ## Consequences
 
 - `main` builds with the Dart toolchain only; CI has no Go job.
-- There is no release process for v2 until #42; `v*` tags are inert.
+- The Dart line is released by hand with `tool/release.sh` (#42, ADR
+  0017); a `v*` tag is created by that script, never by CI.
 - Install links frozen in the v0.1.0 notes and in the archived README
   point at `main/install.sh`, which is gone. The script lives at
   `https://raw.githubusercontent.com/slomin/sai/go-final/install.sh`.

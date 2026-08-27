@@ -24,6 +24,7 @@ usage: sai_tui                       open the terminal client
                             [--open-only] [--skip-repeat-history]
                             [--logbook-since YYYY-MM-DD]
                                     bring the Things 3 database over
+       sai_tui version               print the version
        sai_tui help
 
 Provider settings go to settings.json; keys go to the Keychain and are
@@ -76,6 +77,10 @@ Future<int> runCli(
 }) async {
   if (args.isEmpty || args.first == 'help' || args.first == '--help') {
     out.writeln(cliUsage);
+    return cliOk;
+  }
+  if (args.first == 'version' || args.first == '--version') {
+    out.writeln('sai_tui $saiVersion');
     return cliOk;
   }
   int usage(String message) {

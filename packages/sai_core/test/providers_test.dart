@@ -22,7 +22,7 @@ void main() {
     final container = ProviderContainer.test();
     expect(
       container.read(shellGreetingProvider),
-      'sai 2.0.0-dev — nothing here yet',
+      'sai $saiVersion — nothing here yet',
     );
   });
 

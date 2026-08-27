@@ -2,6 +2,8 @@
 # Drives the debug sai app for a manual smoke without a human at the mouse.
 #
 #   tool/smoke/drive.sh launch <scratch-dir>   build/... sai with scratch env
+#                                              (SAI_APP_BIN=<…/sai.app/Contents/MacOS/sai>
+#                                              drives another bundle)
 #   tool/smoke/drive.sh shot <name.png>        screenshot of the sai window
 #   tool/smoke/drive.sh click <x> <y> [name]   real mouse click at window-
 #                                              relative points, then shot
@@ -25,7 +27,8 @@
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-bin=$root/apps/sai_app/build/macos/Build/Products/Debug/sai.app/Contents/MacOS/sai
+# SAI_APP_BIN points at another bundle, e.g. a release from dist/ (#42).
+bin=${SAI_APP_BIN:-$root/apps/sai_app/build/macos/Build/Products/Debug/sai.app/Contents/MacOS/sai}
 tools=${TMPDIR:-/tmp}/sai-smoke-tools
 mkdir -p "$tools"
 [ -x "$tools/click" ] || swiftc -O -o "$tools/click" "$here/click.swift"

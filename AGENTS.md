@@ -152,8 +152,10 @@ the layout and the toolchain; this file has the rules.
   no `riverpod_generator`); revisit when a package earns it.
 - Keep secrets, device identifiers, and machine-specific paths out of the
   tree.
-- There is no v2 release process yet (#42). Pushing a `v*` tag does
-  nothing; versions are bumped by hand (`saiVersion` and the pubspecs).
+- Releases are built and published by hand with `tool/release.sh`
+  (`docs/release/README.md`, ADR 0017); CI has no release job and a
+  pushed `v*` tag does nothing. Bump `saiVersion` and the three pubspecs
+  together before a release; tests keep them equal.
 
 ## Commits and pull requests
 
