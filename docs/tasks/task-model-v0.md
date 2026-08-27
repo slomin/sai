@@ -125,6 +125,10 @@ appends it to the end of its new group, like a placement move without
 `after`; an edit that rewrites the same area leaves the order alone. A log
 without reorder events replays into creation order. Tags have no order.
 
+A **tag view** (`TagSection`, #76) is a projection query, not a list: the
+open, visible tasks carrying one tag, in structural order, reached
+through Quick Find. No event and no order of its own.
+
 Areas and projects can also be **archived** (`*.archive` / `*.unarchive`,
 `archivedAt`): an archived container leaves the sidebar's main groups and
 hides its tasks exactly as a deleted container does — placement and its
