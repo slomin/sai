@@ -64,6 +64,28 @@ void main() {
       expect(dialog, findsOneWidget);
     }, variant: macOS);
 
+    testWidgets('fast typing lands every letter in the one dialog', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      // Three letters before a frame passes: the dialog has not built,
+      // let alone focused its field, when the second and third arrive.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA, character: 'a');
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL, character: 'l');
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyP, character: 'p');
+      await tester.pump();
+      await tester.pump();
+      expect(dialog, findsOneWidget);
+      expect(fieldText(tester), 'alp');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(dialog, findsNothing);
+      // Closed and gone: the next letter opens a fresh one.
+      await type(tester, 'z');
+      expect(dialog, findsOneWidget);
+      expect(fieldText(tester), 'z');
+    }, variant: macOS);
+
     testWidgets('typing into a field is typing, not a summons', (tester) async {
       final container = await pumpApp(tester);
       await chord(tester, LogicalKeyboardKey.keyN);

@@ -12,31 +12,62 @@ import '../widgets/eyebrow.dart';
 const quickFindFieldKey = Key('quick-find-field');
 Key quickFindResultKey(int index) => ValueKey(('quick-find', index));
 
+/// The one Quick Find that may be open, and the field it types into. A
+/// dialog takes a frame or two to build and focus its field; a person
+/// typing fast has the next letter down before then, and the chrome —
+/// still the primary focus — would open a second dialog on it. The gate
+/// makes that letter land in the first dialog's field instead.
+final quickFindGateProvider = Provider<QuickFindGate>((ref) => QuickFindGate());
+
+class QuickFindGate {
+  TextEditingController? _field;
+  Future<void>? _closed;
+}
+
 /// Opens Quick Find (#76) with [seed] already typed — the character that
-/// summoned it, or nothing for ⌘K. An anonymous route above the chrome:
-/// while it is up the chrome's chords and the typing trigger are inert,
-/// so the dialog binds its own keys.
-Future<void> showQuickFind(BuildContext context, {String seed = ''}) =>
-    showDialog<void>(
-      context: context,
-      builder: (context) => QuickFindDialog(seed: seed),
-    );
+/// summoned it, or nothing for ⌘K — or, while one is already open and
+/// still taking focus, appends [seed] to its field. An anonymous route
+/// above the chrome: once its field has focus the chrome's chords and the
+/// typing trigger are inert, so the dialog binds its own keys.
+Future<void> showQuickFind(BuildContext context, {String seed = ''}) {
+  final gate = ProviderScope.containerOf(
+    context,
+    listen: false,
+  ).read(quickFindGateProvider);
+  if (gate._field case final field?) {
+    field.text = field.text + seed;
+    field.selection = TextSelection.collapsed(offset: field.text.length);
+    return gate._closed!;
+  }
+  final field = TextEditingController(text: seed)
+    ..selection = TextSelection.collapsed(offset: seed.length);
+  gate._field = field;
+  return gate._closed =
+      showDialog<void>(
+        context: context,
+        builder: (context) => QuickFindDialog(field: field),
+      ).whenComplete(() {
+        gate._field = null;
+        gate._closed = null;
+        field.dispose();
+      });
+}
 
 /// Type, see the matches, ↑↓ to choose, ⏎ to open, Esc to leave. The raw
-/// text lives in the field; every keystroke re-runs the pure matcher over
-/// the projection, so results are never stale and nothing debounces.
+/// text lives in [field], owned by [showQuickFind]; every keystroke
+/// re-runs the pure matcher over the projection, so results are never
+/// stale and nothing debounces.
 class QuickFindDialog extends ConsumerStatefulWidget {
-  const QuickFindDialog({super.key, this.seed = ''});
+  const QuickFindDialog({super.key, required this.field});
 
-  final String seed;
+  final TextEditingController field;
 
   @override
   ConsumerState<QuickFindDialog> createState() => _QuickFindDialogState();
 }
 
 class _QuickFindDialogState extends ConsumerState<QuickFindDialog> {
-  late final _controller = TextEditingController(text: widget.seed)
-    ..selection = TextSelection.collapsed(offset: widget.seed.length);
+  TextEditingController get _controller => widget.field;
   var _index = 0;
   var _rowKeys = <GlobalKey>[];
 
@@ -49,7 +80,6 @@ class _QuickFindDialogState extends ConsumerState<QuickFindDialog> {
   @override
   void dispose() {
     _controller.removeListener(_onTyped);
-    _controller.dispose();
     super.dispose();
   }
 
