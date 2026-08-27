@@ -117,6 +117,9 @@ Future<ProviderContainer> pumpApp(
       // Past the welcome (#40) unless a test is about it: an empty archive
       // and no file is what every test starts from.
       setupSeenProvider.overrideWithBuild((ref, notifier) => !firstRun),
+      // The light probes on selection and on demand, never on a timer
+      // here: a periodic timer would outlive the test.
+      connectionProbeEveryProvider.overrideWithValue(null),
       ...overrides,
     ],
   );

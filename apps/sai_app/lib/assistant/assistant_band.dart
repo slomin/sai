@@ -23,6 +23,10 @@ const chatStopKey = Key('chat-stop');
 /// The band's header, which also toggles it.
 const assistantHeaderKey = Key('assistant-header');
 
+/// The connection light and its word (#40).
+const connectionDotKey = Key('connection-dot');
+const connectionTextKey = Key('connection-text');
+
 /// What the empty band says.
 const chatEmptyHint =
     'Ask about your list — what is due, what is coming up, how the day '
@@ -60,6 +64,7 @@ class AssistantBand extends ConsumerWidget {
     final scope = ref.watch(assistantFocusProvider);
     final commands = AppCommands.of(context);
     final status = ref.watch(llmStatusProvider);
+    final connection = ref.watch(connectionProvider);
     return Container(
       decoration: const BoxDecoration(
         color: SaiColors.sheetBg,
@@ -69,7 +74,12 @@ class AssistantBand extends ConsumerWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _Header(status: status, open: open, onTap: commands.toggleChat),
+          _Header(
+            status: status,
+            connection: connection,
+            open: open,
+            onTap: commands.toggleChat,
+          ),
           // A zero-length AnimatedSize still animates — and marks itself
           // dirty during layout — so under Reduce Motion the body just is.
           if (SaiMotion.reduced(context))
@@ -90,11 +100,13 @@ class AssistantBand extends ConsumerWidget {
 class _Header extends StatelessWidget {
   const _Header({
     required this.status,
+    required this.connection,
     required this.open,
     required this.onTap,
   });
 
   final String status;
+  final ConnectionStatus connection;
   final bool open;
   final VoidCallback onTap;
 
@@ -103,7 +115,10 @@ class _Header extends StatelessWidget {
     final mono = context.saiText.meta;
     return Semantics(
       button: true,
-      label: open ? 'Tuck the assistant away' : 'Open the assistant',
+      // The light is spoken, never only coloured (#40).
+      label:
+          '${open ? 'Tuck the assistant away' : 'Open the assistant'}. '
+          'Assistant ${connection.spoken}. $status',
       child: InkWell(
         key: assistantHeaderKey,
         onTap: onTap,
@@ -115,13 +130,21 @@ class _Header extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Row(
                 children: [
-                  Container(width: 9, height: 9, color: SaiColors.red),
+                  ConnectionDot(level: connection.level),
                   const SizedBox(width: 10),
                   Text(
                     'ASSISTANT',
                     style: mono.copyWith(
                       color: SaiColors.sheetText,
                       fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    connection.text.toUpperCase(),
+                    key: connectionTextKey,
+                    style: mono.copyWith(
+                      color: connectionColor(connection.level),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -375,6 +398,37 @@ class _Row extends StatelessWidget {
             ),
           if (error case final error?)
             Text(error, style: styles.small.copyWith(color: SaiColors.red)),
+        ],
+      ),
+    );
+  }
+}
+
+/// The colour of a connection level: green, amber, red.
+Color connectionColor(ConnectionLevel level) => switch (level) {
+  ConnectionLevel.ready => SaiColors.green,
+  ConnectionLevel.attention => SaiColors.amber,
+  ConnectionLevel.down => SaiColors.red,
+};
+
+/// The reference's 9-point square, lit by the connection: a restrained
+/// glow in the level's colour. No animation — a light, not a spinner.
+class ConnectionDot extends StatelessWidget {
+  const ConnectionDot({super.key, required this.level});
+
+  final ConnectionLevel level;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = connectionColor(level);
+    return Container(
+      key: connectionDotKey,
+      width: 9,
+      height: 9,
+      decoration: BoxDecoration(
+        color: color,
+        boxShadow: [
+          BoxShadow(color: color.withValues(alpha: 0.55), blurRadius: 6),
         ],
       ),
     );

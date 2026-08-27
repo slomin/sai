@@ -21,6 +21,12 @@ abstract final class SaiColors {
   static const onInk = Color(0xFFFBFAF8);
   static const white = Color(0xFFFFFFFF);
 
+  /// The assistant header's light (#40): ready, worth a glance, down.
+  /// Two colours the reference does not have — its square is the brand
+  /// red as decoration; the issue asks for a state light in its place.
+  static const green = Color(0xFF3FA66A);
+  static const amber = Color(0xFFE0A526);
+
   /// The ink band (the assistant): a different surface from the list, so
   /// a proposal never looks like a task you already own.
   static const sheetBg = Color(0xFF121110);

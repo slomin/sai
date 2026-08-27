@@ -16,13 +16,13 @@ enum ConnectionLevel {
 }
 
 /// One reading of the connection: the level and the word for it.
-final class ConnectionState {
-  const ConnectionState(this.level, this.text);
+final class ConnectionStatus {
+  const ConnectionStatus(this.level, this.text);
 
-  const ConnectionState.ready(this.text) : level = ConnectionLevel.ready;
-  const ConnectionState.attention(this.text)
+  const ConnectionStatus.ready(this.text) : level = ConnectionLevel.ready;
+  const ConnectionStatus.attention(this.text)
     : level = ConnectionLevel.attention;
-  const ConnectionState.down(this.text) : level = ConnectionLevel.down;
+  const ConnectionStatus.down(this.text) : level = ConnectionLevel.down;
 
   final ConnectionLevel level;
 
@@ -39,11 +39,11 @@ final class ConnectionState {
 
   @override
   bool operator ==(Object other) =>
-      other is ConnectionState && other.level == level && other.text == text;
+      other is ConnectionStatus && other.level == level && other.text == text;
 
   @override
   int get hashCode => Object.hash(level, text);
 
   @override
-  String toString() => 'ConnectionState(${level.name}, $text)';
+  String toString() => 'ConnectionStatus(${level.name}, $text)';
 }

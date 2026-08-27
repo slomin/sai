@@ -63,10 +63,10 @@ void main() {
       final c = make();
       expect(
         c.read(connectionProvider),
-        const ConnectionState.down('no provider'),
+        const ConnectionStatus.down('no provider'),
       );
       c.read(settingsProvider.notifier).selectLlm('fake');
-      expect(c.read(connectionProvider), const ConnectionState.ready('ready'));
+      expect(c.read(connectionProvider), const ConnectionStatus.ready('ready'));
     });
 
     test('a misconfigured or missing key is down, in words', () {
@@ -115,12 +115,12 @@ void main() {
         settings.selectLlm('local');
         expect(
           c.read(connectionProvider),
-          const ConnectionState.attention('probing…'),
+          const ConnectionStatus.attention('probing…'),
         );
         await Future<void>.delayed(const Duration(milliseconds: 300));
         expect(
           c.read(connectionProvider),
-          const ConnectionState.ready('ready'),
+          const ConnectionStatus.ready('ready'),
         );
         final port = stub.port;
         await stub.close();
@@ -153,7 +153,7 @@ void main() {
         expect(probed.probes, 1);
         expect(
           c.read(connectionProvider),
-          const ConnectionState.attention('loading'),
+          const ConnectionStatus.attention('loading'),
         );
         async.elapse(Connection.probeEvery);
         expect(probed.probes, 2);
@@ -163,7 +163,7 @@ void main() {
         expect(probed.probes, 3);
         expect(
           c.read(connectionProvider),
-          const ConnectionState.ready('ready'),
+          const ConnectionStatus.ready('ready'),
         );
         c.dispose();
         async.elapse(Connection.probeEvery * 2);
@@ -189,7 +189,7 @@ void main() {
       await settle();
       expect(
         c.read(connectionProvider),
-        const ConnectionState.down('unreachable'),
+        const ConnectionStatus.down('unreachable'),
       );
     });
   });

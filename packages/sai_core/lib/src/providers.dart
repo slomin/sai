@@ -189,8 +189,14 @@ final archiveVerifyProvider = NotifierProvider<ArchiveVerify, VerifyState>(
 /// it is selected, every [Connection.probeEvery], on [Connection.refresh]
 /// and after a call fails. A provider that cannot be probed (the fake)
 /// is ready; no provider, a misconfigured one or a missing key is down.
-final connectionProvider = NotifierProvider<Connection, ConnectionState>(
+final connectionProvider = NotifierProvider<Connection, ConnectionStatus>(
   Connection.new,
+);
+
+/// How often the light asks again — null never asks on a timer. Widget
+/// tests override it: a periodic timer would outlive the test.
+final connectionProbeEveryProvider = Provider<Duration?>(
+  (ref) => Connection.probeEvery,
 );
 
 final selectedTaskProvider = NotifierProvider<SelectedTask, TaskId?>(
@@ -904,7 +910,7 @@ class ArchiveVerify extends Notifier<VerifyState> {
       path.substring(path.lastIndexOf('/') + 1);
 }
 
-class Connection extends Notifier<ConnectionState> {
+class Connection extends Notifier<ConnectionStatus> {
   /// How often a probeable provider is asked again.
   static const probeEvery = Duration(seconds: 60);
 
@@ -915,7 +921,7 @@ class Connection extends Notifier<ConnectionState> {
   var _epoch = 0;
 
   @override
-  ConnectionState build() {
+  ConnectionStatus build() {
     _timer?.cancel();
     _timer = null;
     _probe = null;
@@ -927,38 +933,40 @@ class Connection extends Notifier<ConnectionState> {
     });
     final settings = ref.watch(settingsProvider);
     if (settings.problem != null) {
-      return const ConnectionState.down('settings unreadable');
+      return const ConnectionStatus.down('settings unreadable');
     }
     final id = settings.llm;
-    if (id == null) return const ConnectionState.down('no provider');
+    if (id == null) return const ConnectionStatus.down('no provider');
     final active = ref.watch(activeLlmProvider);
     if (active == null) {
       final missing = ref.watch(misconfiguredLlmsProvider)[id];
-      return ConnectionState.down(
+      return ConnectionStatus.down(
         missing == null ? 'not available' : 'misconfigured',
       );
     }
     switch (ref.watch(credentialStatusProvider(id))) {
       case CredentialStatus.missing:
-        return const ConnectionState.down('no key');
+        return const ConnectionStatus.down('no key');
       case CredentialStatus.unavailable:
-        return const ConnectionState.down('keychain unavailable');
+        return const ConnectionStatus.down('keychain unavailable');
       case CredentialStatus.none || CredentialStatus.set:
         break;
     }
     if (active case final LlmEndpointProbe probe) {
       _probe = probe;
       scheduleMicrotask(() => _ask(epoch));
-      _timer = Timer.periodic(probeEvery, (_) => _ask(epoch));
-      return const ConnectionState.attention('probing…');
+      if (ref.watch(connectionProbeEveryProvider) case final every?) {
+        _timer = Timer.periodic(every, (_) => _ask(epoch));
+      }
+      return const ConnectionStatus.attention('probing…');
     }
-    return const ConnectionState.ready('ready');
+    return const ConnectionStatus.ready('ready');
   }
 
   /// Asks the endpoint again now.
   void refresh() {
     if (_probe == null) return;
-    state = const ConnectionState.attention('probing…');
+    state = const ConnectionStatus.attention('probing…');
     _ask(_epoch);
   }
 
@@ -992,12 +1000,12 @@ class Connection extends Notifier<ConnectionState> {
     }
     if (epoch != _epoch || !ref.mounted) return;
     state = switch (info.health) {
-      EndpointHealth.ok => const ConnectionState.ready('ready'),
-      EndpointHealth.loading => const ConnectionState.attention('loading'),
-      EndpointHealth.unavailable => ConnectionState.down(
+      EndpointHealth.ok => const ConnectionStatus.ready('ready'),
+      EndpointHealth.loading => const ConnectionStatus.attention('loading'),
+      EndpointHealth.unavailable => ConnectionStatus.down(
         info.failure?.kind.name ?? 'unavailable',
       ),
-      EndpointHealth.unknown => const ConnectionState.ready('ready'),
+      EndpointHealth.unknown => const ConnectionStatus.ready('ready'),
     };
   }
 }
