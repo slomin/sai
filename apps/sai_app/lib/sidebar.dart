@@ -6,9 +6,13 @@ import 'organise/container_menu.dart';
 import 'theme/sai_theme.dart';
 import 'theme/sai_tokens.dart';
 import 'widgets/eyebrow.dart';
+import 'widgets/glyph_button.dart';
 
 /// The key of a section's row, for tests: sections are value types.
 Key sidebarRowKey(SidebarSection section) => ValueKey(section);
+
+/// The key of an area's fold chevron (#76), for tests.
+Key sidebarChevronKey(AreaId area) => ValueKey(('chevron', area));
 
 /// The standard lists with their counts, the Trash, then areas with their
 /// projects nested and the standalone projects in their persisted order,
@@ -23,6 +27,8 @@ class SaiSidebar extends ConsumerWidget {
     final model = ref.watch(sidebarProvider).value;
     final selected = ref.watch(selectedSectionProvider);
     final select = ref.read(selectedSectionProvider.notifier).select;
+    final collapsed = ref.watch(collapsedAreasProvider);
+    final fold = ref.read(collapsedAreasProvider.notifier).toggle;
     if (model == null) return const SizedBox.shrink();
     Widget row(SidebarEntry entry, {bool count = true, bool nested = false}) =>
         SidebarRow(
@@ -36,6 +42,7 @@ class SaiSidebar extends ConsumerWidget {
       SidebarEntry entry, {
       bool nested = false,
       bool archived = false,
+      Widget? leading,
     }) => ContainerMenu(
       section: entry.section,
       title: entry.title,
@@ -46,11 +53,28 @@ class SaiSidebar extends ConsumerWidget {
         count: null,
         selected: entry.section == selected,
         dim: archived,
+        leading: leading,
         trailing: button,
         onTap: () => select(entry.section),
         onSecondaryTapDown: (at) => open(at),
       ),
     );
+    // The fold chevron (#76): folded areas keep their projects out of the
+    // sidebar; the set is remembered across launches.
+    Widget chevron(SidebarArea area, {required bool folded}) {
+      final id = (area.entry.section as AreaSection).area;
+      return GlyphButton(
+        key: sidebarChevronKey(id),
+        glyph: folded ? '›' : '⌄',
+        label: folded
+            ? 'Expand ${area.entry.title}'
+            : 'Collapse ${area.entry.title}',
+        size: 13,
+        minSize: 20,
+        onPressed: () => fold(id),
+      );
+    }
+
     return Container(
       color: SaiColors.bg,
       child: ListView(
@@ -62,9 +86,13 @@ class SaiSidebar extends ConsumerWidget {
           const SizedBox(height: 26),
           const _Heading('Areas & projects', trailing: SidebarAddMenu()),
           for (final area in model.areas) ...[
-            container(area.entry),
-            for (final project in area.projects)
-              container(project, nested: true),
+            if (collapsed.contains((area.entry.section as AreaSection).area))
+              container(area.entry, leading: chevron(area, folded: true))
+            else ...[
+              container(area.entry, leading: chevron(area, folded: false)),
+              for (final project in area.projects)
+                container(project, nested: true),
+            ],
           ],
           for (final project in model.projects) container(project),
           if (model.archived.isNotEmpty) ...[
@@ -112,6 +140,7 @@ class SidebarRow extends StatefulWidget {
     required this.count,
     required this.selected,
     required this.onTap,
+    this.leading,
     this.trailing,
     this.onSecondaryTapDown,
     this.dim = false,
@@ -121,6 +150,10 @@ class SidebarRow extends StatefulWidget {
   final int? count;
   final bool selected;
   final VoidCallback onTap;
+
+  /// Sits in the row's left margin, outside its semantics — the area
+  /// chevron. Always shown, unlike [trailing].
+  final Widget? leading;
   final Widget? trailing;
   final void Function(Offset at)? onSecondaryTapDown;
   final bool dim;
@@ -139,6 +172,7 @@ class _SidebarRowState extends State<SidebarRow> {
     final count = widget.count;
     final selected = widget.selected;
     final dim = widget.dim;
+    final leading = widget.leading;
     final trailing = widget.trailing;
     final onSecondaryTapDown = widget.onSecondaryTapDown;
     final color = selected
@@ -162,6 +196,16 @@ class _SidebarRowState extends State<SidebarRow> {
         ),
         child: Row(
           children: [
+            if (leading case final leading?)
+              SizedBox(
+                width: 21,
+                child: IconTheme(
+                  data: IconThemeData(
+                    color: selected ? SaiColors.onInk : SaiColors.inkFaint,
+                  ),
+                  child: Center(child: leading),
+                ),
+              ),
             Expanded(
               child: Semantics(
                 button: true,
@@ -175,7 +219,7 @@ class _SidebarRowState extends State<SidebarRow> {
                     onTap: widget.onTap,
                     child: Padding(
                       padding: EdgeInsets.only(
-                        left: 21,
+                        left: leading == null ? 21 : 0,
                         right: trailing == null ? 24 : 4,
                       ),
                       // The row's own label carries title and count.

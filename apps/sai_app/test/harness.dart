@@ -62,6 +62,13 @@ PlatformMenuItem menuItem(List<PlatformMenuItem> menus, List<String> path) {
 /// With [settled], the task store is opened (real file I/O, hence
 /// [WidgetTester.runAsync]) before the first frame, so the tree renders
 /// data immediately — no polling.
+/// A fresh directory for one test's archive and settings, removed after.
+Directory tempDir() {
+  final tmp = Directory.systemTemp.createTempSync('sai_app_test');
+  addTearDown(() => tmp.deleteSync(recursive: true));
+  return tmp;
+}
+
 Future<ProviderContainer> pumpApp(
   WidgetTester tester, {
   List<Override> overrides = const [],
@@ -69,11 +76,12 @@ Future<ProviderContainer> pumpApp(
   bool settled = true,
   bool reduceMotion = true,
   DateTime Function()? clock,
+  Directory? tmp,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
-  // real data directory, whatever the developer's environment says.
-  final tmp = Directory.systemTemp.createTempSync('sai_app_test');
-  addTearDown(() => tmp.deleteSync(recursive: true));
+  // real data directory, whatever the developer's environment says. A
+  // test that seeds either before launch passes the [tempDir] it used.
+  tmp ??= tempDir();
   final root = Directory('${tmp.path}/archive');
   final container = ProviderContainer.test(
     overrides: [
