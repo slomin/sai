@@ -30,6 +30,11 @@ import 'tasks/projection.dart';
 import 'tasks/sidebar.dart';
 import 'tasks/store.dart';
 import 'tasks/views.dart';
+import 'things/import_state.dart';
+import 'things/things_db.dart';
+import 'things/things_import.dart';
+import 'things/things_mapping.dart';
+import 'things/things_source.dart';
 
 /// The application identity every client shows.
 final appInfoProvider = Provider<AppInfo>(
@@ -440,6 +445,22 @@ final endpointInfoProvider = FutureProvider.autoDispose
       return const EndpointInfo();
     });
 
+/// How a Things snapshot is read (#40): off the main isolate in the
+/// clients, replaced by a direct read in a widget test.
+final thingsSnapshotReaderProvider =
+    Provider<Future<ThingsSnapshot> Function(String path)>(
+      (ref) => readThingsSnapshot,
+    );
+
+/// The Things import as a flow both clients can render (#40): find or
+/// name the database, preview what a run would do, run it, and say what
+/// stood in the way. One run at a time; a step that finishes after
+/// [ThingsImportNotifier.reset] is dropped.
+final thingsImportProvider =
+    NotifierProvider<ThingsImportNotifier, ThingsImportState>(
+      ThingsImportNotifier.new,
+    );
+
 /// A recorder bound to the archive and this client's source — how a
 /// caller obtains a call that records itself. Deliberately independent
 /// of [activeLlmProvider]: switching never disturbs a running call.
@@ -673,6 +694,137 @@ class CollapsedAreas extends Notifier<Set<AreaId>> {
   void _apply(Set<AreaId> next) {
     if (next.length == state.length && next.every(state.contains)) return;
     state = Set.unmodifiable(next);
+  }
+}
+
+class ThingsImportNotifier extends Notifier<ThingsImportState> {
+  /// Which attempt the state belongs to; a completion from an older one
+  /// is dropped. [_busy] holds a second call while one is running.
+  var _epoch = 0;
+  var _busy = false;
+
+  /// The snapshot the preview read, written by [run] as previewed.
+  ThingsSnapshot? _snapshot;
+  String? _snapshotPath;
+
+  /// Progress is shown every so many operations: each one is a locked,
+  /// synced append, and a rebuild per line would cost more than the line.
+  static const progressEvery = 25;
+
+  @override
+  ThingsImportState build() => const ImportIdle();
+
+  /// Finds the database under the group container, or the one
+  /// [thingsDatabaseEnv] names. Runs only on request, never on build.
+  void locate() {
+    if (_busy) return;
+    final environment = ref.read(environmentProvider);
+    try {
+      final path = locateThingsDatabase(
+        environment: environment,
+        home: environment['HOME'] ?? '',
+      );
+      state = path == null
+          ? const ImportFailed(ThingsNotFound())
+          : ImportSource(path);
+    } on Object catch (error) {
+      state = ImportFailed(classifyThingsError(error));
+    }
+  }
+
+  /// Names the database by hand.
+  void useDatabase(String path) {
+    if (_busy) return;
+    _snapshot = null;
+    state = ImportSource(path);
+  }
+
+  /// Reads the database and plans a run with [options], writing nothing.
+  Future<void> preview(ThingsImportOptions options) async {
+    final path = switch (state) {
+      ImportSource(:final path) ||
+      ImportPlanned(:final path) ||
+      ImportDone(:final path) => path,
+      ImportFailed(:final path?) => path,
+      _ => null,
+    };
+    if (path == null) {
+      throw StateError('nothing to preview: choose a database first');
+    }
+    if (_busy) return;
+    _busy = true;
+    final epoch = ++_epoch;
+    state = ImportReading(path);
+    try {
+      final snapshot = _snapshotPath == path && _snapshot != null
+          ? _snapshot!
+          : await ref.read(thingsSnapshotReaderProvider)(path);
+      await ref.read(tasksProvider.future);
+      if (epoch != _epoch) return;
+      final store = ref.read(tasksProvider.notifier).store;
+      final result = await importThings(
+        snapshot,
+        store: store,
+        now: ref.read(clockProvider)().toUtc(),
+        dryRun: true,
+        options: options,
+      );
+      if (epoch != _epoch) return;
+      _snapshot = snapshot;
+      _snapshotPath = path;
+      state = ImportPlanned(path: path, result: result, options: options);
+    } on Object catch (error) {
+      if (epoch != _epoch) return;
+      _snapshot = null;
+      state = ImportFailed(classifyThingsError(error, path: path), path: path);
+    } finally {
+      if (epoch == _epoch) _busy = false;
+    }
+  }
+
+  /// Writes what the preview planned. Nothing is re-read: what was shown
+  /// is what lands.
+  Future<void> run() async {
+    if (_busy) return;
+    final planned = state;
+    if (planned is! ImportPlanned || _snapshot == null) {
+      throw StateError('nothing to run: preview first');
+    }
+    _busy = true;
+    final epoch = ++_epoch;
+    final path = planned.path;
+    final total = planned.result.plan.length;
+    state = ImportRunning(path: path, done: 0, total: total);
+    try {
+      final store = ref.read(tasksProvider.notifier).store;
+      final result = await importThings(
+        _snapshot!,
+        store: store,
+        now: ref.read(clockProvider)().toUtc(),
+        options: planned.options,
+        onProgress: (done, total) {
+          if (epoch != _epoch) return;
+          if (done % progressEvery == 0 || done == total) {
+            state = ImportRunning(path: path, done: done, total: total);
+          }
+        },
+      );
+      if (epoch != _epoch) return;
+      state = ImportDone(path: path, result: result);
+    } on Object catch (error) {
+      if (epoch != _epoch) return;
+      state = ImportFailed(classifyThingsError(error, path: path), path: path);
+    } finally {
+      if (epoch == _epoch) _busy = false;
+    }
+  }
+
+  /// Back to nothing; a step still running finishes into the void.
+  void reset() {
+    _epoch++;
+    _busy = false;
+    _snapshot = null;
+    state = const ImportIdle();
   }
 }
 
