@@ -84,6 +84,15 @@ class _WorkspaceRestorerState extends ConsumerState<WorkspaceRestorer> {
     if (restored.task case final task?) {
       ref.read(selectedTaskProvider.notifier).select(task);
     }
+    // What was saved and what could be restored may differ — a stale id,
+    // a folded area that is gone — and a restore that changes nothing
+    // notifies nobody, so the clean copy is written from here.
+    if (ref.read(workspaceStateProvider) != saved) _schedule();
+  }
+
+  void _schedule() {
+    _pending?.cancel();
+    _pending = Timer(workspaceSaveDelay, _flush);
   }
 
   void _flush() {
@@ -117,9 +126,7 @@ class _WorkspaceRestorerState extends ConsumerState<WorkspaceRestorer> {
   @override
   Widget build(BuildContext context) {
     ref.listen(workspaceStateProvider, (_, _) {
-      if (!_restored) return;
-      _pending?.cancel();
-      _pending = Timer(workspaceSaveDelay, _flush);
+      if (_restored) _schedule();
     });
     return widget.child;
   }
