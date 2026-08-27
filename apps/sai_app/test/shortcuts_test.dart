@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/assistant/assistant_band.dart';
 import 'package:sai_app/commands.dart';
-import 'package:sai_app/providers_dialog.dart';
+import 'package:sai_app/settings/settings_screen.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
@@ -76,10 +76,17 @@ void main() {
       expect(store.projection.tasks[id]!.status, TaskStatus.cancelled);
     }, variant: macOS);
 
-    testWidgets('⌘, opens the providers dialog', (tester) async {
+    testWidgets('⌘, opens Settings; Esc leaves it with focus back home', (
+      tester,
+    ) async {
       await pumpApp(tester);
       await chord(tester, LogicalKeyboardKey.comma);
-      expect(find.byType(ProvidersDialog), findsOneWidget);
+      expect(find.byKey(settingsScreenKey), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(settingsScreenKey), findsNothing);
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'workspace');
     }, variant: macOS);
 
     testWidgets('a Task command from inside the assistant touches nothing', (

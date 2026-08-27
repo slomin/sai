@@ -1,10 +1,12 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderContainer;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/commands.dart';
-import 'package:sai_app/providers_dialog.dart';
+import 'package:sai_app/settings/providers_page.dart';
+import 'package:sai_app/settings/settings_screen.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
@@ -20,10 +22,20 @@ void main() {
     credential: 'provider:lan',
   );
 
+  /// Settings › Providers: the page the dialog of #29 became (#40).
   Future<void> open(WidgetTester tester) async {
-    menuItem(menuDelegate.menus, ['sai', 'Providers…']).onSelected!();
+    menuItem(menuDelegate.menus, ['sai', 'Settings…']).onSelected!();
     await tester.pump();
-    expect(find.byType(ProvidersDialog), findsOneWidget);
+    await tester.tap(find.byKey(settingsNavKey(SettingsSection.providers)));
+    await tester.pump();
+    expect(find.byType(ProvidersPage), findsOneWidget);
+  }
+
+  /// Escape leaves Settings, page and all.
+  Future<void> close(WidgetTester tester) async {
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    await tester.pump();
   }
 
   Future<void> select(WidgetTester tester, String id) async {
@@ -76,9 +88,8 @@ void main() {
       isNotNull,
       reason: 'nothing is active yet, so the fake can be made so',
     );
-    await tester.tap(find.text('Close'));
-    await tester.pump();
-    expect(find.byType(ProvidersDialog), findsNothing);
+    await close(tester);
+    expect(find.byType(ProvidersPage), findsNothing);
   });
 
   testWidgets('Use switches the active provider in one click', (tester) async {
@@ -135,7 +146,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Save'));
     await tester.pump();
-    expect(find.byType(ProvidersDialog), findsOneWidget, reason: 'stays open');
+    expect(find.byType(ProvidersPage), findsOneWidget, reason: 'stays open');
     expect(find.text('A key is stored in the Keychain.'), findsOneWidget);
 
     final secrets = container.read(secretStoreProvider) as InMemorySecretStore;
@@ -185,9 +196,8 @@ void main() {
     await open(tester);
     await select(tester, 'lan');
     await tester.enterText(find.byKey(apiKeyFieldKey), canary);
-    await tester.tap(find.text('Close'));
-    await tester.pump();
-    expect(find.byType(ProvidersDialog), findsNothing);
+    await close(tester);
+    expect(find.byType(ProvidersPage), findsNothing);
     expect(
       container.read(credentialStatusProvider('lan')),
       CredentialStatus.missing,

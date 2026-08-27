@@ -636,7 +636,7 @@ void main() {
       );
       expect(
         tester.getSemantics(find.byKey(assistantHeaderKey)).label,
-        'Tuck the assistant away',
+        startsWith('Tuck the assistant away'),
       );
       expect(tester.getSemantics(sidebarRow(today)).label, 'Today, 2');
       expect(find.byType(TaskSectionHeader), findsNothing);

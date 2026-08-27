@@ -1,6 +1,6 @@
 # Settings, v0
 
-Status: current · Issues: #21, #29, #22, #27, #23, #76 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md), [0012](../decisions/0012-plaintext-http-is-allowed-on-the-lan.md), [0015](../decisions/0015-the-workspace-is-restored-from-settings.md)
+Status: current · Issues: #21, #29, #22, #27, #23, #76, #40 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md), [0012](../decisions/0012-plaintext-http-is-allowed-on-the-lan.md), [0015](../decisions/0015-the-workspace-is-restored-from-settings.md)
 
 The non-secret preferences both clients share: one JSON object in
 `settings.json`, beside the default archive (`SAI_SETTINGS_FILE` moves it).
@@ -18,6 +18,7 @@ and `test/no_secrets_test.dart` enforce that.
 | `share_tasks_with_cloud` | no | boolean, the privacy switch (#27, ADR 0010): whether a `cloud`-tagged provider may see the task list. Off when absent, and omitted while off |
 | `reasoning` | no | boolean (#34): whether a model may think before it answers. Off (absent) asks the backend not to (`reasoning_effort: none` and `chat_template_kwargs: {enable_thinking: false}` on the request) and the clients show no thinking; on lets it and shows it. Omitted while off |
 | `workspace` | no | object (#76, ADR 0015): where the app's workspace was left — identifiers and UI preferences only, never task text. Omitted while empty; read leniently, see below |
+| `setup` | no | `"done"` once first-run setup was completed (#40, ADR 0016): the person chose to start empty or finished an import. Written on that choice and never unset; omitted before. Any other value reads as not done and is dropped on the next write |
 
 ## Workspace object
 
@@ -60,6 +61,8 @@ and `test/no_secrets_test.dart` enforce that.
   with no task) at launch. It carries a view, not a configuration, so a
   bad value costs a restored view and never the file — and, being a
   known key, it is rewritten clean on the next write rather than kept.
+- **The app shows `problem`.** A quarantined or refused file is said in
+  the first-run welcome and in Settings, not only in the status line.
 - **Removing a provider clears its selection**: `llm` never names a
   provider that is gone.
 - **Moving an endpoint unbinds its key.** A new host, port or scheme

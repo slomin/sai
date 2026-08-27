@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/assistant/assistant_band.dart';
 import 'package:sai_app/commands.dart';
 import 'package:sai_app/menus.dart';
+import 'package:sai_app/settings/settings_screen.dart';
+import 'package:sai_app/settings/shortcuts_page.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
@@ -33,7 +35,8 @@ void main() {
       cancelChat: () => calls.add('cancel'),
       toggleReasoning: () => calls.add('reasoning'),
       showShortcuts: () => calls.add('shortcuts'),
-      showProviders: () => calls.add('providers'),
+      showSettings: (section) => calls.add('settings ${section.name}'),
+      revealArchive: () => calls.add('reveal'),
       showFind: (seed) => calls.add('find "$seed"'),
       open: (result) => calls.add('open $result'),
       select: (section) => calls.add('select $section'),
@@ -71,10 +74,10 @@ void main() {
         appItems
             .where((i) => i is! PlatformProvidedMenuItem)
             .map((i) => i.label),
-        ['Providers…'],
+        ['Settings…'],
         reason: 'the one custom item',
       );
-      expect(appItems[1].label, 'Providers…', reason: 'after About');
+      expect(appItems[1].label, 'Settings…', reason: 'after About');
       expect(appItems.whereType<PlatformProvidedMenuItem>().map(typeOf), [
         PlatformProvidedMenuItemType.about,
         PlatformProvidedMenuItemType.servicesSubmenu,
@@ -188,10 +191,10 @@ void main() {
       expect(calls, ['shortcuts']);
     });
 
-    test('sai > Providers… on ⌘,', () {
-      final item = menuItem(menus(), ['sai', 'Providers…']);
+    test('sai > Settings… on ⌘,', () {
+      final item = menuItem(menus(), ['sai', 'Settings…']);
       item.onSelected!();
-      expect(calls, ['providers']);
+      expect(calls, ['settings general']);
       expect(
         chord(item),
         containsPair('shortcutTrigger', LogicalKeyboardKey.comma.keyId),
@@ -255,24 +258,27 @@ void main() {
       expect(find.byKey(chatFieldKey), findsOneWidget);
     });
 
-    testWidgets('Help > Keyboard Shortcuts opens the dialog', (tester) async {
+    testWidgets('Help > Keyboard Shortcuts opens Settings on the keys', (
+      tester,
+    ) async {
       await pumpApp(tester);
       menuItem(menuDelegate.menus, [
         'Help',
         'Keyboard Shortcuts',
       ]).onSelected!();
       await tester.pump();
-      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.byType(ShortcutsPage), findsOneWidget);
       expect(
         find.descendant(
-          of: find.byType(AlertDialog),
-          matching: find.textContaining('⌘J'),
+          of: find.byType(ShortcutsPage),
+          matching: find.text('⌘J'),
         ),
         findsOneWidget,
       );
-      await tester.tap(find.text('Close'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pump();
-      expect(find.byType(AlertDialog), findsNothing);
+      await tester.pump();
+      expect(find.byKey(settingsScreenKey), findsNothing);
     });
   });
 }

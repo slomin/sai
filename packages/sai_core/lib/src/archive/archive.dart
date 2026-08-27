@@ -239,6 +239,17 @@ final class Archive {
     return ArchiveReport(count: head.count, head: head.head);
   }
 
+  /// Bytes the day files hold — what the log costs on disk. Read without
+  /// the lock and without walking a line: a figure for a settings
+  /// screen, not a check.
+  Future<int> byteSize() async {
+    var total = 0;
+    for (final file in _store.dayFiles()) {
+      total += file.lengthSync();
+    }
+    return total;
+  }
+
   /// Releases the archive's lock handle. Call at a quiet point (provider
   /// disposal, shutdown) — the next operation reopens it transparently.
   Future<void> close() => _store.close();

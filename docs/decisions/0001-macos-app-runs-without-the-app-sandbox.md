@@ -42,3 +42,16 @@ into its container and break the one archive the app and the terminal
 client share (ADR 0006). For a hand-distributed local app (#42) that
 trade is not worth it. Revisit only if App Store distribution becomes a
 goal.
+
+## Amendment (2026-08-27, #40)
+
+The app imports from Things after all: first-run setup and Settings ›
+Archive run the same core importer the TUI command runs, so the app
+reads the group container again — under the importer's discipline
+(`things_db.dart`): a private copy under the system temp directory,
+never the file in the container, and nothing of a title in state, a
+log or a report. The original reason for staying out of the sandbox
+holds once more, and the 2026-08-26 amendment's "the app never reads
+the Things container" no longer does. Reading the container from the
+app bundle may need Full Disk Access; the import's permission failure
+names that step.

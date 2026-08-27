@@ -9,6 +9,9 @@ import 'archive/archive.dart';
 import 'chat/chat.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
+import 'archive/verify_state.dart';
+import 'llm/connection.dart';
+import 'llm/failure.dart';
 import 'llm/builtins.dart';
 import 'llm/factory.dart';
 import 'llm/openai_compatible/provider.dart';
@@ -30,6 +33,11 @@ import 'tasks/projection.dart';
 import 'tasks/sidebar.dart';
 import 'tasks/store.dart';
 import 'tasks/views.dart';
+import 'things/import_state.dart';
+import 'things/things_db.dart';
+import 'things/things_import.dart';
+import 'things/things_mapping.dart';
+import 'things/things_source.dart';
 
 /// The application identity every client shows.
 final appInfoProvider = Provider<AppInfo>(
@@ -150,6 +158,7 @@ final selectedSectionProvider =
 /// count is read from the log's head and refreshed whenever the tasks or
 /// the conversation move on, not derived from the task projection alone.
 final archiveLineCountProvider = FutureProvider<int>((ref) async {
+  ref.watch(archiveRevisionProvider);
   final archive = await ref.watch(archiveProvider.future);
   ref.watch(tasksProvider);
   ref.watch(chatProvider);
@@ -159,6 +168,52 @@ final archiveLineCountProvider = FutureProvider<int>((ref) async {
 /// The task row a client has selected, or null. A client clears it when
 /// the task leaves the view it is showing (#72); the inspector (#74) and
 /// restored workspace state (#76) read the same value.
+/// Events and bytes the archive holds (#40), re-read whenever the log
+/// moves for the same reasons as [archiveLineCountProvider].
+/// Bumped by a writer the log's other watchers cannot see — a provider
+/// test recorded straight through [LlmRecorder] — so the counts re-read.
+final archiveRevisionProvider = NotifierProvider<ArchiveRevision, int>(
+  ArchiveRevision.new,
+);
+
+class ArchiveRevision extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  void bump() => state = state + 1;
+}
+
+final archiveStatsProvider = FutureProvider<ArchiveStats>((ref) async {
+  ref.watch(tasksProvider);
+  ref.watch(chatProvider.select((s) => s.turns.length));
+  ref.watch(archiveRevisionProvider);
+  final archive = await ref.watch(archiveProvider.future);
+  final head = await archive.head();
+  return ArchiveStats(count: head.count, bytes: await archive.byteSize());
+});
+
+/// The on-demand integrity pass (#40): [Archive.verify] behind a
+/// button. A notifier rather than a future provider on purpose — the
+/// walk takes the writer lock, and a failure must land once, not be
+/// retried ten times over the whole log.
+final archiveVerifyProvider = NotifierProvider<ArchiveVerify, VerifyState>(
+  ArchiveVerify.new,
+);
+
+/// The assistant header's light (#40): the active provider probed when
+/// it is selected, every [Connection.probeEvery], on [Connection.refresh]
+/// and after a call fails. A provider that cannot be probed (the fake)
+/// is ready; no provider, a misconfigured one or a missing key is down.
+final connectionProvider = NotifierProvider<Connection, ConnectionStatus>(
+  Connection.new,
+);
+
+/// How often the light asks again — null never asks on a timer. Widget
+/// tests override it: a periodic timer would outlive the test.
+final connectionProbeEveryProvider = Provider<Duration?>(
+  (ref) => Connection.probeEvery,
+);
+
 final selectedTaskProvider = NotifierProvider<SelectedTask, TaskId?>(
   SelectedTask.new,
 );
@@ -440,6 +495,22 @@ final endpointInfoProvider = FutureProvider.autoDispose
       return const EndpointInfo();
     });
 
+/// How a Things snapshot is read (#40): off the main isolate in the
+/// clients, replaced by a direct read in a widget test.
+final thingsSnapshotReaderProvider =
+    Provider<Future<ThingsSnapshot> Function(String path)>(
+      (ref) => readThingsSnapshot,
+    );
+
+/// The Things import as a flow both clients can render (#40): find or
+/// name the database, preview what a run would do, run it, and say what
+/// stood in the way. One run at a time; a step that finishes after
+/// [ThingsImportNotifier.reset] is dropped.
+final thingsImportProvider =
+    NotifierProvider<ThingsImportNotifier, ThingsImportState>(
+      ThingsImportNotifier.new,
+    );
+
 /// A recorder bound to the archive and this client's source — how a
 /// caller obtains a call that records itself. Deliberately independent
 /// of [activeLlmProvider]: switching never disturbs a running call.
@@ -501,6 +572,13 @@ class SettingsNotifier extends Notifier<Settings> {
 
   /// Remembers where the workspace was left (#76). A no-op when nothing
   /// changed, so a client may call it on every selection.
+  /// Records that first-run setup is complete (#40); a second call
+  /// writes nothing.
+  void markSetupDone() {
+    if (state.setupDone) return;
+    _commit(state.withSetupDone());
+  }
+
   void setWorkspace(WorkspaceState workspace) {
     if (workspace == state.workspace) return;
     _commit(state.withWorkspace(workspace));
@@ -673,6 +751,292 @@ class CollapsedAreas extends Notifier<Set<AreaId>> {
   void _apply(Set<AreaId> next) {
     if (next.length == state.length && next.every(state.contains)) return;
     state = Set.unmodifiable(next);
+  }
+}
+
+class ThingsImportNotifier extends Notifier<ThingsImportState> {
+  /// Which attempt the state belongs to; a completion from an older one
+  /// is dropped. [_busy] holds a second call while one is running.
+  var _epoch = 0;
+  var _busy = false;
+
+  /// The snapshot the preview read, written by [run] as previewed.
+  ThingsSnapshot? _snapshot;
+  String? _snapshotPath;
+
+  /// Progress is shown every so many operations: each one is a locked,
+  /// synced append, and a rebuild per line would cost more than the line.
+  static const progressEvery = 25;
+
+  @override
+  ThingsImportState build() => const ImportIdle();
+
+  /// Finds the database under the group container, or the one
+  /// [thingsDatabaseEnv] names. Runs only on request, never on build.
+  void locate() {
+    if (_busy) return;
+    final environment = ref.read(environmentProvider);
+    try {
+      final path = locateThingsDatabase(
+        environment: environment,
+        home: environment['HOME'] ?? '',
+      );
+      state = path == null
+          ? const ImportFailed(ThingsNotFound())
+          : ImportSource(path);
+    } on Object catch (error) {
+      state = ImportFailed(classifyThingsError(error));
+    }
+  }
+
+  /// Names the database by hand.
+  void useDatabase(String path) {
+    if (_busy) return;
+    _snapshot = null;
+    state = ImportSource(path);
+  }
+
+  /// Reads the database and plans a run with [options], writing nothing.
+  Future<void> preview(ThingsImportOptions options) async {
+    final path = switch (state) {
+      ImportSource(:final path) ||
+      ImportPlanned(:final path) ||
+      ImportDone(:final path) => path,
+      ImportFailed(:final path?) => path,
+      _ => null,
+    };
+    if (path == null) {
+      throw StateError('nothing to preview: choose a database first');
+    }
+    if (_busy) return;
+    _busy = true;
+    final epoch = ++_epoch;
+    state = ImportReading(path);
+    try {
+      final snapshot = _snapshotPath == path && _snapshot != null
+          ? _snapshot!
+          : await ref.read(thingsSnapshotReaderProvider)(path);
+      await ref.read(tasksProvider.future);
+      if (epoch != _epoch) return;
+      final store = ref.read(tasksProvider.notifier).store;
+      final result = await importThings(
+        snapshot,
+        store: store,
+        now: ref.read(clockProvider)().toUtc(),
+        dryRun: true,
+        options: options,
+      );
+      if (epoch != _epoch) return;
+      _snapshot = snapshot;
+      _snapshotPath = path;
+      state = ImportPlanned(
+        path: path,
+        report: result.report,
+        operations: result.plan.length,
+        options: options,
+      );
+    } on Object catch (error) {
+      if (epoch != _epoch) return;
+      _snapshot = null;
+      state = ImportFailed(classifyThingsError(error, path: path), path: path);
+    } finally {
+      if (epoch == _epoch) _busy = false;
+    }
+  }
+
+  /// Writes what the preview planned. Nothing is re-read: what was shown
+  /// is what lands.
+  Future<void> run() async {
+    if (_busy) return;
+    final planned = state;
+    if (planned is! ImportPlanned || _snapshot == null) {
+      throw StateError('nothing to run: preview first');
+    }
+    _busy = true;
+    final epoch = ++_epoch;
+    final path = planned.path;
+    final total = planned.operations;
+    state = ImportRunning(path: path, done: 0, total: total);
+    try {
+      final store = ref.read(tasksProvider.notifier).store;
+      final result = await importThings(
+        _snapshot!,
+        store: store,
+        now: ref.read(clockProvider)().toUtc(),
+        options: planned.options,
+        onProgress: (done, total) {
+          if (epoch != _epoch) return;
+          if (done % progressEvery == 0 || done == total) {
+            state = ImportRunning(path: path, done: done, total: total);
+          }
+        },
+      );
+      if (epoch != _epoch) return;
+      state = ImportDone(
+        path: path,
+        report: result.report,
+        operations: result.plan.length,
+        eventsAppended: result.eventsAppended,
+      );
+    } on Object catch (error) {
+      if (epoch != _epoch) return;
+      state = ImportFailed(classifyThingsError(error, path: path), path: path);
+    } finally {
+      if (epoch == _epoch) _busy = false;
+    }
+  }
+
+  /// Back to nothing; a step still running finishes into the void.
+  void reset() {
+    _epoch++;
+    _busy = false;
+    _snapshot = null;
+    state = const ImportIdle();
+  }
+}
+
+class ArchiveVerify extends Notifier<VerifyState> {
+  var _running = false;
+
+  @override
+  VerifyState build() => const VerifyIdle();
+
+  /// Walks the whole log. One walk at a time; a second call while one
+  /// runs is ignored.
+  Future<void> verify() async {
+    if (_running) return;
+    _running = true;
+    state = const VerifyRunning();
+    try {
+      final archive = await ref.read(archiveProvider.future);
+      final report = await archive.verify();
+      state = Verified(report.count);
+    } on Object catch (error) {
+      state = VerifyFailed(_describe(error));
+    } finally {
+      _running = false;
+    }
+  }
+
+  /// The reason and the file's name — never its full path, never a
+  /// line's content.
+  static String _describe(Object error) => switch (error) {
+    ArchiveCorruptionError(:final reason, :final file, :final line) =>
+      file == null
+          ? reason
+          : '$reason (${_basename(file)}${line == null ? '' : ':$line'})',
+    TornTailError(:final file, :final offset) =>
+      'a torn tail at byte $offset of ${_basename(file)}; truncate the '
+          'file to that offset and verify again',
+    _ => '$error',
+  };
+
+  static String _basename(String path) =>
+      path.substring(path.lastIndexOf('/') + 1);
+}
+
+class Connection extends Notifier<ConnectionStatus> {
+  /// How often a probeable provider is asked again.
+  static const probeEvery = Duration(seconds: 60);
+
+  Timer? _timer;
+  LlmEndpointProbe? _probe;
+
+  /// Which selection a probe answer belongs to; an older one is dropped.
+  var _epoch = 0;
+
+  /// Which probe is the newest; an older one still in flight is dropped
+  /// too, so a slow "unavailable" cannot overwrite a fresh "ready".
+  var _request = 0;
+
+  @override
+  ConnectionStatus build() {
+    _timer?.cancel();
+    _timer = null;
+    _probe = null;
+    final epoch = ++_epoch;
+    ref.onDispose(() {
+      _timer?.cancel();
+      _timer = null;
+      _epoch++;
+    });
+    final settings = ref.watch(settingsProvider);
+    if (settings.problem != null) {
+      return const ConnectionStatus.down('settings unreadable');
+    }
+    final id = settings.llm;
+    if (id == null) return const ConnectionStatus.down('no provider');
+    final active = ref.watch(activeLlmProvider);
+    if (active == null) {
+      final missing = ref.watch(misconfiguredLlmsProvider)[id];
+      return ConnectionStatus.down(
+        missing == null ? 'not available' : 'misconfigured',
+      );
+    }
+    switch (ref.watch(credentialStatusProvider(id))) {
+      case CredentialStatus.missing:
+        return const ConnectionStatus.down('no key');
+      case CredentialStatus.unavailable:
+        return const ConnectionStatus.down('keychain unavailable');
+      case CredentialStatus.none || CredentialStatus.set:
+        break;
+    }
+    if (active case final LlmEndpointProbe probe) {
+      _probe = probe;
+      scheduleMicrotask(() => _ask(epoch));
+      if (ref.watch(connectionProbeEveryProvider) case final every?) {
+        _timer = Timer.periodic(every, (_) => _ask(epoch));
+      }
+      return const ConnectionStatus.attention('probing…');
+    }
+    return const ConnectionStatus.ready('ready');
+  }
+
+  /// Asks the endpoint again now.
+  void refresh() {
+    if (_probe == null) return;
+    state = const ConnectionStatus.attention('probing…');
+    _ask(_epoch);
+  }
+
+  /// A call ended in [failure]: re-probe now rather than on the timer,
+  /// so the light shows what the person just saw.
+  void callFailed(LlmFailure failure) {
+    switch (failure.kind) {
+      case LlmFailureKind.unreachable ||
+          LlmFailureKind.timeout ||
+          LlmFailureKind.rejected ||
+          LlmFailureKind.credential ||
+          LlmFailureKind.protocol:
+        refresh();
+      case LlmFailureKind.internal || LlmFailureKind.archive:
+        break;
+    }
+  }
+
+  Future<void> _ask(int epoch) async {
+    final probe = _probe;
+    if (probe == null) return;
+    final request = ++_request;
+    EndpointInfo info;
+    try {
+      info = await probe.probe();
+    } on Object catch (error) {
+      // The contract says it never throws; if it does, that is "down".
+      info = EndpointInfo(
+        health: EndpointHealth.unavailable,
+        failure: LlmFailure(LlmFailureKind.internal, '$error'),
+      );
+    }
+    if (epoch != _epoch || request != _request || !ref.mounted) return;
+    state = switch (info.health) {
+      EndpointHealth.ok => const ConnectionStatus.ready('ready'),
+      EndpointHealth.loading => const ConnectionStatus.attention('loading'),
+      EndpointHealth.unavailable => ConnectionStatus.down(
+        info.failure?.kind.name ?? 'unavailable',
+      ),
+      EndpointHealth.unknown => const ConnectionStatus.ready('ready'),
+    };
   }
 }
 

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'commands.dart';
+import 'settings/settings_screen.dart';
 
 /// The native menu bar, built in Dart (ADR 0005). The standard items are
 /// the platform's own; everything else routes to [commands]. Built to
@@ -25,18 +26,16 @@ List<PlatformMenuItem> saiMenus({
     label: 'sai',
     menus: [
       const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.about),
-      // Where Settings… goes on macOS; #40 replaces it with the screen.
+      // Where Settings lives on macOS (#40).
       PlatformMenuItemGroup(
         members: [
-          // ⌘, is where Settings lives on macOS; the dialog is what
-          // holds sai's settings until #40 gives them a screen.
           PlatformMenuItem(
-            label: 'Providers…',
+            label: 'Settings…',
             shortcut: const SingleActivator(
               LogicalKeyboardKey.comma,
               meta: true,
             ),
-            onSelected: commands.showProviders,
+            onSelected: () => commands.showSettings(SettingsSection.general),
           ),
         ],
       ),
@@ -136,9 +135,8 @@ List<PlatformMenuItem> saiMenus({
         onSelected: commands.toggleChat,
       ),
       // Whether the model thinks before it answers (and shows it); the
-      // same switch as the Providers dialog's, until #40 gives it a
-      // screen. Platform items carry no checked state (ADR 0005), so the
-      // label says which way it goes.
+      // same switch as Settings › Providers holds. Platform items carry
+      // no checked state (ADR 0005), so the label says which way it goes.
       PlatformMenuItem(
         label: reasoningOn ? 'Disable Reasoning' : 'Enable Reasoning',
         shortcut: const SingleActivator(LogicalKeyboardKey.keyR, meta: true),
@@ -353,8 +351,8 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
             meta: true,
             alt: true,
           ): commands.cancelSelected,
-          const SingleActivator(LogicalKeyboardKey.comma, meta: true):
-              commands.showProviders,
+          const SingleActivator(LogicalKeyboardKey.comma, meta: true): () =>
+              commands.showSettings(SettingsSection.general),
           const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () =>
               commands.showFind(''),
           for (final list in TaskList.values)

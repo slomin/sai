@@ -5,7 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'find/quick_find.dart';
-import 'providers_dialog.dart';
+import 'settings/archive_page.dart' show revealArchiveInFinder;
+import 'settings/settings_screen.dart';
 import 'widgets/sai_dialog.dart';
 import 'workspace/task_commands.dart';
 
@@ -73,7 +74,8 @@ class AppCommands {
     required this.cancelChat,
     required this.toggleReasoning,
     required this.showShortcuts,
-    required this.showProviders,
+    required this.showSettings,
+    required this.revealArchive,
     required this.showFind,
     required this.open,
     required this.select,
@@ -95,8 +97,10 @@ class AppCommands {
       sendChat: () => _sendChat(container),
       cancelChat: () => container.read(chatProvider.notifier).cancel(),
       toggleReasoning: () => _toggleReasoning(container),
-      showShortcuts: () => _showShortcuts(context),
-      showProviders: () => _showProviders(context),
+      showShortcuts: () =>
+          openSettings(context, initial: SettingsSection.shortcuts),
+      showSettings: (section) => openSettings(context, initial: section),
+      revealArchive: () => revealArchiveInFinder(container),
       showFind: (seed) => showQuickFind(context, seed: seed),
       open: (result) => _open(container, result),
       select: container.read(selectedSectionProvider.notifier).select,
@@ -121,10 +125,16 @@ class AppCommands {
   /// Lets the model think before it answers, or not (`reasoning` in
   /// settings); the thinking shows in the chat pane while it is on.
   final VoidCallback toggleReasoning;
+
+  /// Opens Settings on the Shortcuts page (#40).
   final VoidCallback showShortcuts;
 
-  /// Opens the providers dialog (`providers_dialog.dart`).
-  final VoidCallback showProviders;
+  /// Opens Settings (#40) on a section: ⌘, and sai ▸ Settings… on
+  /// General; the same screen hosts the providers.
+  final void Function(SettingsSection section) showSettings;
+
+  /// Shows the archive directory in the Finder (Settings › Archive).
+  final VoidCallback revealArchive;
 
   /// Opens Quick Find (#76) with [seed] already typed: the character that
   /// summoned it, or nothing for ⌘K and the menu.
@@ -268,42 +278,5 @@ class AppCommands {
     if (result.task case final task?) {
       container.read(selectedTaskProvider.notifier).select(task);
     }
-  }
-
-  static void _showProviders(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => const ProvidersDialog(),
-    );
-  }
-
-  static void _showShortcuts(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Keyboard Shortcuts'),
-        content: const Text(
-          '⌘N  New task (focus quick capture)\n'
-          '⌘K  Quick Find — or just start typing\n'
-          '⌘1–⌘6  Inbox, Today, Upcoming, Anytime, Someday, Logbook\n'
-          '⌘7  Trash\n'
-          '⌘I  Open the inspector on the first row, or close it\n'
-          '⌘⏎  Complete the selected task (or reopen it)\n'
-          '⌥⌘⏎  Cancel the selected task\n'
-          '⌘⌫  Delete the selected task\n'
-          '⌘J  Open the assistant, or tuck it away\n'
-          '⌘Z  Undo the last change\n'
-          '⌘R  Let the model think before it answers, or not\n'
-          '⌘,  Providers and settings\n'
-          'Esc  Stop the assistant\'s answer, or leave a field',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
   }
 }

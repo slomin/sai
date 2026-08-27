@@ -73,7 +73,10 @@ Studio's server on this Mac, `http://127.0.0.1:1234/v1`, whatever model
 it has loaded), `lan` (the LAN inference box, #23) and `fake` (answers
 offline). A first run — no settings file yet — selects `lmstudio`;
 `provider use lan|fake|none` changes that, and `{"version":0,"llm":"fake"}`
-in the settings file is the offline choice.
+in the settings file is the offline choice. The app's first launch
+(#40) asks once — start empty, or import from Things 3 after a
+preview — and lands in the Inbox; the same import is in Settings ›
+Archive later, and `setup: "done"` in the file is what ends the asking.
 
 ## Providers and keys
 
@@ -112,8 +115,8 @@ existing id changes only the options given (`--no-key` drops the key
 reference); `secret clear <id>` removes a key whether or not its
 provider is still configured.
 
-The app reads the same settings and keys: `sai › Providers…` lists every
-provider, switches the active one in a click, refreshes an endpoint's
+The app reads the same settings and keys: Settings › Providers (⌘,)
+lists every provider, switches the active one in a click, refreshes an endpoint's
 health, models and context window, runs a recorded streaming test (the
 result and llama.cpp tokens/s land in the archive), and enters or
 removes a key. `sai_tui help` lists every command.
@@ -121,7 +124,7 @@ removes a key. `sai_tui help` lists every command.
 Every provider is tagged `local` or `cloud`, and the tag is always on
 the status line and in `provider list`. A cloud provider sees your task
 list only while the switch "Allow cloud providers to see my tasks" is
-on — off by default, in the Providers dialog or `sai_tui privacy
+on — off by default, in Settings › Providers or `sai_tui privacy
 share-tasks on|off` (`sai_tui privacy` shows it). While it is off the
 status line reads `· tasks withheld`, selecting a cloud provider says
 so, and the assistant answers without the list; each cloud call is
@@ -174,7 +177,7 @@ user's `chat.message`, the call's `provider.*` lines with a
 `chat.message` naming the model that answered. With a cloud provider
 and sharing off, the answer is marked `tasks withheld`. A model that
 thinks before it answers (LM Studio's reasoning models do) is asked not
-to unless the reasoning switch is on — in the Providers dialog, View ›
+to unless the reasoning switch is on — in Settings › Providers, View ›
 **Enable Reasoning** (⌘R), or `sai_tui reasoning on`; off is faster and
 the default. On, the thinking streams too, is recorded on the response
 line, and shows dimmed above the answer (`thinking…` while it waits).

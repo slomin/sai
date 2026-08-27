@@ -53,11 +53,19 @@ the layout and the toolchain; this file has the rules.
   props, streaming, the thinking switch, vision and a needle buried in a
   long prompt (`--full` puts it near the 262k limit and holds the box's
   single slot for minutes — run it last). Python here runs through `uv`.
-- Two app quirks worth knowing: the first click after a launch or a
-  burst of typing is often swallowed — click again and verify by the
-  evidence, not by the click; synthetic ⌘-chords from System Events do
-  not reach Flutter, so drive menu commands through the menu item
-  (`click menu item "Enable Reasoning" of menu "View" …`).
+- What looked like "the first click gets swallowed" was two things
+  (#40): the window not being where the coordinates assumed (a moved or
+  resized window; a centred dialog moves with it) and a screenshot's
+  shadow margin being taller below than above, which put every hand-
+  converted y about 16 pt high. So: take shots with `drive.sh shot`
+  (shadowless, 1:1 with the frame) and click with `drive.sh clickpx
+  <shot> <px> <py>`, which converts for you and refuses when the window
+  moved since the shot; never convert pixels by hand. Flutter's view does
+  not take the first click on a non-key window, so `drive.sh` activates
+  the app and waits for the window to be main before every click. Native
+  menu key equivalents (⌘1–⌘7, ⌘K, ⌘J, ⌘,) do reach the app through
+  System Events `keystroke`; chords bound only in-app do not — drive
+  those through the menu item (`click menu item … of menu "View" …`).
 
 ## Boundaries
 

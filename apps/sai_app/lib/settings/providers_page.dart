@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
-import 'commands.dart';
+import '../commands.dart';
+import 'settings_row.dart';
 
 /// The masked key field, for tests.
 const apiKeyFieldKey = ValueKey('api-key-field');
@@ -21,20 +22,20 @@ const reasoningSwitchKey = ValueKey('reasoning-switch');
 /// One provider's row, for tests.
 Key providerRowKey(String id) => ValueKey('provider-row-$id');
 
-/// The focused provider surface before the settings screen (#40): every
+/// Settings › Providers (#40, the dialog of #29 as a page): every
 /// provider this build can offer, the active one switched in one click,
 /// an endpoint's health, models and context refreshed on demand, a
 /// recorded streaming test, and the masked key field for a provider that
 /// takes one. Keys go straight to the secret store (ADR 0008): never
 /// settings, never provider state, never the archive.
-class ProvidersDialog extends ConsumerStatefulWidget {
-  const ProvidersDialog({super.key});
+class ProvidersPage extends ConsumerStatefulWidget {
+  const ProvidersPage({super.key});
 
   @override
-  ConsumerState<ProvidersDialog> createState() => _ProvidersDialogState();
+  ConsumerState<ProvidersPage> createState() => _ProvidersPageState();
 }
 
-class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
+class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   final _controller = TextEditingController();
   String? _selected;
 
@@ -72,65 +73,57 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
         : ids.first;
     final config = settings.provider(selected);
     final provider = registry[selected];
-    return AlertDialog(
-      title: const Text('Providers'),
-      // Scrolls: the rows, two switches, an endpoint's health and a test's
-      // output do not all fit a small window, and a cut switch is worse
-      // than a scrollbar.
-      content: SizedBox(
-        width: 560,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (final id in ids)
-                _row(
-                  id,
-                  config: settings.provider(id),
-                  provider: registry[id],
-                  missing: misconfigured[id],
-                  active: settings.llm == id,
-                  selected: selected == id,
-                ),
-              SwitchListTile(
-                key: shareTasksSwitchKey,
-                dense: true,
-                title: const Text('Allow cloud providers to see my tasks'),
-                subtitle: Text(
-                  settings.shareTasksWithCloud
-                      ? 'A cloud provider sees the task list with each request.'
-                      : 'Cloud providers answer without the task list.',
-                ),
-                value: settings.shareTasksWithCloud,
-                onChanged: _setShareTasks,
-              ),
-              SwitchListTile(
-                key: reasoningSwitchKey,
-                dense: true,
-                title: const Text('Let the model think before it answers'),
-                subtitle: Text(
-                  settings.reasoningOn
-                      ? 'The chat shows the thinking above the answer.'
-                      : 'The model answers directly (faster).',
-                ),
-                value: settings.reasoningOn,
-                onChanged: _setReasoning,
-              ),
-              const Divider(),
-              // Any endpoint that can be asked, a built-in's included (#23).
-              if (provider != null &&
-                  (config?.endpoint != null || provider is LlmEndpointProbe))
-                _endpoint(selected, provider),
-              if (config?.credential != null) _key(selected),
-            ],
-          ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SettingsPageHeader(
+          eyebrow: 'Providers',
+          title: 'Where the answers come from',
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final id in ids)
+              _row(
+                id,
+                config: settings.provider(id),
+                provider: registry[id],
+                missing: misconfigured[id],
+                active: settings.llm == id,
+                selected: selected == id,
+              ),
+            SwitchListTile(
+              key: shareTasksSwitchKey,
+              dense: true,
+              title: const Text('Allow cloud providers to see my tasks'),
+              subtitle: Text(
+                settings.shareTasksWithCloud
+                    ? 'A cloud provider sees the task list with each request.'
+                    : 'Cloud providers answer without the task list.',
+              ),
+              value: settings.shareTasksWithCloud,
+              onChanged: _setShareTasks,
+            ),
+            SwitchListTile(
+              key: reasoningSwitchKey,
+              dense: true,
+              title: const Text('Let the model think before it answers'),
+              subtitle: Text(
+                settings.reasoningOn
+                    ? 'The chat shows the thinking above the answer.'
+                    : 'The model answers directly (faster).',
+              ),
+              value: settings.reasoningOn,
+              onChanged: _setReasoning,
+            ),
+            const Divider(),
+            // Any endpoint that can be asked, a built-in's included (#23).
+            if (provider != null &&
+                (config?.endpoint != null || provider is LlmEndpointProbe))
+              _endpoint(selected, provider),
+            if (config?.credential != null) _key(selected),
+          ],
         ),
       ],
     );
@@ -272,7 +265,6 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
                 child: TextField(
                   key: apiKeyFieldKey,
                   controller: _controller,
-                  autofocus: true,
                   obscureText: true,
                   enableSuggestions: false,
                   autocorrect: false,
@@ -390,6 +382,12 @@ class _ProvidersDialogState extends ConsumerState<ProvidersDialog> {
       _testText = result.text;
       _testResult = result;
     });
+    // The test wrote its lines straight through the recorder: the archive
+    // counts re-read, and the light learns of a failure now.
+    ref.read(archiveRevisionProvider.notifier).bump();
+    if (result.failure case final failure?) {
+      ref.read(connectionProvider.notifier).callFailed(failure);
+    }
   }
 
   void _save(String id) {

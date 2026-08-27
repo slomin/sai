@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'menus.dart';
 import 'platform/reduce_motion.dart';
+import 'setup/first_run.dart';
 import 'shell.dart';
 import 'theme/motion.dart';
 import 'theme/sai_theme.dart';
@@ -28,7 +29,9 @@ class SaiApp extends ConsumerWidget {
             MediaQuery.disableAnimationsOf(context),
         child: child!,
       ),
-      home: const SaiChrome(child: WorkspaceRestorer(child: SaiShell())),
+      home: const SaiChrome(
+        child: WorkspaceRestorer(child: FirstRunGate(child: SaiShell())),
+      ),
     );
   }
 }

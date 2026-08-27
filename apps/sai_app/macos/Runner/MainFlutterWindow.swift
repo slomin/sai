@@ -16,6 +16,7 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     registerAccessibility(flutterViewController)
+    registerFinder(flutterViewController)
 
     super.awakeFromNib()
   }
@@ -41,6 +42,44 @@ class MainFlutterWindow: NSWindow {
       channel.invokeMethod(
         "reduceMotionChanged",
         arguments: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+  }
+
+  /// `sai/finder` (#40): the two Finder gestures Settings needs. `reveal`
+  /// selects a path in a Finder window; `chooseFile` puts up an open
+  /// panel for one file and answers its path, or nothing when cancelled.
+  /// The app never spawns `open`: the Runner owns the panels.
+  private func registerFinder(_ controller: FlutterViewController) {
+    let channel = FlutterMethodChannel(
+      name: "sai/finder", binaryMessenger: controller.engine.binaryMessenger)
+    channel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "reveal":
+        guard let path = call.arguments as? String else {
+          result(FlutterError(code: "argument", message: "reveal takes a path", details: nil))
+          return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        result(true)
+      case "chooseFile":
+        let arguments = call.arguments as? [String: Any]
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.message = arguments?["prompt"] as? String ?? "Choose a file"
+        let respond: (NSApplication.ModalResponse) -> Void = { response in
+          result(response == .OK ? panel.url?.path : nil)
+        }
+        if let window = self {
+          panel.beginSheetModal(for: window, completionHandler: respond)
+        } else {
+          respond(panel.runModal())
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
     }
   }
 }

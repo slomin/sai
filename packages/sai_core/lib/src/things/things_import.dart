@@ -32,10 +32,14 @@ final class ThingsImportResult {
 /// A [MoveTask] or [SetTaskStatus] the store refused; the run stops at
 /// the first one so a half-applied plan is visible, not silent.
 final class ThingsImportException implements Exception {
-  ThingsImportException(this.op, this.cause);
+  ThingsImportException(this.op, this.cause, {this.appended = 0});
 
   final ImportOp op;
   final Object cause;
+
+  /// Archive lines the run had written before [op] was refused; they
+  /// stay, and a re-run finds them through the external index.
+  final int appended;
 
   @override
   String toString() =>
@@ -44,12 +48,14 @@ final class ThingsImportException implements Exception {
 
 /// Plans and, unless [dryRun], applies the import of [snapshot] into
 /// [store]. [now] bounds carried-over instants (see [planThingsImport]).
+/// [onProgress] hears `(done, total)` after every applied operation.
 Future<ThingsImportResult> importThings(
   ThingsSnapshot snapshot, {
   required TaskStore store,
   required DateTime now,
   bool dryRun = false,
   ThingsImportOptions options = const ThingsImportOptions(),
+  void Function(int done, int total)? onProgress,
 }) async {
   final (plan, report) = planThingsImport(
     snapshot,
@@ -66,12 +72,13 @@ Future<ThingsImportResult> importThings(
     );
   }
   final applier = _Applier(store, snapshot);
-  for (final op in plan.ops) {
+  for (final (i, op) in plan.ops.indexed) {
     try {
       await applier.apply(op);
     } on Object catch (error) {
-      throw ThingsImportException(op, error);
+      throw ThingsImportException(op, error, appended: applier.appended);
     }
+    onProgress?.call(i + 1, plan.length);
   }
   return ThingsImportResult(
     plan: plan,
