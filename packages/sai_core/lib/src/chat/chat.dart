@@ -270,6 +270,8 @@ class ChatNotifier extends Notifier<ChatState> {
     ChatTurn turn;
     String? error;
     if (result.finish == LlmFinish.failed) {
+      // The header's light learns of it now, not on its next timer.
+      container.read(connectionProvider.notifier).callFailed(result.failure!);
       turn = ChatTurn(
         role: ChatRole.assistant,
         text: result.text,

@@ -9,6 +9,9 @@ import 'archive/archive.dart';
 import 'chat/chat.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
+import 'archive/verify_state.dart';
+import 'llm/connection.dart';
+import 'llm/failure.dart';
 import 'llm/builtins.dart';
 import 'llm/factory.dart';
 import 'llm/openai_compatible/provider.dart';
@@ -164,6 +167,32 @@ final archiveLineCountProvider = FutureProvider<int>((ref) async {
 /// The task row a client has selected, or null. A client clears it when
 /// the task leaves the view it is showing (#72); the inspector (#74) and
 /// restored workspace state (#76) read the same value.
+/// Events and bytes the archive holds (#40), re-read whenever the log
+/// moves for the same reasons as [archiveLineCountProvider].
+final archiveStatsProvider = FutureProvider<ArchiveStats>((ref) async {
+  ref.watch(tasksProvider);
+  ref.watch(chatProvider.select((s) => s.turns.length));
+  final archive = await ref.watch(archiveProvider.future);
+  final head = await archive.head();
+  return ArchiveStats(count: head.count, bytes: await archive.byteSize());
+});
+
+/// The on-demand integrity pass (#40): [Archive.verify] behind a
+/// button. A notifier rather than a future provider on purpose — the
+/// walk takes the writer lock, and a failure must land once, not be
+/// retried ten times over the whole log.
+final archiveVerifyProvider = NotifierProvider<ArchiveVerify, VerifyState>(
+  ArchiveVerify.new,
+);
+
+/// The assistant header's light (#40): the active provider probed when
+/// it is selected, every [Connection.probeEvery], on [Connection.refresh]
+/// and after a call fails. A provider that cannot be probed (the fake)
+/// is ready; no provider, a misconfigured one or a missing key is down.
+final connectionProvider = NotifierProvider<Connection, ConnectionState>(
+  Connection.new,
+);
+
 final selectedTaskProvider = NotifierProvider<SelectedTask, TaskId?>(
   SelectedTask.new,
 );
@@ -522,6 +551,13 @@ class SettingsNotifier extends Notifier<Settings> {
 
   /// Remembers where the workspace was left (#76). A no-op when nothing
   /// changed, so a client may call it on every selection.
+  /// Records that first-run setup is complete (#40); a second call
+  /// writes nothing.
+  void markSetupDone() {
+    if (state.setupDone) return;
+    _commit(state.withSetupDone());
+  }
+
   void setWorkspace(WorkspaceState workspace) {
     if (workspace == state.workspace) return;
     _commit(state.withWorkspace(workspace));
@@ -825,6 +861,144 @@ class ThingsImportNotifier extends Notifier<ThingsImportState> {
     _busy = false;
     _snapshot = null;
     state = const ImportIdle();
+  }
+}
+
+class ArchiveVerify extends Notifier<VerifyState> {
+  var _running = false;
+
+  @override
+  VerifyState build() => const VerifyIdle();
+
+  /// Walks the whole log. One walk at a time; a second call while one
+  /// runs is ignored.
+  Future<void> verify() async {
+    if (_running) return;
+    _running = true;
+    state = const VerifyRunning();
+    try {
+      final archive = await ref.read(archiveProvider.future);
+      final report = await archive.verify();
+      state = Verified(report.count);
+    } on Object catch (error) {
+      state = VerifyFailed(_describe(error));
+    } finally {
+      _running = false;
+    }
+  }
+
+  /// The reason and the file's name — never its full path, never a
+  /// line's content.
+  static String _describe(Object error) => switch (error) {
+    ArchiveCorruptionError(:final reason, :final file, :final line) =>
+      file == null
+          ? reason
+          : '$reason (${_basename(file)}${line == null ? '' : ':$line'})',
+    TornTailError(:final file, :final offset) =>
+      'a torn tail at byte $offset of ${_basename(file)}; truncate the '
+          'file to that offset and verify again',
+    _ => '$error',
+  };
+
+  static String _basename(String path) =>
+      path.substring(path.lastIndexOf('/') + 1);
+}
+
+class Connection extends Notifier<ConnectionState> {
+  /// How often a probeable provider is asked again.
+  static const probeEvery = Duration(seconds: 60);
+
+  Timer? _timer;
+  LlmEndpointProbe? _probe;
+
+  /// Which selection a probe answer belongs to; an older one is dropped.
+  var _epoch = 0;
+
+  @override
+  ConnectionState build() {
+    _timer?.cancel();
+    _timer = null;
+    _probe = null;
+    final epoch = ++_epoch;
+    ref.onDispose(() {
+      _timer?.cancel();
+      _timer = null;
+      _epoch++;
+    });
+    final settings = ref.watch(settingsProvider);
+    if (settings.problem != null) {
+      return const ConnectionState.down('settings unreadable');
+    }
+    final id = settings.llm;
+    if (id == null) return const ConnectionState.down('no provider');
+    final active = ref.watch(activeLlmProvider);
+    if (active == null) {
+      final missing = ref.watch(misconfiguredLlmsProvider)[id];
+      return ConnectionState.down(
+        missing == null ? 'not available' : 'misconfigured',
+      );
+    }
+    switch (ref.watch(credentialStatusProvider(id))) {
+      case CredentialStatus.missing:
+        return const ConnectionState.down('no key');
+      case CredentialStatus.unavailable:
+        return const ConnectionState.down('keychain unavailable');
+      case CredentialStatus.none || CredentialStatus.set:
+        break;
+    }
+    if (active case final LlmEndpointProbe probe) {
+      _probe = probe;
+      scheduleMicrotask(() => _ask(epoch));
+      _timer = Timer.periodic(probeEvery, (_) => _ask(epoch));
+      return const ConnectionState.attention('probing…');
+    }
+    return const ConnectionState.ready('ready');
+  }
+
+  /// Asks the endpoint again now.
+  void refresh() {
+    if (_probe == null) return;
+    state = const ConnectionState.attention('probing…');
+    _ask(_epoch);
+  }
+
+  /// A call ended in [failure]: re-probe now rather than on the timer,
+  /// so the light shows what the person just saw.
+  void callFailed(LlmFailure failure) {
+    switch (failure.kind) {
+      case LlmFailureKind.unreachable ||
+          LlmFailureKind.timeout ||
+          LlmFailureKind.rejected ||
+          LlmFailureKind.credential ||
+          LlmFailureKind.protocol:
+        refresh();
+      case LlmFailureKind.internal || LlmFailureKind.archive:
+        break;
+    }
+  }
+
+  Future<void> _ask(int epoch) async {
+    final probe = _probe;
+    if (probe == null) return;
+    EndpointInfo info;
+    try {
+      info = await probe.probe();
+    } on Object catch (error) {
+      // The contract says it never throws; if it does, that is "down".
+      info = EndpointInfo(
+        health: EndpointHealth.unavailable,
+        failure: LlmFailure(LlmFailureKind.internal, '$error'),
+      );
+    }
+    if (epoch != _epoch || !ref.mounted) return;
+    state = switch (info.health) {
+      EndpointHealth.ok => const ConnectionState.ready('ready'),
+      EndpointHealth.loading => const ConnectionState.attention('loading'),
+      EndpointHealth.unavailable => ConnectionState.down(
+        info.failure?.kind.name ?? 'unavailable',
+      ),
+      EndpointHealth.unknown => const ConnectionState.ready('ready'),
+    };
   }
 }
 

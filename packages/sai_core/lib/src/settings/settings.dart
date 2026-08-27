@@ -38,6 +38,7 @@ final class Settings {
     this.shareTasksWithCloud = false,
     this.reasoningOn = false,
     this.workspace = WorkspaceState.empty,
+    this.setupDone = false,
     this.problem,
     this.extra = const {},
   });
@@ -69,6 +70,11 @@ final class Settings {
   /// restores at launch after checking them against the projection.
   final WorkspaceState workspace;
 
+  /// Whether first-run setup was completed (#40): the person chose to
+  /// start empty or finished an import. Written only on that choice —
+  /// an untouched first launch writes nothing — and never unset.
+  final bool setupDone;
+
   /// The configured provider with [id], or null.
   ProviderConfig? provider(String id) {
     for (final p in providers) {
@@ -92,6 +98,7 @@ final class Settings {
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: reasoningOn,
     workspace: workspace,
+    setupDone: setupDone,
     extra: extra,
   );
 
@@ -103,6 +110,7 @@ final class Settings {
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: show,
     workspace: workspace,
+    setupDone: setupDone,
     extra: extra,
   );
 
@@ -114,6 +122,7 @@ final class Settings {
     shareTasksWithCloud: share,
     reasoningOn: reasoningOn,
     workspace: workspace,
+    setupDone: setupDone,
     extra: extra,
   );
 
@@ -131,6 +140,7 @@ final class Settings {
       shareTasksWithCloud: shareTasksWithCloud,
       reasoningOn: reasoningOn,
       workspace: workspace,
+      setupDone: setupDone,
       extra: extra,
     );
   }
@@ -146,6 +156,7 @@ final class Settings {
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: reasoningOn,
     workspace: workspace,
+    setupDone: setupDone,
     extra: extra,
   );
 
@@ -157,6 +168,19 @@ final class Settings {
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: reasoningOn,
     workspace: state,
+    setupDone: setupDone,
+    extra: extra,
+  );
+
+  /// The same settings with setup marked done. Clears [problem] like
+  /// [withLlm].
+  Settings withSetupDone() => Settings(
+    llm: llm,
+    providers: providers,
+    shareTasksWithCloud: shareTasksWithCloud,
+    reasoningOn: reasoningOn,
+    workspace: workspace,
+    setupDone: true,
     extra: extra,
   );
 
@@ -215,6 +239,9 @@ final class Settings {
       shareTasksWithCloud: share as bool? ?? false,
       reasoningOn: reasoning as bool? ?? false,
       workspace: WorkspaceState.fromJson(json['workspace']),
+      // Read leniently like the workspace: a value this sai does not
+      // know is "not done", and, being a known key, it is not carried.
+      setupDone: json['setup'] == setupDoneValue,
       extra: {
         for (final e in json.entries)
           if (!_known.contains(e.key)) e.key: e.value,
@@ -229,7 +256,11 @@ final class Settings {
     'share_tasks_with_cloud',
     'reasoning',
     'workspace',
+    'setup',
   };
+
+  /// What `setup` holds once first-run setup is complete.
+  static const setupDoneValue = 'done';
 
   /// The file's text: compact JSON, keys sorted, unknown keys included.
   ///
@@ -262,6 +293,7 @@ final class Settings {
       if (shareTasksWithCloud) 'share_tasks_with_cloud': true,
       if (reasoningOn) 'reasoning': true,
       if (!workspace.isEmpty) 'workspace': workspace.toJson(),
+      if (setupDone) 'setup': setupDoneValue,
     }),
   );
 }

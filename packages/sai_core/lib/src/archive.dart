@@ -7,3 +7,4 @@ export 'archive/archive.dart';
 export 'archive/archive_root.dart';
 export 'archive/blobref.dart';
 export 'archive/event.dart';
+export 'archive/verify_state.dart';
