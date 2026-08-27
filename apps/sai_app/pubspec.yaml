@@ -11,6 +11,8 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.4.2
+  highlight: ^0.7.0
+  markdown: ^7.3.1
   sai_core:
     path: ../../packages/sai_core
 
