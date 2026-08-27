@@ -34,6 +34,8 @@ void main() {
       toggleReasoning: () => calls.add('reasoning'),
       showShortcuts: () => calls.add('shortcuts'),
       showProviders: () => calls.add('providers'),
+      showFind: (seed) => calls.add('find "$seed"'),
+      open: (result) => calls.add('open $result'),
       select: (section) => calls.add('select $section'),
       toggleInspector: () => calls.add('inspector'),
       completeSelected: () => calls.add('complete'),
@@ -138,11 +140,23 @@ void main() {
       );
     });
 
-    test('Go lists every standard list, then the Trash, unbound', () {
+    test('Go opens Quick Find on ⌘K, then lists every list and the Trash '
+        'on ⌘1–⌘7', () {
       final go = menuItem(menus(), ['Go']) as PlatformMenu;
-      final items = go.menus
+      final all = go.menus
           .expand((m) => m is PlatformMenuItemGroup ? m.members : [m])
           .toList();
+      final find = all.first;
+      expect(find.label, 'Quick Find…');
+      expect(
+        chord(find),
+        containsPair('shortcutTrigger', LogicalKeyboardKey.keyK.keyId),
+      );
+      expect(chord(find), containsPair('shortcutModifiers', 1));
+      find.onSelected!();
+      expect(calls, ['find ""']);
+      calls.clear();
+      final items = all.skip(1).toList();
       expect(items.map((i) => i.label), [
         'Inbox',
         'Today',
@@ -152,7 +166,14 @@ void main() {
         'Logbook',
         'Trash',
       ]);
-      expect(items.map((i) => i.shortcut), everyElement(isNull));
+      for (final (i, item) in items.indexed) {
+        expect(
+          chord(item),
+          containsPair('shortcutTrigger', LogicalKeyboardKey.digit1.keyId + i),
+          reason: item.label,
+        );
+        expect(chord(item), containsPair('shortcutModifiers', 1));
+      }
       for (final item in items) {
         item.onSelected!();
       }
@@ -167,9 +188,25 @@ void main() {
       expect(calls, ['shortcuts']);
     });
 
-    test('sai > Providers…', () {
-      menuItem(menus(), ['sai', 'Providers…']).onSelected!();
+    test('sai > Providers… on ⌘,', () {
+      final item = menuItem(menus(), ['sai', 'Providers…']);
+      item.onSelected!();
       expect(calls, ['providers']);
+      expect(
+        chord(item),
+        containsPair('shortcutTrigger', LogicalKeyboardKey.comma.keyId),
+      );
+      expect(chord(item), containsPair('shortcutModifiers', 1));
+    });
+
+    test('Task > Cancel on ⌥⌘⏎', () {
+      final item = menuItem(menus(task: true), ['Task', 'Cancel']);
+      expect(
+        chord(item),
+        containsPair('shortcutTrigger', LogicalKeyboardKey.enter.keyId),
+      );
+      // meta and alt, in Flutter's serialisation of the modifier mask.
+      expect(chord(item), containsPair('shortcutModifiers', 1 | 4));
     });
   });
 

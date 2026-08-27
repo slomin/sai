@@ -22,6 +22,7 @@ import 'secrets/secret_store.dart';
 import 'settings/provider_config.dart';
 import 'settings/settings.dart';
 import 'settings/store.dart';
+import 'settings/workspace.dart';
 import 'tasks/date.dart';
 import 'tasks/lists.dart';
 import 'tasks/model.dart';
@@ -181,6 +182,25 @@ final chatProvider = NotifierProvider<ChatNotifier, ChatState>(
 final chatVisibleProvider = NotifierProvider<ChatVisible, bool>(
   ChatVisible.new,
 );
+
+/// The areas the sidebar shows folded (#76).
+final collapsedAreasProvider = NotifierProvider<CollapsedAreas, Set<AreaId>>(
+  CollapsedAreas.new,
+);
+
+/// The workspace as it stands, in the form settings remember it (#76):
+/// the selected section and task, the folded areas, the assistant pane.
+/// A client writes it through [SettingsNotifier.setWorkspace] and restores
+/// it with `restoreWorkspace`.
+final workspaceStateProvider = Provider<WorkspaceState>((ref) {
+  final collapsed = ref.watch(collapsedAreasProvider);
+  return WorkspaceState(
+    section: sectionKey(ref.watch(selectedSectionProvider)),
+    task: ref.watch(selectedTaskProvider)?.toString(),
+    collapsedAreas: [for (final id in collapsed) '$id']..sort(),
+    assistantVisible: ref.watch(chatVisibleProvider),
+  );
+});
 
 /// The settings file (ADR 0006): `SAI_SETTINGS_FILE`, else
 /// `settings.json` in sai's data directory. Independent of the archive
@@ -479,6 +499,13 @@ class SettingsNotifier extends Notifier<Settings> {
 
   void setReasoning(bool show) => _commit(state.withReasoning(show));
 
+  /// Remembers where the workspace was left (#76). A no-op when nothing
+  /// changed, so a client may call it on every selection.
+  void setWorkspace(WorkspaceState workspace) {
+    if (workspace == state.workspace) return;
+    _commit(state.withWorkspace(workspace));
+  }
+
   void _commit(Settings next) {
     _store.save(next);
     state = next;
@@ -625,6 +652,28 @@ class ChatVisible extends Notifier<bool> {
   bool build() => true;
 
   void toggle() => state = !state;
+
+  void set(bool shown) => state = shown;
+}
+
+/// The areas whose projects the sidebar folds away (#76). Compared by
+/// content on every change, so re-applying the same set wakes nobody.
+class CollapsedAreas extends Notifier<Set<AreaId>> {
+  @override
+  Set<AreaId> build() => const {};
+
+  void toggle(AreaId area) => _apply({
+    for (final id in state)
+      if (id != area) id,
+    if (!state.contains(area)) area,
+  });
+
+  void set(Iterable<AreaId> areas) => _apply({...areas});
+
+  void _apply(Set<AreaId> next) {
+    if (next.length == state.length && next.every(state.contains)) return;
+    state = Set.unmodifiable(next);
+  }
 }
 
 /// Holds the process's one [TaskStore] and mirrors its [TaskStore.changes]

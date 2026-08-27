@@ -177,8 +177,9 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
           child: TextField(
             key: captureFieldKey,
             controller: _controller,
+            // No autofocus (#76): focus rests on the chrome, so typing
+            // opens Quick Find and ⌘N is what brings it here.
             focusNode: ref.watch(captureFocusProvider),
-            autofocus: true,
             onSubmitted: _capture,
             style: text.body,
             decoration: InputDecoration(

@@ -7,3 +7,4 @@ export 'settings/endpoint.dart';
 export 'settings/provider_config.dart';
 export 'settings/settings.dart';
 export 'settings/store.dart';
+export 'settings/workspace.dart';

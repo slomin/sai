@@ -6,6 +6,7 @@ import 'platform/reduce_motion.dart';
 import 'shell.dart';
 import 'theme/motion.dart';
 import 'theme/sai_theme.dart';
+import 'workspace/workspace_state.dart';
 
 /// The macOS app: the shell (#37) inside its chrome, in the Sai visual
 /// system (#72). Light appearance only for now — the reference defines
@@ -27,7 +28,7 @@ class SaiApp extends ConsumerWidget {
             MediaQuery.disableAnimationsOf(context),
         child: child!,
       ),
-      home: const SaiChrome(child: SaiShell()),
+      home: const SaiChrome(child: WorkspaceRestorer(child: SaiShell())),
     );
   }
 }

@@ -45,13 +45,19 @@ class AssistantBand extends ConsumerWidget {
   /// The open body's height ([assistantBandHeight] of the column).
   final double bodyHeight;
 
-  Widget body(bool open) => open
-      ? SizedBox(height: bodyHeight, child: const _ChatBody())
+  /// The open body sits under the assistant's focus node (#76), so the
+  /// Task chords know when the keyboard is the chat's.
+  Widget body(bool open, FocusNode scope) => open
+      ? SizedBox(
+          height: bodyHeight,
+          child: Focus(focusNode: scope, child: const _ChatBody()),
+        )
       : const SizedBox(width: double.infinity);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final open = ref.watch(chatVisibleProvider);
+    final scope = ref.watch(assistantFocusProvider);
     final commands = AppCommands.of(context);
     final status = ref.watch(llmStatusProvider);
     return Container(
@@ -67,13 +73,13 @@ class AssistantBand extends ConsumerWidget {
           // A zero-length AnimatedSize still animates — and marks itself
           // dirty during layout — so under Reduce Motion the body just is.
           if (SaiMotion.reduced(context))
-            body(open)
+            body(open, scope)
           else
             AnimatedSize(
               duration: SaiDurations.band,
               curve: Curves.easeOutCubic,
               alignment: Alignment.topCenter,
-              child: body(open),
+              child: body(open, scope),
             ),
         ],
       ),

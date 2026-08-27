@@ -55,4 +55,9 @@ EmptyCopy emptyCopy(SidebarSection section, String title) => switch (section) {
     'Nothing here yet.',
     'Capture a task and file it into $title.',
   ),
+  TagSection() => EmptyCopy(
+    title,
+    'Nothing tagged $title.',
+    'Tag a task and it collects here — tags cut across lists and projects.',
+  ),
 };

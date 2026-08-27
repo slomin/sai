@@ -1,6 +1,6 @@
 # Settings, v0
 
-Status: current · Issues: #21, #29, #22, #27, #23 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md), [0012](../decisions/0012-plaintext-http-is-allowed-on-the-lan.md)
+Status: current · Issues: #21, #29, #22, #27, #23, #76 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md), [0012](../decisions/0012-plaintext-http-is-allowed-on-the-lan.md), [0015](../decisions/0015-the-workspace-is-restored-from-settings.md)
 
 The non-secret preferences both clients share: one JSON object in
 `settings.json`, beside the default archive (`SAI_SETTINGS_FILE` moves it).
@@ -17,6 +17,16 @@ and `test/no_secrets_test.dart` enforce that.
 | `providers` | no | list of provider objects, ids unique; omitted when empty |
 | `share_tasks_with_cloud` | no | boolean, the privacy switch (#27, ADR 0010): whether a `cloud`-tagged provider may see the task list. Off when absent, and omitted while off |
 | `reasoning` | no | boolean (#34): whether a model may think before it answers. Off (absent) asks the backend not to (`reasoning_effort: none` and `chat_template_kwargs: {enable_thinking: false}` on the request) and the clients show no thinking; on lets it and shows it. Omitted while off |
+| `workspace` | no | object (#76, ADR 0015): where the app's workspace was left — identifiers and UI preferences only, never task text. Omitted while empty; read leniently, see below |
+
+## Workspace object
+
+| key | required | value |
+| --- | --- | --- |
+| `section` | no | the selected section's key: `list:<inbox\|today\|upcoming\|anytime\|someday\|logbook>`, `trash`, `area:<id>`, `project:<id>` or `tag:<id>` |
+| `task` | no | id of the task open in the inspector |
+| `collapsed_areas` | no | list of area ids whose projects the sidebar folds away; omitted while empty |
+| `assistant_visible` | no | boolean: whether the assistant pane is shown. Absent leaves the client's default (shown) |
 
 ## Provider object
 
@@ -44,6 +54,12 @@ and `test/no_secrets_test.dart` enforce that.
   names their accounts.
 - **Unknown keys survive a write**, at the top and inside a provider
   object, so two binaries of different versions share one file.
+- **A malformed `workspace` is dropped, not quarantined.** A value that
+  is not an object reads as empty, a member of the wrong type is left
+  out, and an id the projection no longer knows falls back (to Today,
+  with no task) at launch. It carries a view, not a configuration, so a
+  bad value costs a restored view and never the file — and, being a
+  known key, it is rewritten clean on the next write rather than kept.
 - **Removing a provider clears its selection**: `llm` never names a
   provider that is gone.
 - **Moving an endpoint unbinds its key.** A new host, port or scheme
