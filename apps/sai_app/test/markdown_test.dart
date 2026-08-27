@@ -214,4 +214,33 @@ void main() {
     expect(find.text('TEXT'), findsOneWidget);
     expect(find.text('foo▌'), findsOneWidget);
   });
+
+  testWidgets('the reference sample matches its golden', (tester) async {
+    const sample = '''
+# The plan
+
+A **bold** step, an *aside*, some `inline code`, and
+[a link](https://example.com) to nowhere.
+
+- first thing
+- second thing
+
+1. in order
+2. and again
+
+```dart
+void main() {
+  print('hello');
+}
+```
+
+```
+no language here
+```''';
+    await pumpMarkdown(tester, sample);
+    await expectLater(
+      find.byType(SaiMarkdown),
+      matchesGoldenFile('goldens/assistant-markdown.png'),
+    );
+  });
 }
