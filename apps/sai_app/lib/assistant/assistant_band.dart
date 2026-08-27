@@ -6,26 +6,11 @@ import '../commands.dart';
 import '../theme/motion.dart';
 import '../theme/sai_theme.dart';
 import '../theme/sai_tokens.dart';
+import 'chat_composer.dart';
+import 'chat_keys.dart';
+import 'markdown/sai_markdown.dart';
 
-/// The chat pane's input, so tests and Cmd+J can find it.
-const chatFieldKey = Key('chat-field');
-
-/// The transcript list.
-const chatTranscriptKey = Key('chat-transcript');
-
-/// A reasoning block, when shown.
-const chatReasoningKey = Key('chat-reasoning');
-
-/// The button that sends the draft, and the one that stops an answer.
-const chatSendKey = Key('chat-send');
-const chatStopKey = Key('chat-stop');
-
-/// The band's header, which also toggles it.
-const assistantHeaderKey = Key('assistant-header');
-
-/// The connection light and its word (#40).
-const connectionDotKey = Key('connection-dot');
-const connectionTextKey = Key('connection-text');
+export 'chat_keys.dart';
 
 /// What the empty band says.
 const chatEmptyHint =
@@ -40,8 +25,7 @@ double assistantBandHeight(double height) => (height * 0.4).clamp(160.0, 360.0);
 /// list, docked under it. The header names the provider and stays when
 /// the band is tucked away (⌘J); the body is the conversation (#34) —
 /// the transcript from [chatProvider], the answer as it streams, and the
-/// composer (one line for now — a multi-line draft is the assistant's own
-/// ticket, #39). Opening and closing animate through [SaiMotion]; the draft
+/// composer (multi-line: Enter sends, ⇧⏎ breaks the line — #39). Opening and closing animate through [SaiMotion]; the draft
 /// and focus live in `commands.dart`, so nothing is lost either way.
 class AssistantBand extends ConsumerWidget {
   const AssistantBand({super.key, required this.bodyHeight});
@@ -209,7 +193,6 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
     ref.listen(chatProvider, (_, _) => _follow());
     final state = ref.watch(chatProvider);
     final reasoningOn = ref.watch(reasoningProvider);
-    final commands = AppCommands.of(context);
     final text = context.saiText;
     return Column(
       children: [
@@ -238,87 +221,15 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
                         reasoning: reasoningOn ? state.reasoning : null,
                         text: state.streaming!.isEmpty
                             ? (state.reasoning == null ? '…' : 'thinking…')
-                            : '${state.streaming!}▌',
+                            : state.streaming!,
+                        markdown: state.streaming!.isNotEmpty,
+                        caret: state.streaming!.isNotEmpty,
                         note: state.tasksWithheld ? tasksWithheldWord : null,
                       ),
                   ],
                 ),
         ),
-        if (state.error case final error?)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                error,
-                style: text.small.copyWith(color: SaiColors.red),
-              ),
-            ),
-          ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 20),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  key: chatFieldKey,
-                  controller: ref.watch(chatDraftProvider),
-                  focusNode: ref.watch(chatFocusProvider),
-                  onSubmitted: (_) => commands.sendChat(),
-                  style: text.body.copyWith(color: SaiColors.sheetText),
-                  decoration: InputDecoration(
-                    hintText: 'Ask sai…',
-                    hintStyle: text.body.copyWith(color: SaiColors.sheetDim),
-                    fillColor: SaiColors.sheetCard,
-                    enabledBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(color: SaiColors.sheetRule),
-                      borderRadius: BorderRadius.all(
-                        Radius.circular(SaiRadius.medium),
-                      ),
-                    ),
-                    focusedBorder: const OutlineInputBorder(
-                      borderSide: BorderSide(color: SaiColors.sheetRuleMid),
-                      borderRadius: BorderRadius.all(
-                        Radius.circular(SaiRadius.medium),
-                      ),
-                    ),
-                    suffixIcon: Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: Text(
-                        '⏎ SEND',
-                        style: context.saiText.chip.copyWith(
-                          color: SaiColors.sheetDim,
-                        ),
-                      ),
-                    ),
-                    suffixIconConstraints: const BoxConstraints(minWidth: 0),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              if (state.busy)
-                FilledButton(
-                  key: chatStopKey,
-                  onPressed: commands.cancelChat,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: SaiColors.sheetCard,
-                    foregroundColor: SaiColors.sheetText,
-                  ),
-                  child: const Text('Stop'),
-                )
-              else
-                FilledButton(
-                  key: chatSendKey,
-                  onPressed: commands.sendChat,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: SaiColors.red,
-                    foregroundColor: SaiColors.white,
-                  ),
-                  child: const Text('Send'),
-                ),
-            ],
-          ),
-        ),
+        const ChatComposer(),
       ],
     );
   }
@@ -338,6 +249,7 @@ class _TurnRow extends StatelessWidget {
       who: turn.role == ChatRole.user ? 'you' : 'sai',
       reasoning: reasoningOn ? turn.reasoning : null,
       text: turn.text,
+      markdown: turn.role == ChatRole.assistant,
       note: notes.isEmpty ? null : notes.join(' · '),
       error: failure == null ? null : chatFailureLine(failure),
     );
@@ -348,6 +260,8 @@ class _Row extends StatelessWidget {
   const _Row({
     required this.who,
     required this.text,
+    this.markdown = false,
+    this.caret = false,
     this.reasoning,
     this.note,
     this.error,
@@ -355,6 +269,13 @@ class _Row extends StatelessWidget {
 
   final String who;
   final String text;
+
+  /// Whether [text] renders as Markdown (#39) — the assistant's turns
+  /// do; a person's words stay exactly as typed.
+  final bool markdown;
+
+  /// Whether the streaming cursor follows the last block.
+  final bool caret;
 
   /// The model's thinking, shown dimmed above the answer when the
   /// setting is on; null hides it.
@@ -365,6 +286,13 @@ class _Row extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final styles = context.saiText;
+    // One style for the streaming row and the finished turn, so the
+    // moment an answer completes moves nothing but the cursor.
+    final bodyStyle = styles.body.copyWith(
+      color: SaiColors.sheetText,
+      fontSize: 15,
+      height: 1.5,
+    );
     final mine = who == 'you';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -388,14 +316,9 @@ class _Row extends StatelessWidget {
               ),
             ),
           if (text.isNotEmpty)
-            Text(
-              text,
-              style: styles.body.copyWith(
-                color: SaiColors.sheetText,
-                fontSize: 15,
-                height: 1.5,
-              ),
-            ),
+            markdown
+                ? SaiMarkdown(text, style: bodyStyle, caret: caret)
+                : Text(text, style: bodyStyle),
           if (error case final error?)
             Text(error, style: styles.small.copyWith(color: SaiColors.red)),
         ],

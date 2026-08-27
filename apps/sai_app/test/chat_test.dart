@@ -200,7 +200,7 @@ void main() {
 
     Future<void> ask(WidgetTester tester, String line) async {
       await tester.enterText(find.byKey(chatFieldKey), line);
-      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
     }
 
@@ -255,6 +255,10 @@ void main() {
       await until(tester, () => container.read(chatProvider).turns.length == 2);
       expect(find.text('sai · cancelled'), findsOneWidget);
       expect(find.byKey(chatSendKey), findsOneWidget);
+      // The archive holds the cancelled turn, not only the pane (#39).
+      final log = archiveLines(container.read(archiveRootProvider));
+      expect(log.last, contains('"chat.message"'));
+      expect(log.last, contains('"finish":"cancelled"'));
     });
 
     testWidgets('Esc stops the answer too', (tester) async {
@@ -365,6 +369,89 @@ void main() {
       );
       expect(container.read(chatProvider).turns, isEmpty);
     });
+
+    group('the composer (#39)', () {
+      testWidgets('Shift+Enter breaks the line and sends nothing', (
+        tester,
+      ) async {
+        final container = await ready(tester);
+        await tester.enterText(find.byKey(chatFieldKey), 'one');
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.pump();
+        expect(container.read(chatDraftProvider).text, 'one\n');
+        expect(container.read(chatProvider).turns, isEmpty);
+      });
+
+      testWidgets('Option+Enter breaks the line too', (tester) async {
+        final container = await ready(tester);
+        await tester.enterText(find.byKey(chatFieldKey), 'one');
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+        await tester.pump();
+        expect(container.read(chatDraftProvider).text, 'one\n');
+        expect(container.read(chatProvider).turns, isEmpty);
+      });
+
+      testWidgets('a multi-line draft goes out as one message', (tester) async {
+        final container = await ready(tester);
+        await tester.enterText(find.byKey(chatFieldKey), 'one\ntwo');
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        await until(
+          tester,
+          () => container.read(chatProvider).turns.length == 2,
+        );
+        expect(container.read(chatProvider).turns.first.text, 'one\ntwo');
+        expect(container.read(chatDraftProvider).text, '');
+      });
+
+      testWidgets('⌘⏎ stays a Task chord, not a send', (tester) async {
+        final container = await ready(tester);
+        await tester.enterText(find.byKey(chatFieldKey), 'one');
+        await chord(tester, LogicalKeyboardKey.enter);
+        expect(container.read(chatProvider).turns, isEmpty);
+        expect(container.read(chatDraftProvider).text, 'one');
+      }, variant: macOS);
+
+      testWidgets('⌘V pastes a multi-line clipboard', (tester) async {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          (call) async => call.method == 'Clipboard.getData'
+              ? <String, dynamic>{'text': 'one\ntwo'}
+              : null,
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            SystemChannels.platform,
+            null,
+          ),
+        );
+        final container = await ready(tester);
+        await tester.tap(find.byKey(chatFieldKey));
+        await tester.pump();
+        await chord(tester, LogicalKeyboardKey.keyV);
+        await tester.pump();
+        expect(container.read(chatDraftProvider).text, 'one\ntwo');
+      }, variant: macOS);
+
+      testWidgets('a long draft never overflows the band', (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(900, 420);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        await ready(tester);
+        await tester.enterText(
+          find.byKey(chatFieldKey),
+          List.generate(20, (i) => 'line $i').join('\n'),
+        );
+        await tester.pump();
+        // No RenderFlex overflow is the assertion; the field scrolls.
+        expect(find.byKey(chatFieldKey), findsOneWidget);
+      });
+    });
   });
 
   group('against a stub endpoint', () {
@@ -395,7 +482,7 @@ void main() {
       settings.selectLlm('local');
       await tester.pump();
       await tester.enterText(find.byKey(chatFieldKey), 'what is due?');
-      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       await until(tester, () => container.read(chatProvider).turns.length == 2);
       expect(find.textContaining('Call mom is due.'), findsOneWidget);
