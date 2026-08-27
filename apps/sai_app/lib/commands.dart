@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'providers_dialog.dart';
+import 'widgets/sai_dialog.dart';
+import 'workspace/task_commands.dart';
 
 /// Focus for the quick-capture field: Cmd+N and File > New Task land
 /// here. Flutter-typed, so app-side rather than in core.
@@ -56,6 +58,10 @@ class AppCommands {
     required this.showShortcuts,
     required this.showProviders,
     required this.select,
+    required this.toggleInspector,
+    required this.completeSelected,
+    required this.cancelSelected,
+    required this.deleteSelected,
   });
 
   /// The live handlers, reading through the [ProviderScope] above
@@ -73,6 +79,10 @@ class AppCommands {
       showShortcuts: () => _showShortcuts(context),
       showProviders: () => _showProviders(context),
       select: container.read(selectedSectionProvider.notifier).select,
+      toggleInspector: () => _toggleInspector(container),
+      completeSelected: () => _completeSelected(container),
+      cancelSelected: () => _cancelSelected(container),
+      deleteSelected: () => _deleteSelected(context, container),
     );
   }
 
@@ -96,6 +106,15 @@ class AppCommands {
   final VoidCallback showProviders;
   final void Function(SidebarSection) select;
 
+  /// Opens the inspector on the first row of the list when nothing is
+  /// selected, or closes it (⌘I). Selection is the inspector's state.
+  final VoidCallback toggleInspector;
+
+  /// The Task menu (#74): the selected task, or nothing.
+  final VoidCallback completeSelected;
+  final VoidCallback cancelSelected;
+  final VoidCallback deleteSelected;
+
   static Future<void> _undo(ProviderContainer container) async {
     if (!container.read(canUndoProvider)) return;
     final notice = container.read(noticeProvider.notifier);
@@ -103,7 +122,7 @@ class AppCommands {
       await container.read(tasksProvider.notifier).store.undo();
       notice.clear();
     } on Object catch (error) {
-      notice.show('undo failed: $error');
+      notice.show('undo failed: ${describeFailure(error)}');
     }
   }
 
@@ -151,7 +170,60 @@ class AppCommands {
     } on Object catch (error) {
       container
           .read(noticeProvider.notifier)
-          .show('could not save the setting: $error');
+          .show('could not save the setting: ${describeFailure(error)}');
+    }
+  }
+
+  static void _toggleInspector(ProviderContainer container) {
+    final selection = container.read(selectedTaskProvider.notifier);
+    if (container.read(selectedTaskProvider) != null) {
+      selection.clear();
+      return;
+    }
+    final section = container.read(selectedSectionProvider);
+    final first = container.read(taskViewProvider(section)).value?.tasks;
+    if (first != null && first.isNotEmpty) selection.select(first.first.id);
+  }
+
+  static Task? _selectedTask(ProviderContainer container) {
+    final id = container.read(selectedTaskProvider);
+    return id == null ? null : container.read(tasksProvider).value?.task(id);
+  }
+
+  static Future<void> _completeSelected(ProviderContainer container) async {
+    final task = _selectedTask(container);
+    // A task in the Trash keeps its status until it is restored.
+    if (task == null || task.deletedAt != null) return;
+    final commands = container.read(taskCommandsProvider);
+    if (task.status == TaskStatus.open) {
+      await commands.complete(task.id);
+    } else {
+      await commands.reopen(task.id);
+    }
+  }
+
+  static Future<void> _cancelSelected(ProviderContainer container) async {
+    final task = _selectedTask(container);
+    if (task == null || task.deletedAt != null) return;
+    if (task.status != TaskStatus.open) return;
+    await container.read(taskCommandsProvider).cancel(task.id);
+  }
+
+  static Future<void> _deleteSelected(
+    BuildContext context,
+    ProviderContainer container,
+  ) async {
+    final task = _selectedTask(container);
+    if (task == null || task.deletedAt != null) return;
+    final answer = await confirmAction(
+      context,
+      eyebrow: 'Task',
+      title: 'Delete “${task.title}”?',
+      body: 'It moves to the Trash; the archive keeps its history.',
+      confirm: 'Delete',
+    );
+    if (answer.confirmed) {
+      await container.read(taskCommandsProvider).delete(task.id);
     }
   }
 
@@ -169,10 +241,13 @@ class AppCommands {
         title: const Text('Keyboard Shortcuts'),
         content: const Text(
           '⌘N  New task (focus quick capture)\n'
+          '⌘I  Open the inspector on the first row, or close it\n'
+          '⌘⏎  Complete the selected task (or reopen it)\n'
+          '⌘⌫  Delete the selected task\n'
           '⌘J  Open the assistant, or tuck it away\n'
           '⌘Z  Undo the last change\n'
           '⌘R  Let the model think before it answers, or not\n'
-          'Esc  Stop the assistant\'s answer',
+          'Esc  Stop the assistant\'s answer, or leave a field',
         ),
         actions: [
           TextButton(

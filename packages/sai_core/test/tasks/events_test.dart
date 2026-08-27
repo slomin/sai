@@ -61,6 +61,10 @@ void main() {
       ]),
       AreaCreated(title: 'Home'),
       AreaEdited(areaId, title: const Patch('House')),
+      AreaReordered(areaId, after: null),
+      AreaReordered(areaId, after: projectId),
+      AreaArchived(areaId),
+      AreaUnarchived(areaId),
       AreaDeleted(areaId),
       AreaRestored(areaId),
       ProjectCreated(
@@ -78,10 +82,14 @@ void main() {
         area: const Patch(null),
         title: const Patch('K'),
       ),
+      ProjectReordered(projectId, after: null),
+      ProjectArchived(projectId),
+      ProjectUnarchived(projectId),
       ProjectDeleted(projectId),
       ProjectRestored(projectId),
       HeadingCreated(project: projectId, title: 'Demolition'),
       HeadingEdited(headingId, title: const Patch('Demo')),
+      HeadingReordered(headingId, after: headingId),
       HeadingDeleted(headingId),
       HeadingRestored(headingId),
       TagCreated(title: 'errand'),
@@ -107,9 +115,41 @@ void main() {
       }
     });
 
-    test('all 26 registry types are covered by the samples', () {
+    test('all 33 registry types are covered by the samples', () {
       expect(samples.map((s) => s.type).toSet(), TaskEventTypes.all.toSet());
-      expect(TaskEventTypes.all, hasLength(26));
+      expect(TaskEventTypes.all, hasLength(33));
+    });
+
+    test('a container reorder writes a literal null after; a missing after '
+        'and an assistant actor are refused', () {
+      final line = seal(AreaReordered(areaId, after: null)).encode();
+      expect(line, contains('"after":null'));
+      expect(seal(ProjectReordered(projectId, after: areaId)).refs, [
+        projectId,
+        areaId,
+      ]);
+      expect(
+        () => decodeTaskEvent(
+          Event.seal(
+            EventDraft(
+              type: TaskEventTypes.headingReorder,
+              actor: Actor.user,
+              source: 'sai/tui',
+              payload: {'heading': headingId.toString()},
+            ),
+            prev: null,
+            ts: ts,
+          ),
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => ProjectArchived(projectId).toDraft(
+          source: 'sai/app',
+          by: Attribution.assistant(const ModelRef(provider: 'x', id: 'y')),
+        ),
+        throwsArgumentError,
+      );
     });
   });
 

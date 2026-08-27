@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import '../organise/heading_menu.dart';
 import '../theme/sai_tokens.dart';
 import '../widgets/empty_state.dart';
 import 'dates.dart';
@@ -194,7 +195,10 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         ),
       );
     }
-    if (view.tasks.isEmpty && _ghosts.isEmpty) {
+    // A container with headings shows them even when nothing is in them.
+    if (view.tasks.isEmpty &&
+        _ghosts.isEmpty &&
+        !(container && sections.length > 1)) {
       return _Empty(section: view.section, title: view.title);
     }
     final slivers = <Widget>[];
@@ -213,6 +217,11 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
             child: TaskSectionHeader(
               label: label,
               meta: _meta(section.tasks.length),
+              trailing:
+                  section.kind == TaskViewSectionKind.heading &&
+                      view.section is ProjectSection
+                  ? HeadingMenu(heading: section.heading!, title: section.title)
+                  : null,
             ),
           ),
         );

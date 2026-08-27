@@ -175,6 +175,43 @@ void main() {
     TaskView view(SidebarSection section) =>
         taskView(store.projection, section, today: today);
 
+    test('headings and projects follow the persisted order; an archived '
+        'project drops out of the hierarchy but its own view stays', () async {
+      final area = await store.createArea(title: 'A');
+      final p1 = await store.createProject(title: 'p1', area: area);
+      final p2 = await store.createProject(title: 'p2', area: area);
+      await store.createHeading(project: p1, title: 'h1');
+      final h2 = await store.createHeading(project: p1, title: 'h2');
+      await store.createTask(title: 't', project: p1, heading: h2);
+      await store.reorderHeading(h2, after: null);
+      await store.reorderProject(p2, after: null);
+      expect(view(ProjectSection(p1)).sections.map((s) => s.title), [
+        'p1',
+        'h2',
+        'h1',
+      ]);
+      expect(view(AreaSection(area)).sections.map((s) => s.title), [
+        'A',
+        'p2',
+        'p1',
+        'h2',
+        'h1',
+      ]);
+      expect(
+        view(const ListSection(TaskList.anytime)).sections.map((s) => s.title),
+        ['Anytime', 'A', 'p2', 'p1', 'h2', 'h1'],
+      );
+      await store.archiveProject(p1);
+      expect(
+        view(const ListSection(TaskList.anytime)).sections.map((s) => s.title),
+        ['Anytime', 'A', 'p2'],
+      );
+      expect(view(AreaSection(area)).sections.map((s) => s.title), ['A', 'p2']);
+      final own = view(ProjectSection(p1));
+      expect(own.sections.map((s) => s.title), ['p1', 'h2', 'h1']);
+      expect(own.tasks.map((t) => t.title), ['t']);
+    });
+
     test(
       'Inbox and Today are flat and keep their independent orders',
       () async {

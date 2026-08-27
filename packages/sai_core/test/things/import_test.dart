@@ -297,6 +297,23 @@ void main() {
     expect(result.report.unsupported[Unsupported.deletedInSai], 1);
   });
 
+  test(
+    'an area archived in sai is left alone; its contents import unfiled',
+    () async {
+      final ids = seed();
+      await importThings(snapshot(), store: store, now: now);
+      final home = store.projection.idByExternal('things3', ids.home)!;
+      await store.archiveArea(home);
+      final count = logLines().length;
+
+      final result = await importThings(snapshot(), store: store, now: now);
+
+      expect(result.report.unsupported[Unsupported.archivedInSai], 4);
+      expect(logLines().length, count, reason: 'nothing else changed');
+      expect(store.projection.areas[home]!.archivedAt, isNotNull);
+    },
+  );
+
   test('the import is an undo barrier', () async {
     seed();
     await store.createTask(title: 'mine');

@@ -312,7 +312,7 @@ void main() {
       });
     });
 
-    test('all 26 types invert to the type the model doc promises', () async {
+    test('all 33 types invert to the type the model doc promises', () async {
       final area = await store.createArea(title: 'A');
       final project = await store.createProject(title: 'P');
       final heading = await store.createHeading(project: project, title: 'H');
@@ -344,6 +344,12 @@ void main() {
           AreaEdited(area, title: const Patch('y')),
           AreaEdited,
         ),
+        TaskEventTypes.areaReorder: (
+          AreaReordered(area, after: null),
+          AreaReordered,
+        ),
+        TaskEventTypes.areaArchive: (AreaArchived(area), AreaUnarchived),
+        TaskEventTypes.areaUnarchive: (AreaUnarchived(area), AreaUnarchived),
         TaskEventTypes.areaDelete: (AreaDeleted(area), AreaRestored),
         TaskEventTypes.areaRestore: (AreaRestored(area), AreaRestored),
         TaskEventTypes.projectCreate: (
@@ -353,6 +359,18 @@ void main() {
         TaskEventTypes.projectEdit: (
           ProjectEdited(project, title: const Patch('y')),
           ProjectEdited,
+        ),
+        TaskEventTypes.projectReorder: (
+          ProjectReordered(project, after: null),
+          ProjectReordered,
+        ),
+        TaskEventTypes.projectArchive: (
+          ProjectArchived(project),
+          ProjectUnarchived,
+        ),
+        TaskEventTypes.projectUnarchive: (
+          ProjectUnarchived(project),
+          ProjectUnarchived,
         ),
         TaskEventTypes.projectDelete: (
           ProjectDeleted(project),
@@ -369,6 +387,10 @@ void main() {
         TaskEventTypes.headingEdit: (
           HeadingEdited(heading, title: const Patch('y')),
           HeadingEdited,
+        ),
+        TaskEventTypes.headingReorder: (
+          HeadingReordered(heading, after: null),
+          HeadingReordered,
         ),
         TaskEventTypes.headingDelete: (
           HeadingDeleted(heading),
@@ -856,5 +878,85 @@ void main() {
       expect(store.projection.trash(), hasLength(1));
       expect(store.canUndo, isFalse);
     });
+  });
+
+  group('container order and archive (#74)', () {
+    const today = CalendarDate(2026, 8, 24);
+
+    test('a container reorder inverts to the prior predecessor', () async {
+      final a = await store.createArea(title: 'a');
+      final b = await store.createArea(title: 'b');
+      final c = await store.createArea(title: 'c');
+      final p1 = await store.createProject(title: 'p1', area: a);
+      final p2 = await store.createProject(title: 'p2', area: a);
+      final h1 = await store.createHeading(project: p1, title: 'h1');
+      final h2 = await store.createHeading(project: p1, title: 'h2');
+      await store.reorderArea(c, after: null);
+      await store.reorderProject(p2, after: null);
+      await store.reorderHeading(h2, after: null);
+      expect(store.projection.areaOrder, [c, a, b]);
+      expect(store.projection.projectOrder, [p2, p1]);
+      expect(store.projection.headingOrder, [h2, h1]);
+      await store.undo();
+      await store.undo();
+      await store.undo();
+      expect(store.projection.areaOrder, [a, b, c]);
+      expect(store.projection.projectOrder, [p1, p2]);
+      expect(store.projection.headingOrder, [h1, h2]);
+      expect(store.undoDepth, 7, reason: 'the creates remain');
+    });
+
+    test('archive and unarchive invert state-aware, staying total', () async {
+      final area = await store.createArea(title: 'A');
+      await store.archiveArea(area);
+      await store.archiveArea(area);
+      await store.unarchiveArea(area);
+      await store.unarchiveArea(area);
+      final before = store.projection;
+      expect(
+        invertEvent(AreaArchived(area), before, created: area),
+        isA<AreaUnarchived>(),
+      );
+      await store.undo(); // unarchive-of-live → unarchive
+      expect(store.projection.areas[area]!.archivedAt, isNull);
+      await store.undo(); // unarchive → archive
+      expect(store.projection.areas[area]!.archivedAt, isNotNull);
+      await store.undo(); // archive-again → archive
+      expect(store.projection.areas[area]!.archivedAt, isNotNull);
+      await store.undo(); // archive → unarchive
+      expect(store.projection.areas[area]!.archivedAt, isNull);
+    });
+
+    test('undoing an archive brings the project and its tasks back', () async {
+      final project = await store.createProject(title: 'P');
+      final task = await store.createTask(title: 't', project: project);
+      await store.archiveProject(project);
+      expect(store.projection.list(TaskList.anytime, today: today), isEmpty);
+      expect(sidebarModel(store.projection, today: today).projects, isEmpty);
+      await store.undo();
+      expect(
+        store.projection.list(TaskList.anytime, today: today).map((t) => t.id),
+        [task],
+      );
+      expect(
+        sidebarModel(store.projection, today: today).projects.single.title,
+        'P',
+      );
+    });
+
+    test(
+      'undoing an area change restores the area at the end of that group',
+      () async {
+        final home = await store.createArea(title: 'Home');
+        final work = await store.createArea(title: 'Work');
+        final p1 = await store.createProject(title: 'p1', area: home);
+        final p2 = await store.createProject(title: 'p2', area: home);
+        await store.editProject(p1, area: Patch(work));
+        expect(store.projection.projectOrder, [p2, p1]);
+        await store.undo();
+        expect(store.projection.projects[p1]!.area, home);
+        expect(store.projection.projectOrder, [p2, p1]);
+      },
+    );
   });
 }

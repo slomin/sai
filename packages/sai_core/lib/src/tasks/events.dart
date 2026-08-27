@@ -23,14 +23,21 @@ abstract final class TaskEventTypes {
   static const taskChecklist = 'task.checklist';
   static const areaCreate = 'area.create';
   static const areaEdit = 'area.edit';
+  static const areaReorder = 'area.reorder';
+  static const areaArchive = 'area.archive';
+  static const areaUnarchive = 'area.unarchive';
   static const areaDelete = 'area.delete';
   static const areaRestore = 'area.restore';
   static const projectCreate = 'project.create';
   static const projectEdit = 'project.edit';
+  static const projectReorder = 'project.reorder';
+  static const projectArchive = 'project.archive';
+  static const projectUnarchive = 'project.unarchive';
   static const projectDelete = 'project.delete';
   static const projectRestore = 'project.restore';
   static const headingCreate = 'heading.create';
   static const headingEdit = 'heading.edit';
+  static const headingReorder = 'heading.reorder';
   static const headingDelete = 'heading.delete';
   static const headingRestore = 'heading.restore';
   static const tagCreate = 'tag.create';
@@ -51,14 +58,21 @@ abstract final class TaskEventTypes {
     taskChecklist,
     areaCreate,
     areaEdit,
+    areaReorder,
+    areaArchive,
+    areaUnarchive,
     areaDelete,
     areaRestore,
     projectCreate,
     projectEdit,
+    projectReorder,
+    projectArchive,
+    projectUnarchive,
     projectDelete,
     projectRestore,
     headingCreate,
     headingEdit,
+    headingReorder,
     headingDelete,
     headingRestore,
     tagCreate,
@@ -670,6 +684,21 @@ TaskEvent Function(Map<String, Object?>) _subjectOnly(
   return build(requireId(payload, key, where: where));
 };
 
+TaskEvent Function(Map<String, Object?>) _reorderDecoder(
+  String where,
+  String key,
+  TaskEvent Function(BlobRef, {required BlobRef? after}) build,
+) => (payload) {
+  rejectUnknownKeys(payload, {key, 'after'}, where: where);
+  if (!payload.containsKey('after')) {
+    throw FormatException('$where.after is required');
+  }
+  return build(
+    requireId(payload, key, where: where),
+    after: optionalId(payload, 'after', where: where),
+  );
+};
+
 /// `task.reopen` — clears completion and cancellation.
 final class TaskReopened extends TaskEvent {
   const TaskReopened(this.task);
@@ -877,6 +906,80 @@ final class AreaEdited extends TaskEvent {
       title: Patch(requireString(payload, 'title', where: where)),
     );
   }
+}
+
+/// `area.reorder` — [after] is null for first, else a live sibling in the
+/// same group.
+final class AreaReordered extends TaskEvent {
+  const AreaReordered(this.area, {required this.after});
+
+  final AreaId area;
+  final AreaId? after;
+
+  @override
+  String get type => TaskEventTypes.areaReorder;
+
+  @override
+  BlobRef? get subject => area;
+
+  @override
+  List<BlobRef> get refs => [area, ?after];
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return AreaReordered(area, after: before.areaPredecessor(area));
+  }
+
+  @override
+  Map<String, Object?> toPayload() => {
+    'area': area.toString(),
+    'after': after?.toString(),
+  };
+}
+
+/// `area.archive` — soft: the area leaves the sidebar and hides its
+/// tasks, keeping placement and position.
+final class AreaArchived extends TaskEvent {
+  const AreaArchived(this.area);
+
+  final AreaId area;
+
+  @override
+  String get type => TaskEventTypes.areaArchive;
+
+  @override
+  BlobRef? get subject => area;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.areas[area], area);
+    return prior.archivedAt == null ? AreaUnarchived(area) : AreaArchived(area);
+  }
+
+  @override
+  Map<String, Object?> toPayload() => {'area': area.toString()};
+}
+
+/// `area.unarchive`.
+final class AreaUnarchived extends TaskEvent {
+  const AreaUnarchived(this.area);
+
+  final AreaId area;
+
+  @override
+  String get type => TaskEventTypes.areaUnarchive;
+
+  @override
+  BlobRef? get subject => area;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.areas[area], area);
+    return prior.archivedAt == null ? AreaUnarchived(area) : AreaArchived(area);
+  }
+
+  @override
+  Map<String, Object?> toPayload() => {'area': area.toString()};
 }
 
 /// `area.delete` — soft.
@@ -1118,6 +1221,84 @@ final class ProjectEdited extends TaskEvent {
   }
 }
 
+/// `project.reorder` — [after] is null for first, else a live sibling in the
+/// same group.
+final class ProjectReordered extends TaskEvent {
+  const ProjectReordered(this.project, {required this.after});
+
+  final ProjectId project;
+  final ProjectId? after;
+
+  @override
+  String get type => TaskEventTypes.projectReorder;
+
+  @override
+  BlobRef? get subject => project;
+
+  @override
+  List<BlobRef> get refs => [project, ?after];
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return ProjectReordered(project, after: before.projectPredecessor(project));
+  }
+
+  @override
+  Map<String, Object?> toPayload() => {
+    'project': project.toString(),
+    'after': after?.toString(),
+  };
+}
+
+/// `project.archive` — soft: the project leaves the sidebar and hides its
+/// tasks, keeping placement and position.
+final class ProjectArchived extends TaskEvent {
+  const ProjectArchived(this.project);
+
+  final ProjectId project;
+
+  @override
+  String get type => TaskEventTypes.projectArchive;
+
+  @override
+  BlobRef? get subject => project;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.projects[project], project);
+    return prior.archivedAt == null
+        ? ProjectUnarchived(project)
+        : ProjectArchived(project);
+  }
+
+  @override
+  Map<String, Object?> toPayload() => {'project': project.toString()};
+}
+
+/// `project.unarchive`.
+final class ProjectUnarchived extends TaskEvent {
+  const ProjectUnarchived(this.project);
+
+  final ProjectId project;
+
+  @override
+  String get type => TaskEventTypes.projectUnarchive;
+
+  @override
+  BlobRef? get subject => project;
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    final prior = _priorOf(before.projects[project], project);
+    return prior.archivedAt == null
+        ? ProjectUnarchived(project)
+        : ProjectArchived(project);
+  }
+
+  @override
+  Map<String, Object?> toPayload() => {'project': project.toString()};
+}
+
 /// `project.delete` — soft.
 final class ProjectDeleted extends TaskEvent {
   const ProjectDeleted(this.project);
@@ -1280,6 +1461,35 @@ final class HeadingEdited extends TaskEvent {
       title: Patch(requireString(payload, 'title', where: where)),
     );
   }
+}
+
+/// `heading.reorder` — [after] is null for first, else a live sibling in the
+/// same group.
+final class HeadingReordered extends TaskEvent {
+  const HeadingReordered(this.heading, {required this.after});
+
+  final HeadingId heading;
+  final HeadingId? after;
+
+  @override
+  String get type => TaskEventTypes.headingReorder;
+
+  @override
+  BlobRef? get subject => heading;
+
+  @override
+  List<BlobRef> get refs => [heading, ?after];
+
+  @override
+  TaskEvent invert(UndoState before, {required BlobRef created}) {
+    return HeadingReordered(heading, after: before.headingPredecessor(heading));
+  }
+
+  @override
+  Map<String, Object?> toPayload() => {
+    'heading': heading.toString(),
+    'after': after?.toString(),
+  };
 }
 
 /// `heading.delete` — soft.
@@ -1523,6 +1733,21 @@ final _decoders = <String, TaskEvent Function(Map<String, Object?>)>{
   TaskEventTypes.taskChecklist: TaskChecklistSet._decode,
   TaskEventTypes.areaCreate: AreaCreated._decode,
   TaskEventTypes.areaEdit: AreaEdited._decode,
+  TaskEventTypes.areaReorder: _reorderDecoder(
+    TaskEventTypes.areaReorder,
+    'area',
+    AreaReordered.new,
+  ),
+  TaskEventTypes.areaArchive: _subjectOnly(
+    TaskEventTypes.areaArchive,
+    'area',
+    AreaArchived.new,
+  ),
+  TaskEventTypes.areaUnarchive: _subjectOnly(
+    TaskEventTypes.areaUnarchive,
+    'area',
+    AreaUnarchived.new,
+  ),
   TaskEventTypes.areaDelete: _subjectOnly(
     TaskEventTypes.areaDelete,
     'area',
@@ -1535,6 +1760,21 @@ final _decoders = <String, TaskEvent Function(Map<String, Object?>)>{
   ),
   TaskEventTypes.projectCreate: ProjectCreated._decode,
   TaskEventTypes.projectEdit: ProjectEdited._decode,
+  TaskEventTypes.projectReorder: _reorderDecoder(
+    TaskEventTypes.projectReorder,
+    'project',
+    ProjectReordered.new,
+  ),
+  TaskEventTypes.projectArchive: _subjectOnly(
+    TaskEventTypes.projectArchive,
+    'project',
+    ProjectArchived.new,
+  ),
+  TaskEventTypes.projectUnarchive: _subjectOnly(
+    TaskEventTypes.projectUnarchive,
+    'project',
+    ProjectUnarchived.new,
+  ),
   TaskEventTypes.projectDelete: _subjectOnly(
     TaskEventTypes.projectDelete,
     'project',
@@ -1547,6 +1787,11 @@ final _decoders = <String, TaskEvent Function(Map<String, Object?>)>{
   ),
   TaskEventTypes.headingCreate: HeadingCreated._decode,
   TaskEventTypes.headingEdit: HeadingEdited._decode,
+  TaskEventTypes.headingReorder: _reorderDecoder(
+    TaskEventTypes.headingReorder,
+    'heading',
+    HeadingReordered.new,
+  ),
   TaskEventTypes.headingDelete: _subjectOnly(
     TaskEventTypes.headingDelete,
     'heading',

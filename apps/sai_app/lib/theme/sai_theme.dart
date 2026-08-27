@@ -164,6 +164,29 @@ ThemeData saiTheme() {
             : SaiColors.surf3,
       ),
     ),
+    menuTheme: MenuThemeData(
+      style: MenuStyle(
+        backgroundColor: const WidgetStatePropertyAll(SaiColors.bg),
+        surfaceTintColor: const WidgetStatePropertyAll(SaiColors.bg),
+        elevation: const WidgetStatePropertyAll(4),
+        side: const WidgetStatePropertyAll(BorderSide(color: SaiColors.rule)),
+        shape: const WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(SaiRadius.medium)),
+          ),
+        ),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(vertical: 6),
+        ),
+      ),
+    ),
+    menuButtonTheme: MenuButtonThemeData(
+      style: MenuItemButton.styleFrom(
+        foregroundColor: SaiColors.ink,
+        textStyle: sans(13, weight: FontWeight.w500),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      ),
+    ),
     extensions: const [SaiText()],
   );
 }

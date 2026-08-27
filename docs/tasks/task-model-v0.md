@@ -39,9 +39,9 @@ project id refuses the log loudly.
 | entity | fields |
 | --- | --- |
 | Task | title, notes (Markdown), when, deadline, placement (project / area / heading), tags, checklist, created/modified/completed/cancelled/deleted timestamps, external |
-| Project | title, notes, area?, when, deadline, tags, timestamps, external |
+| Project | title, notes, area?, when, deadline, tags, timestamps (incl. archived), external |
 | Heading | project, title, timestamps |
-| Area | title, timestamps, external |
+| Area | title, timestamps (incl. archived), external |
 | Tag | title, parent?, timestamps |
 
 - A task lives in a project, in an area, or nowhere — never two at once;
@@ -110,9 +110,33 @@ The projection replays two independent task-id sequences:
 
 Completion/cancellation and deletion filter a task without removing it from
 either sequence. Reopen/restore therefore reveals it at its former position.
-Upcoming remains chronological. Logbook remains completion-driven. Area and
-project sidebar/heading order is deterministic rather than user-controlled;
-task order is the only persisted manual order in this version.
+Upcoming remains chronological. Logbook remains completion-driven.
+
+Containers have their own persisted manual order (#74, ADR 0014): three
+more replayed sequences — **area order** (the sidebar), **project order**
+(one sequence for every project, grouped at read time by the area it is
+listed under: its own area when that area is live, else the standalone
+group) and **heading order** (grouped by project). Creation appends;
+`area.reorder`, `project.reorder` and `heading.reorder` carry the same
+required nullable `after` as `task.reorder` (null for first, else a live
+sibling of the same group; unknown, self, not-live and cross-group anchors
+are refused). A `project.edit` that changes `area` removes the project and
+appends it to the end of its new group, like a placement move without
+`after`; an edit that rewrites the same area leaves the order alone. A log
+without reorder events replays into creation order. Tags have no order.
+
+Areas and projects can also be **archived** (`*.archive` / `*.unarchive`,
+`archivedAt`): an archived container leaves the sidebar's main groups and
+hides its tasks exactly as a deleted container does — placement and its
+position in the sequence are kept, so unarchiving brings everything back
+where it was — and it refuses new members like a deleted one (a task
+already in it may still change heading there: that is not a new member).
+Archiving
+an area does not archive its projects; they list standalone. Archiving
+and deleting are independent (deleted wins for display); the reducer
+stays total, so archiving twice overwrites the stamp and unarchiving a
+live container is a no-op. Headings and tags are never archived — delete
+already hides them and restore brings them back.
 
 `task.move.after` has three wire states: omitted means append in the
 destination group (including every pre-#20 move); JSON `null` means first;
@@ -132,7 +156,7 @@ sidebar section:
   the day; otherwise the future deadline does.
 - Anytime and Someday start with loose tasks, then expand live areas and
   projects in sidebar order. Projects contain unheaded tasks followed by live
-  headings in creation/id order.
+  headings in their persisted order.
 - A project view is its unheaded section followed by those heading sections.
   An area view is its direct-task section followed by every live project and
   that project's unheaded/heading sections. Live empty groups remain present;
@@ -141,9 +165,12 @@ sidebar section:
   calendar day, newest day first and newest finish first within the day.
 
 A client's row selection is `selectedTaskProvider` (#72), a task id or
-null beside the section selection: the client clears it when the task
-leaves the view it is showing, and later surfaces (the inspector, restored
-workspace state) read the same value. Dragging a row in the macOS app maps
+null beside the section selection. Selection is the inspector's open
+state (#74): the app keeps it while the task still exists — an edit that
+moves the task out of the list being shown leaves the inspector on it —
+and clears it when the task is deleted (unless the Trash is showing),
+unknown, or the person moves to a section that does not show it.
+Restored workspace state (#76) reads the same value. Dragging a row in the macOS app maps
 onto the two orders above — Today through `reorderToday`, the Inbox and
 every structural group shown on its own (a project's unheaded tasks, a
 heading, an area's direct tasks) through `reorderTask`, `after` being the
@@ -158,7 +185,7 @@ membership changes without a task mutation.
 
 ## Events
 
-The 26 types and their actor columns are rows in the
+The 33 types and their actor columns are rows in the
 [event log registry](../archive/event-log-v0.md#task-domain-17).
 Payloads use the shared value forms:
 
@@ -305,7 +332,7 @@ a payload key for it would be a spec change).
 ## Undo (#19)
 
 Undo is a new event, never a rewrite: reversing a mutation appends its
-**inverse** — an event of the same 26-type vocabulary, computed against
+**inverse** — an event of the same 33-type vocabulary, computed against
 the projection the mutation was validated on — with the reversed
 event's id in the envelope `refs`. No new types, no new payload keys.
 
@@ -315,6 +342,8 @@ event's id in the envelope `refs`. No new types, no new payload keys.
 | `*.edit` | an edit writing the prior values of exactly the fields the event set |
 | `task.move` | one move restoring the prior placement and predecessor |
 | `task.reorder` | one Today reorder restoring the prior predecessor |
+| `area.reorder` / `project.reorder` / `heading.reorder` | one reorder of the same kind restoring the prior live predecessor in the subject's group |
+| `*.archive` / `*.unarchive` | whichever of unarchive / archive restores the prior state |
 | `task.complete` / `task.cancel` / `task.reopen` | whichever of complete-with-prior-`at` / cancel-with-prior-`at` / reopen restores the prior pair |
 | `*.delete` / `*.restore` | whichever of restore / delete restores the prior state |
 | `task.checklist` | the prior items |
@@ -346,8 +375,11 @@ before, and provider or chat lines never touch it.
 
 Restored exactly: field values, placement, checklist, and the
 completion/cancellation instants (they ride in `at`). Not restored:
-`modifiedAt` (it bumps to the inverse's own ts) and an older
-`deletedAt` overwritten by a delete-again.
+`modifiedAt` (it bumps to the inverse's own ts), an older `deletedAt`
+overwritten by a delete-again, an older `archivedAt` overwritten by an
+archive-again, and a project's position inside its former area after an
+area change — the inverse `project.edit` appends to the end of that
+group (see Lists).
 
 ## The projection is in memory (ADR 0004 amendment)
 

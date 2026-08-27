@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
@@ -151,6 +151,10 @@ Future<void> selectSection(
   await tester.pump();
 }
 
+/// How long a settle helper waits for the store before failing the test
+/// — a missing event should read as a failure, not a hung run.
+const settleLimit = Duration(seconds: 5);
+
 /// Runs [act] (a tap or key chord that triggers an undo) under real
 /// async and waits until the store's undo stack has shrunk to [depth].
 Future<void> settleUndo(
@@ -160,13 +164,12 @@ Future<void> settleUndo(
   required int depth,
 }) async {
   final store = container.read(tasksProvider.notifier).store;
-  await tester.runAsync(() async {
-    await act();
-    while (store.undoDepth > depth) {
-      await Future<void>.delayed(const Duration(milliseconds: 2));
-    }
-  });
-  await tester.pump();
+  await tester.runAsync(act);
+  await _settle(
+    tester,
+    () => store.undoDepth <= depth,
+    () => 'undo depth still ${store.undoDepth}',
+  );
 }
 
 /// Every event line under [root], oldest first.
@@ -210,14 +213,43 @@ Future<void> settleEvents(
 }) async {
   final store = container.read(tasksProvider.notifier).store;
   final expected = store.projection.eventCount + count;
-  await tester.runAsync(() async {
-    await act();
-    while (store.projection.eventCount < expected) {
-      await Future<void>.delayed(const Duration(milliseconds: 2));
+  await tester.runAsync(act);
+  await _settle(
+    tester,
+    () => store.projection.eventCount >= expected,
+    () =>
+        'only ${store.projection.eventCount - expected + count} of $count '
+        'events',
+  );
+}
+
+/// Pumps a frame on the test clock (zero time, so animations stay put)
+/// and lets real async run for a moment, until [ready] — a popped dialog
+/// hands its result on over two frames, a menu item fires its handler
+/// after one, and the store's append is real file I/O.
+Future<void> _settle(
+  WidgetTester tester,
+  bool Function() ready,
+  String Function() describe,
+) async {
+  final started = DateTime.now();
+  while (!ready()) {
+    if (DateTime.now().difference(started) > settleLimit) {
+      fail('${describe()} after $settleLimit');
     }
-  });
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 2)),
+    );
+  }
   await tester.pump();
 }
+
+/// Taps the menu item labelled [label]; a [MenuItemButton] fires its
+/// handler on the frame after the menu closes, which the settle helpers
+/// pump.
+Future<void> tapMenuItem(WidgetTester tester, String label) =>
+    tester.tap(find.widgetWithText(MenuItemButton, label));
 
 /// The row showing [task].
 Finder row(TaskId task) => find.byKey(taskRowKey(task));

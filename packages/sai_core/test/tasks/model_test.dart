@@ -108,9 +108,15 @@ void main() {
         createdAt: created,
         modifiedAt: modified,
         deletedAt: DateTime.utc(2026, 8, 25),
+        archivedAt: DateTime.utc(2026, 8, 26),
         external: const ExternalRef(system: 'things3', id: 'P-1'),
       );
       expect(Project.fromJson(project.toJson()), project);
+      expect(project.toJson()['archived_at'], '2026-08-26T00:00:00.000000Z');
+      expect(
+        project.copyWith(archivedAt: const Patch(null)).archivedAt,
+        isNull,
+      );
 
       final bareProject = Project(
         id: id,

@@ -230,13 +230,13 @@ List<TaskViewSection> _areaSections(TaskProjection projection, AreaId area) {
       kind: TaskViewSectionKind.area,
       title: model.title,
       area: area,
-      tasks: projection.inArea(area),
+      tasks: projection.inArea(area, archived: true),
     ),
   ];
   final projects = [
-    for (final project in projection.projects.values)
-      if (project.deletedAt == null && project.area == area) project,
-  ]..sort(_containerOrder);
+    for (final project in projection.liveProjects())
+      if (project.area == area) project,
+  ];
   for (final project in projects) {
     sections.addAll(
       _projectSections(projection, project.id, (tasks) => tasks.toList()),
@@ -260,7 +260,7 @@ List<TaskViewSection> _projectSections(
   List<Task> Function(Iterable<Task>) keep,
 ) {
   final project = projection.projects[projectId]!;
-  final all = projection.inProject(projectId);
+  final all = projection.inProject(projectId, archived: true);
   final sections = <TaskViewSection>[
     TaskViewSection(
       kind: TaskViewSectionKind.project,
@@ -269,18 +269,7 @@ List<TaskViewSection> _projectSections(
       tasks: keep(all.where((task) => task.heading == null)),
     ),
   ];
-  final headings =
-      [
-        for (final heading in projection.headings.values)
-          if (heading.deletedAt == null && heading.project == projectId)
-            heading,
-      ]..sort((a, b) {
-        final created = a.createdAt.compareTo(b.createdAt);
-        return created != 0
-            ? created
-            : a.id.toString().compareTo(b.id.toString());
-      });
-  for (final heading in headings) {
+  for (final heading in projection.headingsOf(projectId)) {
     sections.add(
       TaskViewSection(
         kind: TaskViewSectionKind.heading,
@@ -292,11 +281,6 @@ List<TaskViewSection> _projectSections(
     );
   }
   return sections;
-}
-
-int _containerOrder(Project a, Project b) {
-  final title = a.title.toLowerCase().compareTo(b.title.toLowerCase());
-  return title != 0 ? title : a.id.toString().compareTo(b.id.toString());
 }
 
 bool _sameList<T>(List<T> a, List<T> b) {
