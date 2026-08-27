@@ -96,6 +96,14 @@ void main() {
     expect(err.toString(), contains("provider 'lmstudio' is not available"));
   });
 
+  test('version prints the workspace version', () async {
+    expect(await run('version'), cliOk);
+    expect(out.toString().trim(), 'sai_tui $saiVersion');
+    out.clear();
+    expect(await run('--version'), cliOk);
+    expect(out.toString().trim(), 'sai_tui $saiVersion');
+  });
+
   test('help and an unknown command', () async {
     expect(await run('help'), cliOk);
     expect(out.toString(), contains('usage: sai_tui'));
