@@ -243,4 +243,42 @@ no language here
       matchesGoldenFile('goldens/assistant-markdown.png'),
     );
   });
+
+  testWidgets('a tilde fence holds its partial closing line too', (
+    tester,
+  ) async {
+    const open = 'Here:\n\n~~~\ncode line\n';
+    await pumpMarkdown(tester, open, caret: true);
+    final settled = tester.getSize(find.byType(CodeBlock)).height;
+    for (final tail in ['~', '~~', '~~~']) {
+      await pumpMarkdown(tester, open + tail, caret: true);
+      expect(find.byType(CodeBlock), findsOneWidget);
+      expect(
+        tester.getSize(find.byType(CodeBlock)).height,
+        settled,
+        reason: 'height moved at "$tail"',
+      );
+    }
+  });
+
+  testWidgets('the caret survives a stream that ends on a rule', (
+    tester,
+  ) async {
+    await pumpMarkdown(tester, 'text\n\n***', caret: true);
+    expect(find.text('text▌'), findsOneWidget);
+  });
+
+  testWidgets('a whitespace-only stream still shows the caret', (tester) async {
+    await pumpMarkdown(tester, '\n', caret: true);
+    expect(find.text('▌'), findsOneWidget);
+  });
+
+  testWidgets('an absurd fence tag ellipsises instead of overflowing', (
+    tester,
+  ) async {
+    final tag = 'x' * 400;
+    await pumpMarkdown(tester, '```$tag\ncode\n```');
+    // No RenderFlex overflow is the assertion; the copy control stays.
+    expect(find.text('⧉'), findsOneWidget);
+  });
 }

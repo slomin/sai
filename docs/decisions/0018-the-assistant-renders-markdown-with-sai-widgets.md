@@ -36,8 +36,9 @@ workspace is deliberately dependency-lean.
   span exceeds its paragraph's line box; code bodies never wrap (the
   block scrolls sideways, so its height is exactly its line count); an
   unclosed fence is a code block to EOF by the parser's own behaviour;
-  a trailing line of one or two backticks is held back while the
-  answer streams (it is the closing fence arriving); and the cursor is
+  a trailing line of nothing but
+  backticks or tildes is held back while the answer streams (it is
+  the closing fence arriving, whatever its character and length); and the cursor is
   appended to the rendered spans, never to the source, where ```▌
   would become a fence's language. A finished turn parses once — the
   AST lives in widget state.

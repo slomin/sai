@@ -92,10 +92,16 @@ class _CodeBlockState extends State<CodeBlock> {
             ),
             child: Row(
               children: [
-                Text(
-                  (widget.language ?? 'text').toUpperCase(),
-                  style: context.saiText.chip.copyWith(
-                    color: SaiColors.sheetDim,
+                // Flexible: the fence's tag is the model's to write,
+                // and an absurd one must ellipsise, not overflow.
+                Flexible(
+                  child: Text(
+                    (widget.language ?? 'text').toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.saiText.chip.copyWith(
+                      color: SaiColors.sheetDim,
+                    ),
                   ),
                 ),
                 const Spacer(),

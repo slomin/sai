@@ -8,6 +8,10 @@ import 'code_block.dart';
 import 'markdown_inline.dart';
 
 const _headings = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'};
+
+/// A line that is nothing but fence delimiters — the closing fence
+/// arriving, whatever its character and length.
+final _partialFence = RegExp(r'^(`+|~+)$');
 const _blockTags = {'p', 'ul', 'ol', 'pre', 'blockquote', 'hr', ..._headings};
 
 /// The widgets for [nodes]. With [caret] the streaming cursor follows
@@ -20,9 +24,21 @@ List<Widget> markdownBlocks(
 }) {
   final blocks = <Widget>[];
   var previous = '';
+  // The caret goes on the last node that draws — a trailing rule is
+  // dropped, and the cursor must not vanish with it.
+  var caretIndex = -1;
+  if (caret) {
+    for (var i = nodes.length - 1; i >= 0; i--) {
+      final node = nodes[i];
+      if (node is! md.Element || node.tag != 'hr') {
+        caretIndex = i;
+        break;
+      }
+    }
+  }
   for (var i = 0; i < nodes.length; i++) {
     final node = nodes[i];
-    final widget = _block(node, styles, caret: caret && i == nodes.length - 1);
+    final widget = _block(node, styles, caret: i == caretIndex);
     if (widget == null) continue; // A rule, ignored by decision.
     final tag = node is md.Element ? node.tag : 'p';
     if (blocks.isNotEmpty) {
@@ -30,6 +46,11 @@ List<Widget> markdownBlocks(
     }
     blocks.add(widget);
     previous = tag;
+  }
+  // Nothing drew — the stream is whitespace, or rules alone — but the
+  // answer is still coming: the cursor stands on its own.
+  if (caret && blocks.isEmpty) {
+    blocks.add(Text('▌', style: styles.body));
   }
   return blocks;
 }
@@ -149,13 +170,14 @@ Widget _pre(md.Element element, MarkdownStyles styles, {required bool caret}) {
   }
   final code = element.textContent;
   var trimmed = code.endsWith('\n') ? code.substring(0, code.length - 1) : code;
-  // While the answer still streams, a last line of one or two
-  // backticks is almost surely the closing fence arriving; drawing it
-  // would add a line the third backtick takes away — a jump. Hold it.
+  // While the answer still streams, a last line of nothing but
+  // backticks or tildes is almost surely the closing fence arriving;
+  // drawing it would add a line its completion takes away — a jump.
+  // Hold it, whatever the fence character or length.
   if (caret) {
     final cut = trimmed.lastIndexOf('\n');
     final lastLine = trimmed.substring(cut + 1);
-    if (lastLine == '`' || lastLine == '``') {
+    if (_partialFence.hasMatch(lastLine)) {
       trimmed = cut < 0 ? '' : trimmed.substring(0, cut);
     }
   }
