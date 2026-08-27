@@ -32,6 +32,13 @@ class MarkdownStyles {
     backgroundColor: SaiColors.sheetCard,
   );
 
+  /// The code block's body: the chip's face without its background —
+  /// the card is the surface there.
+  late final TextStyle codeBlock = body.copyWith(
+    fontFamily: SaiFonts.mono,
+    fontSize: (body.fontSize ?? 14) - 1,
+  );
+
   /// Bold and italic, as deltas Flutter merges into the surround.
   /// Space Grotesk is variable: weight needs the axis set too.
   static const strong = TextStyle(

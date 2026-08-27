@@ -4,6 +4,7 @@ library;
 import 'package:flutter/widgets.dart';
 import 'package:markdown/markdown.dart' as md;
 
+import 'code_block.dart';
 import 'markdown_inline.dart';
 
 const _headings = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'};
@@ -134,20 +135,34 @@ Widget _listItem(md.Element li, MarkdownStyles styles, {required bool caret}) {
   );
 }
 
-/// A fenced or indented code block. For now a plain mono paragraph;
-/// the labelled, highlighted block is the next increment of #39.
+/// A fenced or indented code block, as the labelled card. The fence's
+/// tag arrives as a `language-…` class on the inner `code` element.
 Widget _pre(md.Element element, MarkdownStyles styles, {required bool caret}) {
+  final children = element.children;
+  final child = children == null || children.isEmpty ? null : children.first;
+  String? language;
+  if (child is md.Element) {
+    final tag = child.attributes['class'];
+    if (tag != null && tag.startsWith('language-')) {
+      language = tag.substring('language-'.length);
+    }
+  }
   final code = element.textContent;
-  final trimmed = code.endsWith('\n')
-      ? code.substring(0, code.length - 1)
-      : code;
-  return Text.rich(
-    TextSpan(
-      children: [
-        TextSpan(text: trimmed),
-        if (caret) const TextSpan(text: '▌'),
-      ],
-    ),
-    style: styles.body.merge(styles.code),
+  var trimmed = code.endsWith('\n') ? code.substring(0, code.length - 1) : code;
+  // While the answer still streams, a last line of one or two
+  // backticks is almost surely the closing fence arriving; drawing it
+  // would add a line the third backtick takes away — a jump. Hold it.
+  if (caret) {
+    final cut = trimmed.lastIndexOf('\n');
+    final lastLine = trimmed.substring(cut + 1);
+    if (lastLine == '`' || lastLine == '``') {
+      trimmed = cut < 0 ? '' : trimmed.substring(0, cut);
+    }
+  }
+  return CodeBlock(
+    trimmed,
+    language: language,
+    style: styles.codeBlock,
+    caret: caret,
   );
 }

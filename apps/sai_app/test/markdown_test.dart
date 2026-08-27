@@ -4,10 +4,13 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sai_app/assistant/markdown/code_block.dart';
 import 'package:sai_app/assistant/markdown/sai_markdown.dart';
 import 'package:sai_app/theme/sai_theme.dart';
 import 'package:sai_app/theme/sai_tokens.dart';
+import 'package:sai_app/widgets/glyph_button.dart';
 
 /// The transcript's body style, as the band passes it in.
 final _body = sans(15, height: 1.5, color: SaiColors.sheetText);
@@ -126,5 +129,89 @@ void main() {
   ) async {
     await pumpMarkdown(tester, '- alpha\n- beta', caret: true);
     expect(find.text('beta▌'), findsOneWidget);
+  });
+
+  testWidgets('fenced code gets a card, a label and highlighting', (
+    tester,
+  ) async {
+    await pumpMarkdown(tester, 'Look:\n\n```dart\nvoid main() {}\n```');
+    expect(find.byType(CodeBlock), findsOneWidget);
+    expect(find.text('DART'), findsOneWidget);
+    final spans = spansOf(tester, 'void main() {}');
+    expect(spans.values.any((s) => s.color == SaiColors.red), isTrue);
+  });
+
+  testWidgets('an untagged fence stays plain mono', (tester) async {
+    await pumpMarkdown(tester, '```\nplain code here\n```');
+    expect(find.text('TEXT'), findsOneWidget);
+    final spans = spansOf(tester, 'plain code here');
+    expect(spans.values.every((s) => s.color == SaiColors.sheetText), isTrue);
+    expect(spans.values.every((s) => s.fontFamily == SaiFonts.mono), isTrue);
+  });
+
+  testWidgets('the copy button hands the fence to the clipboard', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        calls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await pumpMarkdown(tester, '```dart\nvoid main() {}\n```');
+    await tester.tap(find.byType(GlyphButton));
+    await tester.pump();
+    final copy = calls.singleWhere((c) => c.method == 'Clipboard.setData');
+    expect((copy.arguments as Map)['text'], 'void main() {}');
+    // The confirmation shows, then drains its own timer.
+    expect(find.text('✓'), findsOneWidget);
+    await tester.pump(SaiDurations.hold);
+    await tester.pump();
+    expect(find.text('⧉'), findsOneWidget);
+  });
+
+  testWidgets('an unfinished fence is already a code block, and stays put', (
+    tester,
+  ) async {
+    const full = 'Here:\n\n```dart\nvoid main() {\n  print(1);\n}\n```';
+    double? width;
+    var height = 0.0;
+    var seen = false;
+    for (var i = 1; i <= full.length; i++) {
+      await pumpMarkdown(tester, full.substring(0, i), caret: true);
+      final block = find.byType(CodeBlock);
+      if (tester.any(block)) {
+        seen = true;
+        final size = tester.getSize(block);
+        width ??= size.width;
+        expect(size.width, width, reason: 'width moved at $i');
+        expect(
+          size.height,
+          greaterThanOrEqualTo(height),
+          reason: 'height shrank at $i',
+        );
+        height = size.height;
+      } else {
+        expect(seen, isFalse, reason: 'the block vanished at $i');
+      }
+    }
+    expect(seen, isTrue);
+    expect(find.byType(CodeBlock), findsOneWidget);
+  });
+
+  testWidgets('the caret joins the code, never the language label', (
+    tester,
+  ) async {
+    await pumpMarkdown(tester, 'Here:\n\n```\nfoo', caret: true);
+    expect(find.text('TEXT'), findsOneWidget);
+    expect(find.text('foo▌'), findsOneWidget);
   });
 }
