@@ -51,7 +51,8 @@ Preconditions: `dist/sai-v<version>/` staged from the commit under test;
    preview and result screens; the second run reporting nothing to do;
    the archive line count unchanged by the second run.
 9. **Terminal client.** Run the packaged `sai_tui` — once through a
-   symlink like the install makes — against the same archive: Today
+   symlink like the install makes, or the `~/.local/bin/sai_tui` a
+   dogfood install (#87) made — against the same archive: Today
    matches the app; capture one task; the app shows it once after
    reload. Evidence: the TUI snapshot, the app's Today, one
    `task.created` line.

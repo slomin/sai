@@ -20,7 +20,7 @@ This repository is a Dart workspace:
 | `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
 | `docs/settings/`     | The settings file contract ([settings v0](docs/settings/settings-v0.md)).   |
 | `docs/release/`      | Installing, upgrading and building a release ([README](docs/release/README.md)). |
-| `tool/`              | Developer scripts (`release.sh`, `sign-tui.sh`) and the smoke drivers (`smoke/`). |
+| `tool/`              | Developer scripts (`release.sh`, `install-local.sh`, `sign-tui.sh`) with their test (`test/`) and the smoke drivers (`smoke/`). |
 | `docs/decisions/`    | Technical ADRs.                                                            |
 
 Both clients read the same providers from `sai_core`; nothing in `sai_core`

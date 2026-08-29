@@ -2,7 +2,8 @@
 
 sai is distributed by hand (#42): a zip with the signed `sai.app`, a
 tarball with the signed terminal client, and a `checksums.txt`, attached
-to a GitHub pre-release. The app is signed with an Apple Development
+to a GitHub pre-release — or, on the Mac that builds it, installed
+straight from the tree as the dogfood copy (#87, below). The app is signed with an Apple Development
 identity and not notarised (ADR 0017), so the first launch on a Mac that
 did not build it needs one Gatekeeper step. There is no updater; an
 upgrade is the same steps again.
@@ -88,8 +89,10 @@ What the older build finds:
 | Archive (the task and chat log) | `~/Library/Application Support/sai/archive/` | `SAI_ARCHIVE_ROOT` |
 | Settings | `~/Library/Application Support/sai/settings.json` | `SAI_SETTINGS_FILE` |
 | Provider keys | login Keychain, service `me.slominski.sai`, one item per `provider:<id>` | — |
-| The app | `/Applications/sai.app` | — |
+| The app | `/Applications/sai.app` (a download), `~/Applications/sai.app` (the dogfood install) | — |
 | The terminal client | `~/.local/share/sai/bundle/`, `~/.local/bin/sai_tui` | — |
+| What the dogfood install installed | `~/.local/share/sai/installed` | — |
+| Kept dogfood releases | `references/releases/<name>/` in the checkout (gitignored) | `SAI_INSTALL_KEEP_DIR` |
 
 Both clients read the same archive and settings; a scratch run sets both
 overrides. Until #15 lands, a backup by hand is a copy of the
@@ -101,7 +104,45 @@ Uninstall: delete the app, the bundle and the symlink; delete
 secret clear <id>` for each provider removes the Keychain items (do that
 before removing the binary).
 
-## Building a release
+## The dogfood install
+
+The developer's own copy comes from the tree, not from a release:
+
+```sh
+SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install
+```
+
+builds the release exactly as `build` does (a dirty worktree is
+refused), then installs it: `~/Applications/sai.app`,
+`~/.local/share/sai/bundle/` and the symlink `~/.local/bin/sai_tui`.
+No tag, no GitHub release, and the archive, the settings file and the
+Keychain are not touched — the same identity signs every build, so the
+provider keys keep working (ADR 0008). Before anything is replaced the
+staged artefacts are checked in full: `checksums.txt`, `codesign
+--verify --deep --strict` on both, the commit each carries (`SaiCommit`
+in the app's `Info.plist`, `bundle/commit` beside the terminal client)
+against the commit that built them, and the version the plist and
+`sai_tui version` report. The app and the bundle are unpacked beside
+their destinations and swapped in by rename, the pair together; if that
+fails part-way the app swap is undone. A running sai is refused (quit it
+first), as is a stray file where the symlink goes. `tool/release.sh
+local-install --dry-run` prints what would be built and replaced without
+writing anything.
+
+An upgrade is the same command on a newer commit. The artefacts that
+were installed are kept under `references/releases/sai-v<version>-<commit>/`
+(gitignored, this checkout only) and `~/.local/share/sai/installed`
+says which one is in place. Rollback is quitting sai and reinstalling a
+kept one through the same checks:
+
+```sh
+tool/release.sh install references/releases/sai-v0.0.1-dev.1-6a8e367
+```
+
+What an older build finds in a newer archive and settings file is the
+same as for a downloaded release (Rollback, above).
+
+## Publishing on GitHub
 
 On the machine that holds the identity:
 
@@ -129,7 +170,8 @@ SAI_CODESIGN_IDENTITY="…" tool/release.sh publish
 ```
 
 creates the `v<version>` tag on that commit and the pre-release with the
-three files attached. Publish from the merged commit, never from a
+three files attached. This is the only path that publishes anything;
+`local-install` never does. Publish from the merged commit, never from a
 branch: the script refuses a `dist/` built from another commit (the
 build writes its commit there), a `HEAD` that is not on `origin/main`,
 and an existing `v<version>` tag that points anywhere else.
