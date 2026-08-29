@@ -54,7 +54,7 @@ clean_tree() {
 
 build() {
   identity
-  dart pub get
+  dart pub get >/dev/null
   clean_tree
   echo "release: sai v$version (plist $short build $number) at $commit"
   rm -rf "$dist"

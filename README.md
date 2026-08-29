@@ -161,6 +161,23 @@ macos --debug` → `apps/sai_app/build/macos/Build/Products/Debug/sai.app`.
 A signed release of both clients is `tool/release.sh`
 ([docs/release](docs/release/README.md)).
 
+Your own copy — the one in the Dock — comes from the same build, not
+from a release. With sai quit and a clean tree:
+
+```sh
+SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install   # build, verify, install
+tool/install-local.sh dist/sai-v<version>                 # install what is already built
+tool/release.sh install references/releases/<name>        # roll back to a kept one
+```
+
+That puts `~/Applications/sai.app`, `~/.local/share/sai/bundle/` and
+`~/.local/bin/sai_tui` in place, checks signatures, checksums and the
+commit before replacing anything, and never touches the archive, the
+settings file or the Keychain. Upgrading is the same command again;
+`--dry-run` shows what would happen. The full story — what is verified,
+where the kept copies live, rollback — is in
+[docs/release](docs/release/README.md#the-dogfood-install).
+
 The app's look is the Sai visual system (`references/gui_design_v1_0/`): the
 tokens live in `apps/sai_app/lib/theme/`, and the two families it sets in —
 Space Grotesk and JetBrains Mono, both SIL OFL — ship as assets under

@@ -128,20 +128,29 @@ in the app's `Info.plist`, `bundle/commit` beside the terminal client)
 against the commit that built them, and the version the plist and
 `sai_tui version` report. The app and the bundle are unpacked beside
 their destinations and swapped in by rename, the pair together; if that
-fails part-way the app swap is undone. The installed sai.app or sai_tui running is refused (quit them first),
-as is a stray file where the symlink goes and a `/Applications/sai.app`
-from a download (one Mac keeps one copy). A backup left by an
-interrupted run is put back on the next run before anything is judged. `tool/release.sh
-local-install --dry-run` prints what would be built and replaced without
-writing anything.
+fails part-way the app swap is undone. The installed sai.app or sai_tui
+running is refused (quit them first), as is a stray file where the
+symlink goes and a `/Applications/sai.app` from a download (one Mac
+keeps one copy). A backup left by an interrupted run is put back on the
+next run before anything is judged. `tool/release.sh local-install
+--dry-run` prints what would be built and replaced without writing
+anything.
+
+The install stage is its own script, so a build that already exists —
+the `dist/` a release is about to be published from, say — installs
+without rebuilding:
+
+```sh
+tool/install-local.sh dist/sai-v<version>
+```
 
 An upgrade is the same command on a newer commit. The artefacts that
 were installed are kept under `references/releases/sai-v<version>-<commit>/`
 (gitignored, this checkout only — `git clean -xdf` or removing the
 checkout removes them) and `~/.local/share/sai/installed` says which
 one is in place (it describes the dogfood install only; untarring a
-download over the bundle bypasses it). Rollback is quitting sai and reinstalling a
-kept one through the same checks:
+download over the bundle bypasses it). Rollback is quitting sai and
+reinstalling a kept one through the same checks:
 
 ```sh
 tool/release.sh install references/releases/sai-v0.0.1-dev.1-6a8e367
