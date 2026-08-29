@@ -16,6 +16,7 @@ export SAI_INSTALL_APPS_DIR="$work/home/Applications"
 export SAI_INSTALL_SHARE_DIR="$work/home/.local/share/sai"
 export SAI_INSTALL_BIN_DIR="$work/home/.local/bin"
 export SAI_INSTALL_KEEP_DIR="$work/keep"
+export SAI_INSTALL_SYSTEM_APP="$work/system/sai.app"
 mkdir -p "$HOME"
 
 passed=0
@@ -201,6 +202,44 @@ ls -A "$SAI_INSTALL_APPS_DIR" | grep -q '^\.' && fail "orphans after the failed 
 ls -A "$SAI_INSTALL_SHARE_DIR" | grep -q '^\.' && fail "orphans after the failed swap: $(ls -A "$SAI_INSTALL_SHARE_DIR")"
 [ "$(installed_version)" = "sai_tui 0.0.1-test.2" ] || fail "the pair mismatches after the failed swap: $(installed_version)"
 pass "a failed bundle swap puts the app back and leaves nothing behind"
+
+# A download in /Applications beside the dogfood copy is refused.
+mkdir -p "$work/system/sai.app"
+tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 && fail "installed beside a system-wide sai.app"
+grep -q "one Mac keeps one sai.app" "$work/err" || fail "wrong message: $(cat "$work/err")"
+unchanged "a system-wide sai.app"
+rm -rf "$work/system"
+pass "a sai.app in /Applications is refused"
+
+# An interrupted run left the live app under a .old name: the next run
+# puts it back before judging the incoming release, even a bad one.
+mv "$SAI_INSTALL_APPS_DIR/sai.app" "$SAI_INSTALL_APPS_DIR/.sai.app.old.999"
+fixture "$work/bad" 0.0.1-test.3 "$c2"
+sed -i '' -e '1s/^0/1/' -e '1t' -e '1s/^./0/' "$work/bad/checksums.txt"
+tool/install-local.sh "$work/bad" >"$work/err" 2>&1 && fail "corrupt checksums accepted after a recovery"
+grep -q "recovered .*sai.app from an interrupted install" "$work/err" || fail "no recovery reported: $(cat "$work/err")"
+unchanged "a recovery followed by a refusal"
+pass "a backup left by an interrupted run is recovered, not discarded"
+
+# The kept directory cannot be written: refused before anything moves.
+chmod 500 "$work/keep"
+fixture "$work/dist3" 0.0.1-test.3 "$c2"
+tool/install-local.sh "$work/dist3" >"$work/err" 2>&1 && { chmod 700 "$work/keep"; fail "installed without a kept copy"; }
+chmod 700 "$work/keep"
+grep -q "cannot create" "$work/err" || fail "wrong message: $(cat "$work/err")"
+unchanged "an unwritable keep directory"
+pass "an unwritable keep directory refuses before the swap"
+
+# A first install whose bundle swap fails must not leave the new app behind.
+rm -rf "$work/home2"; mkdir -p "$work/home2/share"
+printf 'pinned' > "$work/home2/share/bundle"
+chflags uchg "$work/home2/share/bundle"
+SAI_INSTALL_APPS_DIR="$work/home2/apps" SAI_INSTALL_SHARE_DIR="$work/home2/share" SAI_INSTALL_BIN_DIR="$work/home2/bin" \
+  tool/install-local.sh "$work/dist1" >"$work/err" 2>&1 && { chflags nouchg "$work/home2/share/bundle"; fail "first install succeeded with the bundle path pinned"; }
+chflags nouchg "$work/home2/share/bundle"
+[ ! -e "$work/home2/apps/sai.app" ] || fail "the new app was left behind after the failed first install"
+ls -A "$work/home2/apps" | grep -q '^\.' && fail "orphans after the failed first install: $(ls -A "$work/home2/apps")"
+pass "a failed first install removes the app it had placed"
 
 rm "$SAI_INSTALL_BIN_DIR/sai_tui"
 echo stray > "$SAI_INSTALL_BIN_DIR/sai_tui"

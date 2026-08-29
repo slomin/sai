@@ -23,14 +23,19 @@
 # the pair never mismatches. Only one sai.app ever exists: the copy that
 # was there is removed after the swap, and the artefacts that were
 # installed are kept under references/releases/<name>/ (gitignored) for
-# `tool/release.sh install`. The installed copies of sai.app and sai_tui
-# running, a dirty checksum, a broken signature or a wrong commit stop
-# the install with the previous copy untouched. ~/.local/share/sai/installed
+# `tool/release.sh install`; the kept copy is prepared before the swap,
+# so a failure there never follows a committed install. A sai.app in
+# /Applications (a download) is refused — one Mac keeps one copy, or
+# LaunchServices may open the other. The installed copies of sai.app
+# and sai_tui running, a dirty checksum, a broken signature or a wrong
+# commit stop the install with the previous copy untouched; a backup
+# left by an interrupted run is recovered, never discarded, until a
+# replacement has committed. ~/.local/share/sai/installed
 # records what is installed (version, commit, time, kept directory) —
 # never the signing identity. The archive, the settings file and the
 # Keychain are never touched. The roots are overridable for tests:
 # SAI_INSTALL_APPS_DIR, SAI_INSTALL_SHARE_DIR, SAI_INSTALL_BIN_DIR,
-# SAI_INSTALL_KEEP_DIR.
+# SAI_INSTALL_KEEP_DIR, SAI_INSTALL_SYSTEM_APP (the /Applications copy).
 set -eu
 
 [ $# -ge 1 ] || { echo "usage: tool/install-local.sh <dist-dir> [--dry-run]" >&2; exit 2; }
@@ -44,6 +49,7 @@ apps="${SAI_INSTALL_APPS_DIR:-$HOME/Applications}"
 share="${SAI_INSTALL_SHARE_DIR:-$HOME/.local/share/sai}"
 bin="${SAI_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 keep="${SAI_INSTALL_KEEP_DIR:-references/releases}"
+system_app="${SAI_INSTALL_SYSTEM_APP:-/Applications/sai.app}"
 
 fail() { echo "install: $*" >&2; exit 1; }
 
@@ -67,6 +73,21 @@ link_dst="$bin/sai_tui"
 
 # --- refusals that need no unpacking -----------------------------------
 [ -L "$app_dst" ] && fail "$app_dst is a symlink; move it aside first"
+if [ -e "$system_app" ] && [ "$system_app" != "$app_dst" ]; then
+  fail "$system_app exists; one Mac keeps one sai.app, or the Dock and Spotlight may open the other — remove it (or move it aside) first"
+fi
+# An interrupted run may have left the live copy under a .old name and
+# its destination empty: put it back before anything is judged. A .old
+# beside a present destination stays until this run commits.
+recover() {
+  for old in "$1".old.*; do
+    [ -e "$old" ] || continue
+    if [ ! -e "$2" ]; then
+      mv "$old" "$2"
+      echo "install: recovered $2 from an interrupted install"
+    fi
+  done
+}
 if [ -e "$link_dst" ] && [ ! -L "$link_dst" ]; then
   fail "$link_dst exists and is not a symlink; move it aside first"
 fi
@@ -81,6 +102,11 @@ running() {
   [ "$s1" -le 1 ] && [ "$s2" -le 1 ] || fail "cannot list processes to check whether sai is running (pgrep exit $s1/$s2)"
   echo "$pids $tuis" | tr -s ' \n' ' ' | sed 's/^ //;s/ $//'
 }
+
+if [ "$dry" = 0 ]; then
+  recover "$apps/.sai.app" "$app_dst"
+  recover "$share/.bundle" "$bundle_dst"
+fi
 
 (cd "$dist" && shasum -a 256 -c --quiet checksums.txt) || fail "checksums do not match in $dist"
 
@@ -100,24 +126,31 @@ fi
 [ -z "$busy" ] || fail "sai is running (pid $busy); quit sai first"
 
 # --- stage on the destination file systems -----------------------------
-rm -rf "$apps"/.sai.app.new.* "$apps"/.sai.app.old.* "$share"/.bundle.new.* "$share"/.bundle.old.*
+rm -rf "$apps"/.sai.app.new.* "$share"/.bundle.new.*
 mkdir -p "$apps" "$share" "$bin"
 stage_app="$apps/.sai.app.new.$$"
 stage_bundle="$share/.bundle.new.$$"
 old_app="$apps/.sai.app.old.$$"
 old_bundle="$share/.bundle.old.$$"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/sai-install.XXXXXX")
+kept="$keep/$name"
+kept_new="$kept.new.$$"
 swapped=0
+app_placed=0
+bundle_placed=0
 # One EXIT handler for every exit, normal or not; INT/TERM turn into an
 # exit so the script never resumes after the handler. Until the swap has
-# committed the handler also puts back whatever was moved aside.
+# committed the handler removes what this run put in place and puts
+# back whatever it moved aside.
 on_exit() {
   status=$?
   if [ "$swapped" = 0 ]; then
-    if [ -e "$old_bundle" ]; then rm -rf "$bundle_dst"; mv "$old_bundle" "$bundle_dst"; fi
-    if [ -e "$old_app" ]; then rm -rf "$app_dst"; mv "$old_app" "$app_dst"; fi
+    if [ "$bundle_placed" = 1 ]; then rm -rf "$bundle_dst"; fi
+    if [ -e "$old_bundle" ]; then mv "$old_bundle" "$bundle_dst"; fi
+    if [ "$app_placed" = 1 ]; then rm -rf "$app_dst"; fi
+    if [ -e "$old_app" ]; then mv "$old_app" "$app_dst"; fi
   fi
-  rm -rf "$stage_app" "$stage_bundle" "$scratch"
+  rm -rf "$stage_app" "$stage_bundle" "$scratch" "$kept_new"
   exit "$status"
 }
 trap on_exit EXIT
@@ -161,31 +194,38 @@ tui_version=$(SAI_SETTINGS_FILE="$scratch/settings.json" SAI_ARCHIVE_ROOT="$scra
 [ "$tui_version" = "sai_tui $version" ] || fail "the terminal client reports '${tui_version:-nothing}', not 'sai_tui $version'"
 echo "install: verified sai.app and sai_tui $version at $commit"
 
+# --- prepare the kept copy, so nothing after the swap can fail ---------
+refresh_kept=0
+if [ ! -f "$kept/checksums.txt" ] || ! cmp -s "$kept/checksums.txt" "$dist/checksums.txt"; then
+  refresh_kept=1
+  rm -rf "$kept_new"
+  mkdir -p "$kept_new" || fail "cannot create $kept_new to keep the release"
+  cp "$zip" "$tarball" "$dist/checksums.txt" "$dist/commit" "$kept_new/" || fail "cannot copy the release into $kept_new"
+fi
+
 # --- swap --------------------------------------------------------------
 busy=$(running)
 [ -z "$busy" ] || fail "sai is running (pid $busy); quit sai first"
 [ -e "$app_dst" ] && mv "$app_dst" "$old_app"
 mv "$app_new" "$app_dst"
+app_placed=1
 [ -e "$bundle_dst" ] && mv "$bundle_dst" "$old_bundle"
 mv "$bundle_new" "$bundle_dst"
+bundle_placed=1
 swapped=1
 ln -sfn "$bundle_dst/bin/sai_tui" "$link_dst"
-rm -rf "$old_app" "$old_bundle"
+rm -rf "$apps"/.sai.app.old.* "$share"/.bundle.old.*
 
-# --- record the install, then keep the artefacts ------------------------
+# --- record the install, land the kept copy -----------------------------
 {
   echo "version: $version"
   echo "commit: $commit"
   echo "installed_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "kept: $keep/$name"
+  echo "kept: $kept"
 } > "$share/installed"
-kept="$keep/$name"
-if [ ! -f "$kept/checksums.txt" ] || ! cmp -s "$kept/checksums.txt" "$dist/checksums.txt"; then
-  rm -rf "$kept.new"
-  mkdir -p "$kept.new"
-  cp "$zip" "$tarball" "$dist/checksums.txt" "$dist/commit" "$kept.new/"
+if [ "$refresh_kept" = 1 ]; then
   rm -rf "$kept"
-  mv "$kept.new" "$kept"
+  mv "$kept_new" "$kept" || echo "install: warning: could not land the kept copy at $kept; the install itself is complete" >&2
 fi
 
 echo "install: sai v$version at $commit is installed"

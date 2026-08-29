@@ -129,7 +129,9 @@ against the commit that built them, and the version the plist and
 `sai_tui version` report. The app and the bundle are unpacked beside
 their destinations and swapped in by rename, the pair together; if that
 fails part-way the app swap is undone. The installed sai.app or sai_tui running is refused (quit them first),
-as is a stray file where the symlink goes. `tool/release.sh
+as is a stray file where the symlink goes and a `/Applications/sai.app`
+from a download (one Mac keeps one copy). A backup left by an
+interrupted run is put back on the next run before anything is judged. `tool/release.sh
 local-install --dry-run` prints what would be built and replaced without
 writing anything.
 
