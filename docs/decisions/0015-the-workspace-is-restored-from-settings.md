@@ -54,7 +54,10 @@ no method channel, and macOS's own rules for a display that is gone.
 - A scratch run that sets `SAI_SETTINGS_FILE` gets a scratch workspace
   but shares the real window frame: the frame is keyed by bundle id in
   `NSUserDefaults`, outside the file. A smoke that resizes the window
-  moves the real one.
+  moves the real one. Since ADR 0019 the dev flavor has its own bundle
+  id and its own frame name (`sai-dev.main`), so a smoke on a dev build
+  never moves the daily copy's window — only a scratch run of the same
+  flavor shares its frame.
 - The debounced write can lose the very last move if the process is
   killed inside the window; ⌘Q flushes it through the app's exit
   request. Accepted: the loss is one selection.

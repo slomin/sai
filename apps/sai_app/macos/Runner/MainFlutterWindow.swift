@@ -10,15 +10,43 @@ class MainFlutterWindow: NSWindow {
     // Where the window was left (#76, ADR 0015): AppKit keeps the frame
     // under this name in the app's defaults and clamps a restored frame
     // to the screens that exist; a floor keeps the sidebar on screen.
+    // The dev flavor (ADR 0019) names its frame apart from stable's, so
+    // the two windows come back where each was left. Only a bundle that
+    // says `stable` gets stable's name: anything else — a configuration
+    // without a flavor file — is treated as dev, never as the daily copy.
+    let frameName = MainFlutterWindow.flavor == "stable" ? "sai.main" : "sai-dev.main"
     self.minSize = NSSize(width: 720, height: 520)
-    _ = self.setFrameAutosaveName("sai.main")
-    self.setFrameUsingName("sai.main")
+    _ = self.setFrameAutosaveName(frameName)
+    self.setFrameUsingName(frameName)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    registerFlavor(flutterViewController)
     registerAccessibility(flutterViewController)
     registerFinder(flutterViewController)
 
     super.awakeFromNib()
+  }
+
+  /// The `SaiFlavor` this bundle was built with (ADR 0019), or nothing.
+  static var flavor: String? {
+    Bundle.main.infoDictionary?["SaiFlavor"] as? String
+  }
+
+  /// `sai/flavor`: the bundle's flavor, so the Dart side takes its
+  /// identity from the plist that names the app, its bundle id and its
+  /// data — not from a dart-define that may have been written for the
+  /// other flavor by the last `flutter` command.
+  private func registerFlavor(_ controller: FlutterViewController) {
+    let channel = FlutterMethodChannel(
+      name: "sai/flavor", binaryMessenger: controller.engine.binaryMessenger)
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "flavor":
+        result(MainFlutterWindow.flavor)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
   }
 
   /// `sai/accessibility`: macOS Reduce Motion for the app's motion policy.

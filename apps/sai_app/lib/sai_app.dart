@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:sai_core/sai_core.dart';
 
 import 'menus.dart';
 import 'platform/reduce_motion.dart';
@@ -19,7 +20,7 @@ class SaiApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
-      title: 'sai',
+      title: ref.watch(identityProvider).displayName,
       debugShowCheckedModeBanner: false,
       theme: saiTheme(),
       themeMode: ThemeMode.light,

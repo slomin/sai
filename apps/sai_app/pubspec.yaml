@@ -23,6 +23,10 @@ dev_dependencies:
   yaml: ^3.1.0
 
 flutter:
+  # Two flavors, stable and dev (ADR 0019); a `flutter run` or `flutter
+  # build macos` that names none is dev, so nothing accidental looks
+  # like the daily-use copy.
+  default-flavor: dev
   uses-material-design: true
   # The Sai visual system's two families (SIL OFL, licences beside them).
   # Space Grotesk is a variable font: styles set the `wght` axis.

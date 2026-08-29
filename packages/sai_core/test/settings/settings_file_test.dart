@@ -30,6 +30,25 @@ void main() {
       );
     });
 
+    test('the dev flavor keeps its settings beside its own archive', () {
+      expect(
+        resolveSettingsFile(
+          environment: {'HOME': '/Users/x'},
+          operatingSystem: 'macos',
+          identity: SaiIdentity.dev,
+        ).path,
+        '/Users/x/Library/Application Support/sai-dev/settings.json',
+      );
+      expect(
+        resolveSettingsFile(
+          environment: {'SAI_SETTINGS_FILE': '/tmp/s.json', 'HOME': '/x'},
+          operatingSystem: 'macos',
+          identity: SaiIdentity.dev,
+        ).path,
+        '/tmp/s.json',
+      );
+    });
+
     test('SAI_ARCHIVE_ROOT does not move the settings', () {
       final file = resolveSettingsFile(
         environment: {'SAI_ARCHIVE_ROOT': '/tmp/sai-demo', 'HOME': '/Users/x'},

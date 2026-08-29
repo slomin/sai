@@ -37,10 +37,11 @@ made it and unknown to any other.
   `~/.local/bin` by rename. The artefacts it installed are kept under
   `references/releases/` (gitignored) and reinstalled by
   `tool/release.sh install <dir>` — the rollback goes through the same
-  checks, and only one `sai.app` ever exists, so LaunchServices never
-  sees two. The identity may be given by name or SHA-1 fingerprint; the
-  scripts never print it and the install records version, commit, time
-  and kept directory only.
+  checks, and only one app per flavor ever exists — one `sai.app` until
+  ADR 0019 added `sai-dev.app` beside it — so LaunchServices never sees
+  two of a kind. The identity may be given by name or SHA-1 fingerprint;
+  the scripts never print it and the install records flavor, version,
+  commit, time and kept directory only.
 - **Gatekeeper is a documented step, not a build step.** A downloaded
   copy is opened once through System Settings › Privacy & Security ›
   Open Anyway, or its `com.apple.quarantine` attribute is cleared;

@@ -80,6 +80,7 @@ Future<ProviderContainer> pumpApp(
   Directory? tmp,
   Map<String, String> environment = const {},
   bool firstRun = false,
+  SaiIdentity identity = SaiIdentity.stable,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
   // real data directory, whatever the developer's environment says. A
@@ -88,6 +89,9 @@ Future<ProviderContainer> pumpApp(
   final root = Directory('${tmp.path}/archive');
   final container = ProviderContainer.test(
     overrides: [
+      // Stable unless a test asks for dev: the goldens show the plain
+      // header, and `appFlavor` is unset under `flutter test` anyway.
+      identityProvider.overrideWithValue(identity),
       archiveRootProvider.overrideWithValue(root),
       settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
       // A home of its own (#40): nothing that resolves a path from the

@@ -18,6 +18,27 @@ void main() {
     expect(info.version, saiVersion);
   });
 
+  test('identityProvider is stable unless a client says otherwise', () {
+    final container = ProviderContainer.test();
+    expect(container.read(identityProvider), SaiIdentity.stable);
+  });
+
+  test('the dev identity names the app and moves its paths', () {
+    final container = ProviderContainer.test(
+      overrides: [
+        identityProvider.overrideWithValue(SaiIdentity.dev),
+        environmentProvider.overrideWithValue({'HOME': '/Users/x'}),
+      ],
+    );
+    expect(container.read(appInfoProvider).name, 'sai dev');
+    expect(
+      container.read(shellGreetingProvider),
+      'sai dev $saiVersion — nothing here yet',
+    );
+    expect(container.read(archiveRootProvider).path, contains('/sai-dev/'));
+    expect(container.read(settingsFileProvider).path, contains('/sai-dev/'));
+  });
+
   test('shellGreetingProvider renders name, version and the empty note', () {
     final container = ProviderContainer.test();
     expect(

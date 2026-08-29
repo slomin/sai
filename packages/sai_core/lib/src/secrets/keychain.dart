@@ -7,9 +7,10 @@ import 'package:ffi/ffi.dart';
 
 import 'secret_store.dart';
 
-/// The Keychain `service` every sai credential is filed under. Both
-/// binaries use the same one, so a key entered in the TUI is the key the
-/// app reads.
+/// The Keychain `service` every stable sai credential is filed under.
+/// Both binaries of a flavor use the same one, so a key entered in the TUI
+/// is the key the app reads; the dev flavor has its own service
+/// (`SaiIdentity.keychainService`, ADR 0019) and never sees stable's.
 const saiKeychainService = 'me.slominski.sai';
 
 /// Secrets in the macOS file-based Keychain, one generic-password item

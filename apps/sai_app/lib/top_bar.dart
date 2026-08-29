@@ -11,6 +11,9 @@ import 'widgets/notice_line.dart';
 const undoButtonKey = Key('undo');
 const assistantButtonKey = Key('assistant-toggle');
 
+/// The `DEV` label the dev flavor wears at all times (ADR 0019).
+const devLabelKey = Key('dev-label');
+
 /// The mark: a red square held inside an ink square.
 class SaiMark extends StatelessWidget {
   const SaiMark({super.key, this.size = 28});
@@ -65,6 +68,20 @@ class TopBar extends ConsumerWidget {
           const SaiMark(),
           const SizedBox(width: 12),
           Text('sai', style: text.brand),
+          if (ref.watch(identityProvider).isDev) ...[
+            const SizedBox(width: 8),
+            Container(
+              key: devLabelKey,
+              padding: const EdgeInsets.fromLTRB(6, 3, 6, 2),
+              decoration: BoxDecoration(
+                color: SaiColors.redTint,
+                borderRadius: const BorderRadius.all(
+                  Radius.circular(SaiRadius.small),
+                ),
+              ),
+              child: Text('DEV', style: text.eyebrow),
+            ),
+          ],
           const SizedBox(width: 16),
           Text(
             'ARCHIVE · $lines ${lines == 1 ? 'LINE' : 'LINES'}',

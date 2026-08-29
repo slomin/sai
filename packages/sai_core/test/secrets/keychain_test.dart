@@ -89,4 +89,17 @@ void main() {
     );
     expect(again.read('provider:x'), 'shared');
   });
+
+  test('the dev service over the same file never sees stable items', () {
+    store.write('provider:x', 'stable-only');
+    final dev = KeychainSecretStore.file(
+      '${tmp.path}/test.keychain-db',
+      password: 'test-only',
+      service: '${SaiIdentity.dev.keychainService}.test',
+    );
+    expect(dev.read('provider:x'), isNull);
+    dev.write('provider:x', 'dev-only');
+    expect(store.read('provider:x'), 'stable-only');
+    expect(dev.read('provider:x'), 'dev-only');
+  });
 }

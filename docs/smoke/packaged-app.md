@@ -11,9 +11,11 @@ the app with `tool/smoke/drive.sh` and the terminal client with
 are marked. Evidence — a screenshot per step, the archive line counts,
 the settings file — goes into the PR, **results, not claims**.
 
-Preconditions: the dogfood copy (#87) quit — `drive.sh` addresses sai by
-name, so a second running sai.app would take its clicks and shots;
-`dist/sai-v<version>/` staged from the commit under test;
+Preconditions: no other copy of the *same flavor* running — `drive.sh`
+finds the window by display name (`sai` or `sai dev`), so the dogfood
+stable copy would take a stable candidate's clicks and shots; the other
+flavor may keep running (ADR 0019); `dist/sai-v<version>/` staged from
+the commit under test;
 `codesign --verify --deep --strict` clean on both artefacts;
 `sai_tui version` prints the version the tag will carry.
 
@@ -58,6 +60,11 @@ name, so a second running sai.app would take its clicks and shots;
    matches the app; capture one task; the app shows it once after
    reload. Evidence: the TUI snapshot, the app's Today, one
    `task.created` line.
+9a. **Two flavors, two archives.** With the candidate running, launch
+   the dev flavor too (`Debug-dev/sai-dev.app`, its own scratch env):
+   its header wears `DEV`; capture a task in each; read both archives
+   back — the line written in one never appears in the other. Evidence:
+   both headers, both archives' `task.created` lines.
 10. **A failure that explains itself.** Point `SAI_THINGS_DB` at a file
     that is not a Things database and import: the headline names the
     problem and the next action; the archive line count is unchanged.

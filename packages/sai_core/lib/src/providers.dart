@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:riverpod/riverpod.dart';
 
 import 'app_info.dart';
+import 'identity.dart';
 import 'archive/archive.dart';
 import 'chat/chat.dart';
 import 'archive/archive_root.dart';
@@ -39,9 +40,17 @@ import 'things/things_import.dart';
 import 'things/things_mapping.dart';
 import 'things/things_source.dart';
 
+/// Which installed sai this process is (ADR 0019). Stable unless a client
+/// says otherwise: the app maps its Flutter flavor at startup, the dev
+/// terminal client overrides it from its own entry point.
+final identityProvider = Provider<SaiIdentity>((ref) => SaiIdentity.stable);
+
 /// The application identity every client shows.
 final appInfoProvider = Provider<AppInfo>(
-  (ref) => const AppInfo(name: 'sai', version: saiVersion),
+  (ref) => AppInfo(
+    name: ref.watch(identityProvider).displayName,
+    version: saiVersion,
+  ),
 );
 
 /// The line an empty shell shows until there is something to show.
@@ -62,6 +71,7 @@ final archiveRootProvider = Provider<Directory>(
   (ref) => resolveArchiveRoot(
     environment: ref.watch(environmentProvider),
     operatingSystem: Platform.operatingSystem,
+    identity: ref.watch(identityProvider),
   ),
 );
 
@@ -265,6 +275,7 @@ final settingsFileProvider = Provider<File>(
   (ref) => resolveSettingsFile(
     environment: ref.watch(environmentProvider),
     operatingSystem: Platform.operatingSystem,
+    identity: ref.watch(identityProvider),
   ),
 );
 
@@ -274,11 +285,16 @@ final settingsProvider = NotifierProvider<SettingsNotifier, Settings>(
   SettingsNotifier.new,
 );
 
-/// Where secrets live (ADR 0008): the Keychain on macOS, memory anywhere
-/// else. Every test harness overrides this with an [InMemorySecretStore]
-/// — nothing under `test/` may reach the login keychain.
+/// Where secrets live (ADR 0008): the Keychain on macOS, under this
+/// flavor's service, memory anywhere else. Every test harness overrides
+/// this with an [InMemorySecretStore] — nothing under `test/` may reach
+/// the login keychain.
 final secretStoreProvider = Provider<SecretStore>(
-  (ref) => Platform.isMacOS ? KeychainSecretStore() : InMemorySecretStore(),
+  (ref) => Platform.isMacOS
+      ? KeychainSecretStore(
+          service: ref.watch(identityProvider).keychainService,
+        )
+      : InMemorySecretStore(),
 );
 
 /// Whether a provider's credential is there. [CredentialStatus.none] is a

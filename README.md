@@ -43,16 +43,30 @@ dart pub get   # or flutter pub get
 Run the clients:
 
 ```sh
-# macOS app
+# macOS app — the dev flavor unless told otherwise
 cd apps/sai_app && flutter run -d macos
+cd apps/sai_app && flutter run -d macos --flavor stable
 
 # terminal client, from the root …
-dart run apps/sai_tui/bin/sai_tui.dart
+dart run apps/sai_tui/bin/sai_tui.dart          # stable
+dart run apps/sai_tui/bin/sai_tui-dev.dart      # dev
 # … or from its own directory
 cd apps/sai_tui && dart run
 ```
 
-Both clients read and write the same archive. The terminal client
+sai has two installed flavors and no third (ADR 0019): **stable** is
+the daily-use copy — `sai.app`, `sai_tui`, `Application Support/sai`,
+Keychain service `me.slominski.sai` — and **dev** the isolated
+development copy beside it — `sai-dev.app`, `sai_tui-dev`,
+`Application Support/sai-dev`, service `me.slominski.sai.dev`, a `DEV`
+label in its header. The two share nothing and run at once. A
+`flutter run` or `flutter build macos` that names no flavor is dev
+(`default-flavor` in the app's pubspec), so nothing you build by
+accident can pass for the daily copy; `--flavor stable` is deliberate.
+The same is true in Xcode: the `stable` and `dev` schemes are the
+flavors, and the plain `Runner` scheme builds dev.
+
+Both clients of a flavor read and write the same archive. The terminal client
 follows the app's writes as they land (it polls the archive head every
 two seconds); the app picks up the terminal's when it opens.
 
@@ -63,8 +77,9 @@ active provider with its `local`/`cloud` tag and the keys. It ships as
 a bundle, the binary beside the SQLite it bundles — `dart build cli -t
 apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui` puts
 it at `build/tui/bundle/bin/sai_tui` (`dart compile exe` refuses the
-build hook `package:sqlite3` needs) — or signed via `tool/sign-tui.sh`
-(below). To try one against a scratch archive instead of the real one,
+build hook `package:sqlite3` needs; `bin/sai_tui-dev.dart` is the dev
+entry point and lands as `sai_tui-dev`) — or signed via
+`tool/sign-tui.sh` (below). To try one against a scratch archive instead of the real one,
 point `SAI_ARCHIVE_ROOT` at a throwaway directory, e.g.
 `SAI_ARCHIVE_ROOT=/tmp/sai-demo/archive`. Non-secret settings live in
 `settings.json` in the same data directory as the default archive;
@@ -146,37 +161,45 @@ identity. Ad-hoc signed builds (the default) get a new identity on every
 build and so a Keychain prompt after every rebuild. To avoid that in
 development, make a self-signed identity once — Keychain Access →
 Certificate Assistant → Create a Certificate, type *Code Signing*, name
-it e.g. `sai-dev` — and point both builds at it, keeping the name out of
-the tree:
+it e.g. `sai-dev` (a certificate name; the dev *flavor* is unrelated) —
+and point both builds at it, keeping the name out of the tree:
 
 ```sh
-# app: gitignored per-machine override, picked up by Debug and Release
+# app: gitignored per-machine override, picked up by every configuration of both flavors
 echo 'CODE_SIGN_IDENTITY = sai-dev' > apps/sai_app/macos/Runner/Configs/Local.xcconfig
 # terminal client: build the bundle and sign it in one step
-SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/tui
+SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/tui          # stable
+SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/tui-dev dev  # dev
 ```
 
-Build a debug app bundle (what CI does): `cd apps/sai_app && flutter build
-macos --debug` → `apps/sai_app/build/macos/Build/Products/Debug/sai.app`.
-A signed release of both clients is `tool/release.sh`
-([docs/release](docs/release/README.md)).
+Build a debug app bundle (what CI does, for both flavors): `cd
+apps/sai_app && flutter build macos --debug --flavor dev` →
+`apps/sai_app/build/macos/Build/Products/Debug-dev/sai-dev.app`, and
+`--flavor stable` → `Products/Debug-stable/sai.app`; with no flavor the
+result is the dev one. A signed release of both clients is
+`tool/release.sh` ([docs/release](docs/release/README.md)).
 
-Your own copy — the one in the Dock — comes from the same build, not
-from a release. With sai quit and a clean tree:
+Your own copies — the one in the Dock and the one you develop against —
+come from the same build, not from a release. With that flavor quit and
+a clean tree:
 
 ```sh
-SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install   # build, verify, install
-tool/install-local.sh dist/sai-v<version>                 # install what is already built
-tool/release.sh install references/releases/<name>        # roll back to a kept one
+SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install       # build, verify, install stable
+SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install dev   # the same for the dev flavor
+tool/install-local.sh dist/sai-v<version>                     # install what is already built (dist/sai-dev-v… for dev)
+tool/release.sh install references/releases/<name>            # roll back to a kept one
 ```
 
 That puts `~/Applications/sai.app`, `~/.local/share/sai/bundle/` and
-`~/.local/bin/sai_tui` in place, checks signatures, checksums and the
-commit before replacing anything, and never touches the archive, the
-settings file or the Keychain. Upgrading is the same command again;
-`--dry-run` shows what would happen. The full story — what is verified,
-where the kept copies live, rollback — is in
-[docs/release](docs/release/README.md#the-dogfood-install).
+`~/.local/bin/sai_tui` in place — `sai-dev.app`, `~/.local/share/sai-dev/`
+and `sai_tui-dev` for dev — checks signatures, checksums, the commit and
+the flavor every artefact carries before replacing anything, and never
+touches the archive, the settings file or the Keychain. Installing one
+flavor while the other runs is fine; only that flavor's own copy has to
+be quit. Upgrading is the same command again; `--dry-run` shows what
+would happen. Publishing (`tool/release.sh publish`) is stable-only.
+The full story — what is verified, where the kept copies live,
+rollback — is in [docs/release](docs/release/README.md#the-dogfood-install).
 
 The app's look is the Sai visual system (`references/gui_design_v1_0/`): the
 tokens live in `apps/sai_app/lib/theme/`, and the two families it sets in —
@@ -231,7 +254,11 @@ dart analyze --fatal-infos packages apps
 (cd packages/sai_core && dart test)
 (cd apps/sai_tui && dart test)
 (cd apps/sai_app && flutter test)
-(cd apps/sai_app && flutter build macos --debug)
+(cd apps/sai_app && flutter build macos --debug --flavor stable)
+(cd apps/sai_app && flutter build macos --debug --flavor dev)
+dart build cli -t apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui
+dart build cli -t apps/sai_tui/bin/sai_tui-dev.dart --root-package=sai_tui -o build/tui-dev
+sh tool/test/install_local_test.sh       # the installer, both flavors, against temporary roots
 gitleaks git . --config .gitleaks.toml   # no secret in any commit
 ```
 
