@@ -8,7 +8,6 @@ import 'find/quick_find.dart';
 import 'settings/archive_page.dart' show revealArchiveInFinder;
 import 'settings/settings_screen.dart';
 import 'widgets/sai_dialog.dart';
-import 'workspace/navigation.dart';
 import 'workspace/task_commands.dart';
 
 /// Focus for the quick-capture field: Cmd+N and File > New Task land
@@ -276,15 +275,21 @@ class AppCommands {
       confirm: 'Delete',
     );
     if (!answer.confirmed) return;
-    // The row below takes the selection (else the one above), so the
-    // keyboard stays in the list rather than falling back to the sidebar.
+    // The row below takes the selection (else the one above, else the row
+    // standing where the task stood), so the keyboard stays in the list
+    // rather than falling back to the sidebar — once the delete has
+    // happened; a refused one leaves the selection where it was.
     final section = container.read(selectedSectionProvider);
     final tasks = container.read(taskViewProvider(section)).value?.tasks;
-    final next = tasks == null ? null : neighbourOf(tasks, task.id);
-    if (next != null && container.read(selectedTaskProvider) == task.id) {
+    final next = tasks == null
+        ? null
+        : container
+              .read(workspaceNavigatorProvider.notifier)
+              .successorOf(tasks, task.id);
+    final ok = await container.read(taskCommandsProvider).delete(task.id);
+    if (ok && next != null) {
       container.read(selectedTaskProvider.notifier).select(next);
     }
-    await container.read(taskCommandsProvider).delete(task.id);
   }
 
   static void _open(ProviderContainer container, FindResult result) {

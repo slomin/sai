@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
@@ -174,28 +175,36 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(28, 14, 28, 10),
-          child: TextField(
-            key: captureFieldKey,
-            controller: _controller,
-            // No autofocus (#76): focus rests on the chrome, so typing
-            // opens Quick Find and ⌘N is what brings it here.
-            focusNode: ref.watch(captureFocusProvider),
-            onSubmitted: _capture,
-            style: text.body,
-            decoration: InputDecoration(
-              hintText: captureHint,
-              prefixIcon: const Padding(
-                padding: EdgeInsets.only(left: 14, right: 8),
-                child: Text(
-                  '+',
-                  style: TextStyle(
-                    color: SaiColors.red,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
+          // Esc leaves the field (#89): focus falls back to the chrome's
+          // resting scope, where the arrow keys are live again.
+          child: CallbackShortcuts(
+            bindings: <ShortcutActivator, VoidCallback>{
+              const SingleActivator(LogicalKeyboardKey.escape): () =>
+                  ref.read(captureFocusProvider).unfocus(),
+            },
+            child: TextField(
+              key: captureFieldKey,
+              controller: _controller,
+              // No autofocus (#76): focus rests on the chrome, so typing
+              // opens Quick Find and ⌘N is what brings it here.
+              focusNode: ref.watch(captureFocusProvider),
+              onSubmitted: _capture,
+              style: text.body,
+              decoration: InputDecoration(
+                hintText: captureHint,
+                prefixIcon: const Padding(
+                  padding: EdgeInsets.only(left: 14, right: 8),
+                  child: Text(
+                    '+',
+                    style: TextStyle(
+                      color: SaiColors.red,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
+                prefixIconConstraints: const BoxConstraints(minWidth: 0),
               ),
-              prefixIconConstraints: const BoxConstraints(minWidth: 0),
             ),
           ),
         ),

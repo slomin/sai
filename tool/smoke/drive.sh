@@ -156,5 +156,5 @@ case $1 in
     screencapture -x -V "$2" -R "$wx,$wy,$ww,$wh" "$3"
     echo "recorded $3" ;;
   quit) pkill -f "$bin" || true; sleep 1; ! pgrep -f "$bin" >/dev/null && echo "$app closed" ;;
-  *) sed -n 2,19p "$0"; exit 2 ;;
+  *) sed -n 2,24p "$0"; exit 2 ;;
 esac

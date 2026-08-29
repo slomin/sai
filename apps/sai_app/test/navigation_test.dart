@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -344,12 +347,14 @@ void main() {
         });
         await tester.pump();
         final sidebar = find.byType(SaiSidebar);
-        // Built (the sidebar builds every row) but below the fold.
-        final last = find.byKey(
-          sidebarRowKey(ProjectSection(ids.last)),
-          skipOffstage: false,
+        // Below the fold: not built, the list is lazy.
+        expect(
+          find.byKey(
+            sidebarRowKey(ProjectSection(ids.last)),
+            skipOffstage: false,
+          ),
+          findsNothing,
         );
-        expect(within(tester, last, sidebar), isFalse);
         await chord(tester, LogicalKeyboardKey.digit7);
         for (final id in ids) {
           await key(tester, down);
@@ -361,10 +366,154 @@ void main() {
         }
         await chord(tester, LogicalKeyboardKey.digit1);
         expect(within(tester, sidebarRow(inbox), sidebar), isTrue);
+        // A far row by command, not by a step: the list jumps to it.
+        await selectSection(tester, container, ProjectSection(ids.last));
+        await tester.pump();
+        await tester.pump();
+        expect(
+          within(tester, sidebarRow(ProjectSection(ids.last)), sidebar),
+          isTrue,
+        );
+      }, variant: macOS);
+
+      testWidgets('a restored selection is brought into view at launch', (
+        tester,
+      ) async {
+        final tmp = tempDir();
+        final archive = await Archive.open(Directory('${tmp.path}/archive'));
+        final store = await TaskStore.open(archive, source: 'sai/test');
+        final ids = <TaskId>[];
+        for (var i = 1; i <= 40; i++) {
+          ids.add(await store.createTask(title: 'Task $i'));
+        }
+        store.dispose();
+        await archive.close();
+        File('${tmp.path}/settings.json').writeAsStringSync(
+          jsonEncode({
+            'version': 0,
+            'workspace': {'section': 'list:inbox', 'task': '${ids[29]}'},
+          }),
+        );
+        final container = await pumpApp(tester, tmp: tmp);
+        await tester.pump();
+        await tester.pump();
+        expect(container.read(selectedTaskProvider), ids[29]);
+        expect(within(tester, row(ids[29]), find.byType(TaskListBody)), isTrue);
+      }, variant: macOS);
+
+      testWidgets('rows of uneven height are still found', (tester) async {
+        final container = await pumpApp(tester);
+        final store = container.read(tasksProvider.notifier).store;
+        final ids = <TaskId>[];
+        await tester.runAsync(() async {
+          for (var i = 1; i <= 60; i++) {
+            ids.add(
+              await store.createTask(
+                title: 'Task $i',
+                notes: i.isEven ? 'a note line' : '',
+              ),
+            );
+          }
+        });
+        await selectSection(tester, container, inbox);
+        final list = find.byType(TaskListBody);
+        // A far row by command (Quick Find would do this): not built.
+        expect(row(ids[50]), findsNothing);
+        container.read(selectedTaskProvider.notifier).select(ids[50]);
+        for (var i = 0; i < 12; i++) {
+          await tester.pump();
+        }
+        expect(within(tester, row(ids[50]), list), isTrue);
       }, variant: macOS);
     });
 
+    testWidgets('an archived area is a plain row: → enters, ← stays put', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      late AreaId old;
+      late TaskId t;
+      await tester.runAsync(() async {
+        old = await store.createArea(title: 'Old');
+        t = await store.createTask(title: 'Left behind', area: old);
+        await store.archiveArea(old);
+      });
+      await selectSection(tester, container, AreaSection(old));
+      await key(tester, left);
+      expect(container.read(collapsedAreasProvider), isEmpty);
+      await key(tester, right);
+      expect(container.read(collapsedAreasProvider), isEmpty);
+      expect(container.read(selectedTaskProvider), t);
+    }, variant: macOS);
+
+    testWidgets('a project folded away steps from its area', (tester) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      late AreaId home;
+      late ProjectId garden, solo;
+      await tester.runAsync(() async {
+        home = await store.createArea(title: 'Home');
+        garden = await store.createProject(title: 'Garden', area: home);
+        solo = await store.createProject(title: 'Solo');
+      });
+      await selectSection(tester, container, ProjectSection(garden));
+      await tester.tap(find.byKey(sidebarChevronKey(home)));
+      await tester.pump();
+      expect(container.read(collapsedAreasProvider), {home});
+      await key(tester, down);
+      expect(container.read(selectedSectionProvider), ProjectSection(solo));
+    }, variant: macOS);
+
+    testWidgets('a task edited out of the list still hands over on delete', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      final day = container.read(todayProvider);
+      late TaskId b, c;
+      await tester.runAsync(() async {
+        await store.createTask(title: 'a', when: TaskWhen.date(day));
+        b = await store.createTask(title: 'b', when: TaskWhen.date(day));
+        c = await store.createTask(title: 'c', when: TaskWhen.date(day));
+      });
+      await tester.pump();
+      await tester.tap(row(b));
+      await tester.pump();
+      // Moved to Someday from the inspector: the selection is kept (#74).
+      await tester.runAsync(
+        () => store.editTask(b, when: const Patch(TaskWhen.someday)),
+      );
+      await tester.pump();
+      expect(rowTitles(tester), ['a', 'c']);
+      expect(container.read(selectedTaskProvider), b);
+      await chord(tester, LogicalKeyboardKey.backspace);
+      await settleEvents(
+        tester,
+        container,
+        () => tester.tap(find.byKey(dialogPrimaryKey)),
+      );
+      await tester.pump();
+      expect(container.read(selectedTaskProvider), c, reason: 'where b stood');
+    }, variant: macOS);
+
     group('focus safety', () {
+      testWidgets('Esc leaves the capture field and the arrows are back', (
+        tester,
+      ) async {
+        final container = await pumpApp(tester);
+        await capture(tester, container, 'Captured');
+        expect(container.read(captureFocusProvider).hasFocus, isTrue);
+        await key(tester, LogicalKeyboardKey.escape);
+        expect(container.read(captureFocusProvider).hasFocus, isFalse);
+        expect(FocusManager.instance.primaryFocus?.debugLabel, 'workspace');
+        await key(tester, down);
+        expect(
+          container.read(selectedSectionProvider),
+          const ListSection(TaskList.upcoming),
+        );
+      }, variant: macOS);
+
       testWidgets('a field keeps its arrows', (tester) async {
         final container = await pumpApp(tester);
         final store = container.read(tasksProvider.notifier).store;

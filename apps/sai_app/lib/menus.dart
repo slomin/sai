@@ -5,7 +5,6 @@ import 'package:sai_core/sai_core.dart';
 
 import 'commands.dart';
 import 'settings/settings_screen.dart';
-import 'workspace/navigation.dart';
 
 /// The native menu bar, built in Dart (ADR 0005). The standard items are
 /// the platform's own; everything else routes to [commands]. Built to
@@ -260,11 +259,15 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
   List<PlatformMenuItem> _menus = const [];
   // The handler lives on the node: a scope built around a node of its
   // own reads `onKeyEvent` from the node, not the widget.
-  late final _resting = FocusScopeNode(
+  late final FocusScopeNode _resting = FocusScopeNode(
     debugLabel: 'workspace',
+    // Gated before anything is built: every key from every field passes
+    // here on its way up, and only the resting scope's are ours.
     onKeyEvent: (_, event) {
-      final commands = AppCommands.of(context);
-      return _arrowed(event, commands) ?? _typed(event, commands);
+      if (!_resting.hasPrimaryFocus || event is KeyUpEvent) {
+        return KeyEventResult.ignored;
+      }
+      return _arrowed(event) ?? _typed(event);
     },
   );
 
@@ -279,10 +282,9 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
   /// focus — a field anywhere in the shell keeps its own keys — and only
   /// for a printable character with no ⌘ or ⌃ on it; a chord falls
   /// through to the bindings.
-  KeyEventResult _typed(KeyEvent event, AppCommands commands) {
-    if (!_resting.hasPrimaryFocus || event is! KeyDownEvent) {
-      return KeyEventResult.ignored;
-    }
+  KeyEventResult _typed(KeyEvent event) {
+    // A held key repeats; typing does not open a second Quick Find.
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final keys = HardwareKeyboard.instance;
     if (keys.isMetaPressed || keys.isControlPressed) {
       return KeyEventResult.ignored;
@@ -295,7 +297,7 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
         _notTyping.contains(event.logicalKey)) {
       return KeyEventResult.ignored;
     }
-    commands.showFind(character);
+    AppCommands.of(context).showFind(character);
     return KeyEventResult.handled;
   }
 
@@ -305,12 +307,9 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
   /// Down and repeat both count, so a held key keeps moving; any modifier
   /// makes it something else (⌥→ is a word jump, ⌘↑ a scroll) and it
   /// falls through untouched. Null when it is not an arrow at all.
-  KeyEventResult? _arrowed(KeyEvent event, AppCommands commands) {
+  KeyEventResult? _arrowed(KeyEvent event) {
     final direction = _arrows[event.logicalKey];
     if (direction == null) return null;
-    if (!_resting.hasPrimaryFocus || event is KeyUpEvent) {
-      return KeyEventResult.ignored;
-    }
     final keys = HardwareKeyboard.instance;
     if (keys.isMetaPressed ||
         keys.isControlPressed ||
@@ -318,7 +317,7 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
         keys.isShiftPressed) {
       return KeyEventResult.ignored;
     }
-    commands.navigate(direction);
+    AppCommands.of(context).navigate(direction);
     return KeyEventResult.handled;
   }
 
@@ -336,10 +335,6 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
     LogicalKeyboardKey.tab,
     LogicalKeyboardKey.backspace,
     LogicalKeyboardKey.delete,
-    LogicalKeyboardKey.arrowUp,
-    LogicalKeyboardKey.arrowDown,
-    LogicalKeyboardKey.arrowLeft,
-    LogicalKeyboardKey.arrowRight,
     LogicalKeyboardKey.home,
     LogicalKeyboardKey.end,
     LogicalKeyboardKey.pageUp,
