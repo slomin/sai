@@ -106,3 +106,9 @@ jobs:
       - name: Build sai.app (debug)
         working-directory: apps/sai_app
         run: flutter build macos --debug
+      - name: Test the local install against temporary roots
+        # tool/install-local.sh (#87) with an ad-hoc-signed fixture
+        # release; HOME and every root point into the runner's temp dir.
+        run: |
+          sh -n tool/release.sh tool/sign-tui.sh tool/install-local.sh
+          sh tool/test/install_local_test.sh

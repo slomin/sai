@@ -25,4 +25,4 @@ done
 bin="$out/bundle/bin/sai_tui"
 codesign --force --sign "$identity" --timestamp=none "$bin"
 codesign --verify --verbose=2 "$bin"
-codesign --display --verbose=2 "$bin" 2>&1 | grep -E '^(Identifier|Authority|Signature)' || true
+codesign --display --verbose=2 "$bin" 2>&1 | grep -E '^(Identifier|Signature)' || true
