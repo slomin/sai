@@ -8,6 +8,8 @@ import 'package:sai_app/settings/general_page.dart';
 import 'package:sai_app/settings/providers_page.dart';
 import 'package:sai_app/settings/settings_screen.dart';
 import 'package:sai_app/setup/first_run.dart';
+import 'package:sai_app/sidebar.dart';
+import 'package:sai_app/workspace/task_list.dart';
 import 'package:sai_app/theme/sai_tokens.dart';
 import 'package:sai_app/widgets/sai_dialog.dart';
 import 'package:sai_core/sai_core.dart';
@@ -271,6 +273,96 @@ void main() {
       await key(tester, right);
       expect(container.read(selectedTaskProvider), t);
     }, variant: macOS);
+
+    group('scrolling', () {
+      bool within(WidgetTester tester, Finder inner, Finder outer) {
+        final a = tester.getRect(inner);
+        final b = tester.getRect(outer);
+        return a.top >= b.top && a.bottom <= b.bottom;
+      }
+
+      testWidgets('the list follows the selection down and back up', (
+        tester,
+      ) async {
+        final container = await pumpApp(tester);
+        final store = container.read(tasksProvider.notifier).store;
+        final ids = <TaskId>[];
+        await tester.runAsync(() async {
+          for (var i = 1; i <= 40; i++) {
+            ids.add(await store.createTask(title: 'Task $i'));
+          }
+        });
+        await selectSection(tester, container, inbox);
+        final list = find.byType(TaskListBody);
+        expect(row(ids.last), findsNothing, reason: 'not built yet');
+        await key(tester, right);
+        for (var i = 1; i < ids.length; i++) {
+          await key(tester, down);
+          expect(container.read(selectedTaskProvider), ids[i]);
+          expect(within(tester, row(ids[i]), list), isTrue, reason: '$i');
+        }
+        for (var i = ids.length - 2; i >= 0; i--) {
+          await key(tester, up);
+          expect(within(tester, row(ids[i]), list), isTrue, reason: '$i');
+        }
+        expect(row(ids.last), findsNothing, reason: 'scrolled away again');
+      }, variant: macOS);
+
+      testWidgets('a row scrolled out of reach is found again', (tester) async {
+        final container = await pumpApp(tester);
+        final store = container.read(tasksProvider.notifier).store;
+        final ids = <TaskId>[];
+        await tester.runAsync(() async {
+          for (var i = 1; i <= 40; i++) {
+            ids.add(await store.createTask(title: 'Task $i'));
+          }
+        });
+        await selectSection(tester, container, inbox);
+        await key(tester, right);
+        expect(container.read(selectedTaskProvider), ids.first);
+        final list = find.byType(TaskListBody);
+        await tester.drag(
+          find.descendant(of: list, matching: find.byType(Scrollable)),
+          const Offset(0, -3000),
+        );
+        await tester.pump();
+        expect(row(ids.first), findsNothing, reason: 'unbuilt, far above');
+        await key(tester, down);
+        await tester.pump();
+        expect(container.read(selectedTaskProvider), ids[1]);
+        expect(within(tester, row(ids[1]), list), isTrue);
+      }, variant: macOS);
+
+      testWidgets('the sidebar follows the selection too', (tester) async {
+        final container = await pumpApp(tester);
+        final store = container.read(tasksProvider.notifier).store;
+        final ids = <ProjectId>[];
+        await tester.runAsync(() async {
+          for (var i = 1; i <= 30; i++) {
+            ids.add(await store.createProject(title: 'Project $i'));
+          }
+        });
+        await tester.pump();
+        final sidebar = find.byType(SaiSidebar);
+        // Built (the sidebar builds every row) but below the fold.
+        final last = find.byKey(
+          sidebarRowKey(ProjectSection(ids.last)),
+          skipOffstage: false,
+        );
+        expect(within(tester, last, sidebar), isFalse);
+        await chord(tester, LogicalKeyboardKey.digit7);
+        for (final id in ids) {
+          await key(tester, down);
+          expect(container.read(selectedSectionProvider), ProjectSection(id));
+          expect(
+            within(tester, sidebarRow(ProjectSection(id)), sidebar),
+            isTrue,
+          );
+        }
+        await chord(tester, LogicalKeyboardKey.digit1);
+        expect(within(tester, sidebarRow(inbox), sidebar), isTrue);
+      }, variant: macOS);
+    });
 
     group('focus safety', () {
       testWidgets('a field keeps its arrows', (tester) async {

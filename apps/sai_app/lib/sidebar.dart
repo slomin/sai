@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
@@ -7,6 +8,7 @@ import 'theme/sai_theme.dart';
 import 'theme/sai_tokens.dart';
 import 'widgets/eyebrow.dart';
 import 'widgets/glyph_button.dart';
+import 'workspace/task_row.dart' show revealRow;
 
 /// The key of a section's row, for tests: sections are value types.
 Key sidebarRowKey(SidebarSection section) => ValueKey(section);
@@ -78,6 +80,9 @@ class SaiSidebar extends ConsumerWidget {
     return Container(
       color: SaiColors.bg,
       child: ListView(
+        // Every row built, not just the viewport's: a row selected by key
+        // (#89) can then bring itself into view. Dozens of rows at most.
+        scrollCacheExtent: const ScrollCacheExtent.pixels(1e5),
         padding: const EdgeInsets.only(top: 22, bottom: 24),
         children: [
           const _Heading('Lists'),
@@ -164,6 +169,24 @@ class SidebarRow extends StatefulWidget {
 
 class _SidebarRowState extends State<SidebarRow> {
   var _hovered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.selected) _reveal();
+  }
+
+  @override
+  void didUpdateWidget(SidebarRow old) {
+    super.didUpdateWidget(old);
+    if (widget.selected && !old.selected) _reveal();
+  }
+
+  void _reveal() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) revealRow(context);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

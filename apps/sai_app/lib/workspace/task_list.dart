@@ -82,7 +82,12 @@ class TaskListBody extends ConsumerStatefulWidget {
   ConsumerState<TaskListBody> createState() => _TaskListBodyState();
 }
 
+/// What a row and a section header take, for the jump below.
+const _rowExtent = 56.0;
+const _headerExtent = 50.0;
+
 class _TaskListBodyState extends ConsumerState<TaskListBody> {
+  final _scroll = ScrollController();
   final _ghosts = <TaskId, _Ghost>{};
   var _known = <TaskId>{};
   var _entering = <TaskId>{};
@@ -109,6 +114,51 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     super.initState();
     _known = {for (final t in widget.view.tasks) t.id};
     _knownSection = widget.view.section;
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Whether [id]'s row exists — a lazy list builds only what is near the
+  /// viewport, so an element with its key is proof.
+  bool _built(TaskId id) {
+    final key = taskRowKey(id);
+    var found = false;
+    void visit(Element element) {
+      if (found) return;
+      if (element.widget.key == key) {
+        found = true;
+        return;
+      }
+      element.visitChildElements(visit);
+    }
+
+    context.visitChildElements(visit);
+    return found;
+  }
+
+  /// A selected row shows itself (#89) — when it is built. One scrolled
+  /// far out of the viewport is not, so the list jumps to about where it
+  /// is, from the extents above; the row then settles the rest once it
+  /// exists.
+  void _jumpTowards(TaskId id) {
+    if (!_scroll.hasClients || _built(id)) return;
+    var offset = 0.0;
+    for (final section in widget.view.sections) {
+      if (section.kind != TaskViewSectionKind.flat) offset += _headerExtent;
+      for (final task in section.tasks) {
+        if (task.id == id) {
+          final position = _scroll.position;
+          final centred = offset - position.viewportDimension / 2;
+          position.jumpTo(centred.clamp(0.0, position.maxScrollExtent));
+          return;
+        }
+        offset += _rowExtent;
+      }
+    }
   }
 
   Future<void> _finish(
@@ -174,6 +224,14 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     final view = widget.view;
     final selected = ref.watch(selectedTaskProvider);
     final select = ref.read(selectedTaskProvider.notifier).select;
+    ref.listen(selectedTaskProvider, (_, next) {
+      if (next == null) return;
+      // After the frame: a selection that came with a new section (Quick
+      // Find) is judged against that section's list, not the old one.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _jumpTowards(next);
+      });
+    });
     final container =
         view.section is ProjectSection || view.section is AreaSection;
     // A day that just emptied is gone from the view; its ghost still
@@ -290,6 +348,7 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     // wherever the previous one was scrolled to.
     return CustomScrollView(
       key: ValueKey(('list', view.section)),
+      controller: _scroll,
       slivers: slivers,
     );
   }
