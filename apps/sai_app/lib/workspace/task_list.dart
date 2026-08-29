@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
@@ -82,7 +83,11 @@ class TaskListBody extends ConsumerStatefulWidget {
   ConsumerState<TaskListBody> createState() => _TaskListBodyState();
 }
 
+/// A row's least height, the guess when no row has been measured yet.
+const _rowExtent = 56.0;
+
 class _TaskListBodyState extends ConsumerState<TaskListBody> {
+  final _scroll = ScrollController();
   final _ghosts = <TaskId, _Ghost>{};
   var _known = <TaskId>{};
   var _entering = <TaskId>{};
@@ -109,6 +114,76 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     super.initState();
     _known = {for (final t in widget.view.tasks) t.id};
     _knownSection = widget.view.section;
+    // A selection restored at launch is already set when the list first
+    // builds; nothing changes for the listener below to see.
+    if (ref.read(selectedTaskProvider) case final selected?) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _seek(selected));
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// The built rows: each task's index in the view against the scroll
+  /// offset that would put its row at the top. A lazy list builds only
+  /// what is near the viewport, so what is here is what exists.
+  Map<int, double> _builtRows() {
+    final index = {
+      for (final (i, task) in widget.view.tasks.indexed) task.id: i,
+    };
+    final out = <int, double>{};
+    void visit(Element element) {
+      final widget = element.widget;
+      if (widget is TaskRow) {
+        final at = index[widget.task.id];
+        final box = element.renderObject;
+        if (at != null &&
+            widget.key == taskRowKey(widget.task.id) &&
+            box is RenderBox &&
+            box.hasSize) {
+          out[at] = RenderAbstractViewport.of(box)
+              .getOffsetToReveal(box, 0)
+              .offset;
+        }
+        return;
+      }
+      element.visitChildElements(visit);
+    }
+
+    context.visitChildElements(visit);
+    return out;
+  }
+
+  /// Brings the list to [id]'s row when the row does not exist yet: from
+  /// the nearest built row, as many rows away as the view says, at the
+  /// height the built rows measure — then looks again next frame, since
+  /// rows and headers are not all one height, until the row is there and
+  /// shows itself. A built row needs nothing from here.
+  void _seek(TaskId id, [int attempt = 0]) {
+    if (!mounted || !_scroll.hasClients || attempt > 8) return;
+    final target = widget.view.tasks.indexWhere((t) => t.id == id);
+    if (target < 0) return;
+    final built = _builtRows();
+    if (built.isEmpty || built.containsKey(target)) return;
+    final indices = built.keys.toList()..sort();
+    final nearest = indices.reduce(
+      (a, b) => (a - target).abs() <= (b - target).abs() ? a : b,
+    );
+    final first = indices.first;
+    final last = indices.last;
+    final extent = last > first
+        ? (built[last]! - built[first]!) / (last - first)
+        : _rowExtent;
+    final position = _scroll.position;
+    final estimate =
+        built[nearest]! +
+        (target - nearest) * extent -
+        position.viewportDimension / 2;
+    position.jumpTo(estimate.clamp(0.0, position.maxScrollExtent));
+    WidgetsBinding.instance.addPostFrameCallback((_) => _seek(id, attempt + 1));
   }
 
   Future<void> _finish(
@@ -174,6 +249,12 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     final view = widget.view;
     final selected = ref.watch(selectedTaskProvider);
     final select = ref.read(selectedTaskProvider.notifier).select;
+    ref.listen(selectedTaskProvider, (_, next) {
+      if (next == null) return;
+      // After the frame: a selection that came with a new section (Quick
+      // Find) is judged against that section's list, not the old one.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _seek(next));
+    });
     final container =
         view.section is ProjectSection || view.section is AreaSection;
     // A day that just emptied is gone from the view; its ghost still
@@ -290,6 +371,7 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     // wherever the previous one was scrolled to.
     return CustomScrollView(
       key: ValueKey(('list', view.section)),
+      controller: _scroll,
       slivers: slivers,
     );
   }

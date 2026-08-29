@@ -259,9 +259,16 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
   List<PlatformMenuItem> _menus = const [];
   // The handler lives on the node: a scope built around a node of its
   // own reads `onKeyEvent` from the node, not the widget.
-  late final _resting = FocusScopeNode(
+  late final FocusScopeNode _resting = FocusScopeNode(
     debugLabel: 'workspace',
-    onKeyEvent: (_, event) => _typed(event, AppCommands.of(context)),
+    // Gated before anything is built: every key from every field passes
+    // here on its way up, and only the resting scope's are ours.
+    onKeyEvent: (_, event) {
+      if (!_resting.hasPrimaryFocus || event is KeyUpEvent) {
+        return KeyEventResult.ignored;
+      }
+      return _arrowed(event) ?? _typed(event);
+    },
   );
 
   @override
@@ -275,10 +282,9 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
   /// focus — a field anywhere in the shell keeps its own keys — and only
   /// for a printable character with no ⌘ or ⌃ on it; a chord falls
   /// through to the bindings.
-  KeyEventResult _typed(KeyEvent event, AppCommands commands) {
-    if (!_resting.hasPrimaryFocus || event is! KeyDownEvent) {
-      return KeyEventResult.ignored;
-    }
+  KeyEventResult _typed(KeyEvent event) {
+    // A held key repeats; typing does not open a second Quick Find.
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final keys = HardwareKeyboard.instance;
     if (keys.isMetaPressed || keys.isControlPressed) {
       return KeyEventResult.ignored;
@@ -291,9 +297,36 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
         _notTyping.contains(event.logicalKey)) {
       return KeyEventResult.ignored;
     }
-    commands.showFind(character);
+    AppCommands.of(context).showFind(character);
     return KeyEventResult.handled;
   }
+
+  /// The arrow keys move the selection (#89) — from the resting scope only,
+  /// like typing: a field anywhere keeps its own arrows, a dialog is a
+  /// route of its own, a native menu takes them before the view does.
+  /// Down and repeat both count, so a held key keeps moving; any modifier
+  /// makes it something else (⌥→ is a word jump, ⌘↑ a scroll) and it
+  /// falls through untouched. Null when it is not an arrow at all.
+  KeyEventResult? _arrowed(KeyEvent event) {
+    final direction = _arrows[event.logicalKey];
+    if (direction == null) return null;
+    final keys = HardwareKeyboard.instance;
+    if (keys.isMetaPressed ||
+        keys.isControlPressed ||
+        keys.isAltPressed ||
+        keys.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    AppCommands.of(context).navigate(direction);
+    return KeyEventResult.handled;
+  }
+
+  static final _arrows = {
+    LogicalKeyboardKey.arrowUp: NavDirection.up,
+    LogicalKeyboardKey.arrowDown: NavDirection.down,
+    LogicalKeyboardKey.arrowLeft: NavDirection.left,
+    LogicalKeyboardKey.arrowRight: NavDirection.right,
+  };
 
   static final _notTyping = {
     LogicalKeyboardKey.escape,
@@ -302,10 +335,6 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
     LogicalKeyboardKey.tab,
     LogicalKeyboardKey.backspace,
     LogicalKeyboardKey.delete,
-    LogicalKeyboardKey.arrowUp,
-    LogicalKeyboardKey.arrowDown,
-    LogicalKeyboardKey.arrowLeft,
-    LogicalKeyboardKey.arrowRight,
     LogicalKeyboardKey.home,
     LogicalKeyboardKey.end,
     LogicalKeyboardKey.pageUp,
@@ -314,6 +343,9 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
 
   @override
   Widget build(BuildContext context) {
+    // Kept alive from launch, so it has seen where a clicked selection
+    // stood before that task leaves its list.
+    ref.listen(workspaceNavigatorProvider, (_, _) {});
     final commands = AppCommands.of(context);
     final canUndo = ref.watch(canUndoProvider);
     final shown = ref.watch(chatVisibleProvider);

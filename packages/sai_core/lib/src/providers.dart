@@ -30,6 +30,7 @@ import 'settings/workspace.dart';
 import 'tasks/date.dart';
 import 'tasks/lists.dart';
 import 'tasks/model.dart';
+import 'tasks/navigation.dart';
 import 'tasks/projection.dart';
 import 'tasks/sidebar.dart';
 import 'tasks/store.dart';
@@ -454,7 +455,7 @@ final llmRegistryProvider = Provider<Map<String, LlmProvider>>((ref) {
 /// selected id is not installed. Selection is an app-level setting, not
 /// per conversation.
 final activeLlmProvider = Provider<LlmProvider?>((ref) {
-  final id = ref.watch(settingsProvider).llm;
+  final id = ref.watch(settingsProvider.select((s) => s.llm));
   if (id == null) return null;
   return ref.watch(llmRegistryProvider)[id];
 });
@@ -480,13 +481,16 @@ final activeLlmWarningProvider = Provider<String?>((ref) {
 /// The status-bar line naming the active LLM provider and its privacy
 /// tag — the same words in every client (`llm/status.dart`).
 final llmStatusProvider = Provider<String>((ref) {
-  final settings = ref.watch(settingsProvider);
-  if (settings.problem != null) return unreadableSettingsStatus;
-  final id = settings.llm;
+  // Only what the line is made of: the workspace part of settings moves
+  // with every click and must not redraw it.
+  final (problem, id) = ref.watch(
+    settingsProvider.select((s) => (s.problem, s.llm)),
+  );
+  if (problem != null) return unreadableSettingsStatus;
   if (id == null) return noProviderStatus;
   final active = ref.watch(activeLlmProvider);
   if (active == null) {
-    final config = settings.provider(id);
+    final config = ref.watch(settingsProvider.select((s) => s.provider(id)));
     if (config == null) return missingProviderStatus(id);
     final missing = ref.watch(misconfiguredLlmsProvider)[id];
     if (missing != null) return misconfiguredStatus(id, missing);
@@ -976,11 +980,14 @@ class Connection extends Notifier<ConnectionStatus> {
       _timer = null;
       _epoch++;
     });
-    final settings = ref.watch(settingsProvider);
-    if (settings.problem != null) {
+    // Selected, not the whole file: a workspace save (#76) must not turn
+    // a ready connection amber and ask the endpoint again.
+    final (problem, id) = ref.watch(
+      settingsProvider.select((s) => (s.problem, s.llm)),
+    );
+    if (problem != null) {
       return const ConnectionStatus.down('settings unreadable');
     }
-    final id = settings.llm;
     if (id == null) return const ConnectionStatus.down('no provider');
     final active = ref.watch(activeLlmProvider);
     if (active == null) {
@@ -1109,4 +1116,103 @@ class TasksNotifier extends AsyncNotifier<TaskProjection> {
   /// through the same change stream as a command. Throws the [store]'s
   /// [StateError] until [build] has settled.
   Future<void> reload() => store.reload();
+}
+
+/// Where the selected task stands in its view, or null while nothing is
+/// selected or the selection has left the view.
+final selectionIndexProvider = Provider<int?>((ref) {
+  final selected = ref.watch(selectedTaskProvider);
+  if (selected == null) return null;
+  final section = ref.watch(selectedSectionProvider);
+  final tasks = ref.watch(taskViewProvider(section)).value?.tasks;
+  if (tasks == null) return null;
+  final at = tasks.indexWhere((t) => t.id == selected);
+  return at < 0 ? null : at;
+});
+
+/// The arrow keys in the workspace (#89). Which pane they move is read
+/// off the screen rather than kept: a selected task means the list, none
+/// means the sidebar. Its state is the last place the selection stood in
+/// its view, so a task that has left the list — completed from Today —
+/// is stepped from where it was. Keep it alive from launch (a client
+/// listens to it), or the first click's place is not remembered.
+final workspaceNavigatorProvider = NotifierProvider<WorkspaceNavigator, int?>(
+  WorkspaceNavigator.new,
+);
+
+class WorkspaceNavigator extends Notifier<int?> {
+  @override
+  int? build() {
+    ref.listen(selectionIndexProvider, (_, next) {
+      if (next != null) state = next;
+    });
+    return ref.read(selectionIndexProvider);
+  }
+
+  void move(NavDirection direction) {
+    final section = ref.read(selectedSectionProvider);
+    final tasks =
+        ref.read(taskViewProvider(section)).value?.tasks ?? const <Task>[];
+    final selected = ref.read(selectedTaskProvider);
+    if (selected != null) {
+      _moveInList(tasks, selected, direction);
+    } else {
+      _moveInSidebar(section, tasks, direction);
+    }
+  }
+
+  /// The row that takes the selection when [id] leaves the list: its
+  /// neighbour, or — for a selection kept after its task was edited out
+  /// of this list — the row standing where it stood.
+  TaskId? successorOf(List<Task> tasks, TaskId id) {
+    if (tasks.any((t) => t.id == id)) return neighbourOf(tasks, id);
+    return stepTask(tasks, id, NavDirection.down, lastIndex: state);
+  }
+
+  void _moveInList(List<Task> tasks, TaskId selected, NavDirection direction) {
+    final selection = ref.read(selectedTaskProvider.notifier);
+    switch (direction) {
+      case NavDirection.up || NavDirection.down:
+        final next = stepTask(tasks, selected, direction, lastIndex: state);
+        if (next != null) selection.select(next);
+      case NavDirection.left:
+        // Back to the sidebar row, which is where it was all along.
+        selection.clear();
+      case NavDirection.right:
+        break;
+    }
+  }
+
+  void _moveInSidebar(
+    SidebarSection section,
+    List<Task> tasks,
+    NavDirection direction,
+  ) {
+    final model = ref.read(sidebarProvider).value;
+    if (model == null) return;
+    final collapsed = ref.read(collapsedAreasProvider);
+    final fold = ref.read(collapsedAreasProvider.notifier);
+    // Only a live area folds; the archived group draws its areas flat.
+    final area = foldable(model, section)
+        ? (section as AreaSection).area
+        : null;
+    switch (direction) {
+      case NavDirection.up || NavDirection.down:
+        final next = stepSection(model, collapsed, section, direction);
+        if (next != null) {
+          ref.read(selectedSectionProvider.notifier).select(next);
+        }
+      case NavDirection.right:
+        if (area != null && collapsed.contains(area)) {
+          fold.toggle(area);
+          return;
+        }
+        final first = stepTask(tasks, null, direction);
+        if (first != null) {
+          ref.read(selectedTaskProvider.notifier).select(first);
+        }
+      case NavDirection.left:
+        if (area != null && !collapsed.contains(area)) fold.toggle(area);
+    }
+  }
 }

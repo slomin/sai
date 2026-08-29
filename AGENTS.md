@@ -70,6 +70,8 @@ the layout and the toolchain; this file has the rules.
   menu key equivalents (⌘1–⌘7, ⌘K, ⌘J, ⌘,) do reach the app through
   System Events `keystroke`; chords bound only in-app do not — drive
   those through the menu item (`click menu item … of menu "View" …`).
+  Bare keys — the arrows, Return, Escape — go through `drive.sh key
+  <name|code> [name]`, which activates the window first.
 
 ## Boundaries
 

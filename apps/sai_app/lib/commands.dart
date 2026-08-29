@@ -83,6 +83,7 @@ class AppCommands {
     required this.completeSelected,
     required this.cancelSelected,
     required this.deleteSelected,
+    required this.navigate,
   });
 
   /// The live handlers, reading through the [ProviderScope] above
@@ -108,6 +109,7 @@ class AppCommands {
       completeSelected: () => _completeSelected(container),
       cancelSelected: () => _cancelSelected(container),
       deleteSelected: () => _deleteSelected(context, container),
+      navigate: container.read(workspaceNavigatorProvider.notifier).move,
     );
   }
 
@@ -156,6 +158,10 @@ class AppCommands {
   final VoidCallback completeSelected;
   final VoidCallback cancelSelected;
   final VoidCallback deleteSelected;
+
+  /// The arrow keys (#89): a row up or down in the sidebar or the list,
+  /// into the list or back out of it, an area folded or unfolded.
+  final void Function(NavDirection direction) navigate;
 
   static Future<void> _undo(ProviderContainer container) async {
     if (!container.read(canUndoProvider)) return;
@@ -268,8 +274,21 @@ class AppCommands {
       body: 'It moves to the Trash; the archive keeps its history.',
       confirm: 'Delete',
     );
-    if (answer.confirmed) {
-      await container.read(taskCommandsProvider).delete(task.id);
+    if (!answer.confirmed) return;
+    // The row below takes the selection (else the one above, else the row
+    // standing where the task stood), so the keyboard stays in the list
+    // rather than falling back to the sidebar — once the delete has
+    // happened; a refused one leaves the selection where it was.
+    final section = container.read(selectedSectionProvider);
+    final tasks = container.read(taskViewProvider(section)).value?.tasks;
+    final next = tasks == null
+        ? null
+        : container
+              .read(workspaceNavigatorProvider.notifier)
+              .successorOf(tasks, task.id);
+    final ok = await container.read(taskCommandsProvider).delete(task.id);
+    if (ok && next != null) {
+      container.read(selectedTaskProvider.notifier).select(next);
     }
   }
 

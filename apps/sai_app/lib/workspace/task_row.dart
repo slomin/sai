@@ -11,6 +11,23 @@ import 'task_row_chips.dart';
 
 /// The key of a task's row, and of its cancel affordance, for tests.
 Key taskRowKey(TaskId task) => ValueKey('row-$task');
+
+/// Scrolls [context]'s row into view where it is not already: up to the
+/// top when it sits above the viewport, down to the bottom when below,
+/// and not at all when it is on screen — so a key, a click and a Quick
+/// Find open all land the same way (#89).
+void revealRow(BuildContext context) {
+  if (Scrollable.maybeOf(context) == null) return;
+  Scrollable.ensureVisible(
+    context,
+    alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+  );
+  Scrollable.ensureVisible(
+    context,
+    alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+  );
+}
+
 Key cancelButtonKey(TaskId task) => ValueKey('cancel-$task');
 
 /// How a leaving row is going: it confirms the action, then collapses.
@@ -74,6 +91,22 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
       value: widget.entering ? 0 : 1,
       duration: SaiDurations.enter,
     );
+    if (widget.selected) _reveal();
+  }
+
+  @override
+  void didUpdateWidget(TaskRow old) {
+    super.didUpdateWidget(old);
+    if (widget.selected && !old.selected) _reveal();
+  }
+
+  /// After the frame that laid the row out (a row built selected has no
+  /// size yet); a row leaving the list is not brought back for it.
+  void _reveal() {
+    if (widget.finishing != null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) revealRow(context);
+    });
   }
 
   @override

@@ -44,6 +44,7 @@ void main() {
       completeSelected: () => calls.add('complete'),
       cancelSelected: () => calls.add('cancel-task'),
       deleteSelected: () => calls.add('delete'),
+      navigate: (direction) => calls.add('navigate $direction'),
     );
     List<PlatformMenuItem> menus({
       bool canUndo = false,

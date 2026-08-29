@@ -7,6 +7,7 @@ import 'theme/sai_theme.dart';
 import 'theme/sai_tokens.dart';
 import 'widgets/eyebrow.dart';
 import 'widgets/glyph_button.dart';
+import 'workspace/task_row.dart' show revealRow;
 
 /// The key of a section's row, for tests: sections are value types.
 Key sidebarRowKey(SidebarSection section) => ValueKey(section);
@@ -19,11 +20,77 @@ Key sidebarChevronKey(AreaId area) => ValueKey(('chevron', area));
 /// then the archived containers — [sidebarProvider]'s shape. Tapping a
 /// row selects its section; a container row's "…" (or a secondary
 /// click) opens its organisation menu (#74).
-class SaiSidebar extends ConsumerWidget {
+class SaiSidebar extends ConsumerStatefulWidget {
   const SaiSidebar({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SaiSidebar> createState() => _SaiSidebarState();
+}
+
+/// The sidebar's fixed geometry, for the jump below: the list's top
+/// padding, a group heading with its gap, a row, the space between groups.
+const _topPadding = 22.0;
+const _headingExtent = 30.0;
+const _rowExtent = 38.0;
+const _groupGap = 26.0;
+
+class _SaiSidebarState extends ConsumerState<SaiSidebar> {
+  final _scroll = ScrollController();
+
+  /// Where each row's top sits in the scroll, as of the last build.
+  var _offsets = <SidebarSection, double>{};
+
+  @override
+  void initState() {
+    super.initState();
+    // A section restored at launch is set before the first build.
+    final restored = ref.read(selectedSectionProvider);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _seek(restored));
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  bool _built(SidebarSection section) {
+    final key = sidebarRowKey(section);
+    var found = false;
+    void visit(Element element) {
+      if (found) return;
+      if (element.widget.key == key) {
+        found = true;
+        return;
+      }
+      element.visitChildElements(visit);
+    }
+
+    context.visitChildElements(visit);
+    return found;
+  }
+
+  /// Brings the list to [section]'s row when the list has not built it —
+  /// the rows are one height, so the offset is known exactly; a built row
+  /// shows itself (#89).
+  void _seek(SidebarSection section) {
+    if (!mounted || !_scroll.hasClients || _built(section)) return;
+    final offset = _offsets[section];
+    if (offset == null) return;
+    final position = _scroll.position;
+    position.jumpTo(
+      (offset - position.viewportDimension / 2).clamp(
+        0.0,
+        position.maxScrollExtent,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(selectedSectionProvider, (_, next) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _seek(next));
+    });
     final model = ref.watch(sidebarProvider).value;
     final selected = ref.watch(selectedSectionProvider);
     final select = ref.read(selectedSectionProvider.notifier).select;
@@ -75,10 +142,39 @@ class SaiSidebar extends ConsumerWidget {
       );
     }
 
+    // The offsets follow the children below, item for item.
+    var y = _topPadding;
+    final offsets = <SidebarSection, double>{};
+    void heading() => y += _headingExtent;
+    void gap() => y += _groupGap;
+    void at(SidebarEntry entry) {
+      offsets[entry.section] = y;
+      y += _rowExtent;
+    }
+
+    heading();
+    model.lists.forEach(at);
+    at(model.trash);
+    gap();
+    heading();
+    for (final area in model.areas) {
+      at(area.entry);
+      if (!collapsed.contains((area.entry.section as AreaSection).area)) {
+        area.projects.forEach(at);
+      }
+    }
+    model.projects.forEach(at);
+    if (model.archived.isNotEmpty) {
+      gap();
+      heading();
+      model.archived.forEach(at);
+    }
+    _offsets = offsets;
     return Container(
       color: SaiColors.bg,
       child: ListView(
-        padding: const EdgeInsets.only(top: 22, bottom: 24),
+        controller: _scroll,
+        padding: const EdgeInsets.only(top: _topPadding, bottom: 24),
         children: [
           const _Heading('Lists'),
           for (final entry in model.lists) row(entry),
@@ -164,6 +260,24 @@ class SidebarRow extends StatefulWidget {
 
 class _SidebarRowState extends State<SidebarRow> {
   var _hovered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.selected) _reveal();
+  }
+
+  @override
+  void didUpdateWidget(SidebarRow old) {
+    super.didUpdateWidget(old);
+    if (widget.selected && !old.selected) _reveal();
+  }
+
+  void _reveal() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) revealRow(context);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
