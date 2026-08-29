@@ -1,9 +1,10 @@
 #!/bin/zsh
 # Drives the debug sai app for a manual smoke without a human at the mouse.
 #
-#   tool/smoke/drive.sh launch <scratch-dir>   build/... sai with scratch env
+#   tool/smoke/drive.sh launch <scratch-dir>   build/... sai-dev with scratch env
 #                                              (SAI_APP_BIN=<…/sai.app/Contents/MacOS/sai>
-#                                              drives another bundle)
+#                                              drives another bundle — the
+#                                              stable flavor, a release)
 #   tool/smoke/drive.sh shot <name.png>        screenshot of the sai window
 #   tool/smoke/drive.sh click <x> <y> [name]   real mouse click at window-
 #                                              relative points, then shot
@@ -24,37 +25,47 @@
 # what a "swallowed click" almost always was (#40). Needs Accessibility for
 # the terminal. System Events' `click at` is an accessibility press that
 # Flutter ignores, so clicks are posted as CGEvents (click.swift).
+#
+# The window is found by the app's display name (`sai`, `sai dev`), read
+# from the bundle behind SAI_APP_BIN, so the two flavors (ADR 0019) can
+# run at once and each is driven by its own env; SAI_APP_NAME and
+# SAI_APP_BUNDLE_ID override what the plist says.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 # SAI_APP_BIN points at another bundle, e.g. a release from dist/ (#42).
-bin=${SAI_APP_BIN:-$root/apps/sai_app/build/macos/Build/Products/Debug/sai.app/Contents/MacOS/sai}
+# A flavorless `flutter build macos --debug` is the dev flavor (ADR 0019).
+bin=${SAI_APP_BIN:-$root/apps/sai_app/build/macos/Build/Products/Debug-dev/sai-dev.app/Contents/MacOS/sai-dev}
+app=${SAI_APP_NAME:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$(dirname "$bin")/../Info.plist" 2>/dev/null || echo sai)}
+# Activation goes by bundle id: AppleScript resolves `application "sai
+# dev"` no better than a stranger, while `application id` always does.
+bid=${SAI_APP_BUNDLE_ID:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$(dirname "$bin")/../Info.plist" 2>/dev/null || echo me.slominski.sai)}
 tools=${TMPDIR:-/tmp}/sai-smoke-tools
 mkdir -p "$tools"
 [ -x "$tools/click" ] || swiftc -O -o "$tools/click" "$here/click.swift"
 [ -x "$tools/drag" ] || swiftc -O -o "$tools/drag" "$here/drag.swift"
 
-wid() { swift "$here/wid.swift"; }
+wid() { swift "$here/wid.swift" "$app"; }
 frame() {
-  osascript -e 'tell application "System Events" to tell process "sai" to get {position, size} of window 1' | tr -d ','
+  osascript -e "tell application \"System Events\" to tell process \"$app\" to get {position, size} of window 1" | tr -d ','
 }
 # Flutter's view does not accept the first mouse: a click on a window that
 # is not key only makes it key and is otherwise lost (flutter/flutter#88915).
 # So the app is activated first, and the click waits until its window is
 # the main one.
 activate() {
-  osascript -e 'tell application "sai" to activate' >/dev/null 2>&1 || true
+  osascript -e "tell application id \"$bid\" to activate" >/dev/null 2>&1 || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if [ "$(osascript -e 'tell application "System Events" to tell process "sai" to get value of attribute "AXMain" of window 1' 2>/dev/null)" = "true" ]; then
+    if [ "$(osascript -e "tell application \"System Events\" to tell process \"$app\" to get value of attribute \"AXMain\" of window 1" 2>/dev/null)" = "true" ]; then
       sleep 0.2; return 0
     fi
     sleep 0.2
   done
-  echo "the sai window did not become main; not clicking" >&2; exit 1
+  echo "the $app window did not become main; not clicking" >&2; exit 1
 }
 shot() {
   local id; id=$(wid)
-  [ -n "$id" ] || { echo "no sai window" >&2; exit 1; }
+  [ -n "$id" ] || { echo "no $app window" >&2; exit 1; }
   # No shadow (-o): the image is then exactly the window at 1x or 2x, so a
   # pixel maps to a point without guessing a margin — the shadow is taller
   # below than above, and a symmetric guess put every y ~16 pt high (#40).
@@ -74,7 +85,7 @@ case $1 in
   shot) shot "$2" ;;
   click)
     read wx wy ww wh <<< "$(frame)"
-    [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no sai window frame; not clicking" >&2; exit 1; }
+    [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no $app window frame; not clicking" >&2; exit 1; }
     if (( $2 < 0 || $3 < 0 || $2 >= ww || $3 >= wh )); then
       echo "point ($2,$3) is outside the ${ww}x${wh} window; not clicking" >&2; exit 1
     fi
@@ -104,25 +115,25 @@ case $1 in
     [ -n "$5" ] && shot "$5" || true ;;
   drag)
     read wx wy ww wh <<< "$(frame)"
-    [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no sai window frame; not dragging" >&2; exit 1; }
+    [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no $app window frame; not dragging" >&2; exit 1; }
     for p in $2 $3 $4 $5; do
       [[ "$p" =~ ^[0-9]+$ ]] || { echo "usage: drive.sh drag <x1> <y1> <x2> <y2> [name]" >&2; exit 2; }
     done
     if (( $2 >= ww || $3 >= wh || $4 >= ww || $5 >= wh )); then
       echo "a point is outside the ${ww}x${wh} window; not dragging" >&2; exit 1
     fi
-    osascript -e 'tell application "System Events" to set frontmost of process "sai" to true'
+    osascript -e "tell application \"System Events\" to set frontmost of process \"$app\" to true"
     "$tools/drag" $((wx + $2)) $((wy + $3)) $((wx + $4)) $((wy + $5))
     sleep 1
     [ -n "$6" ] && shot "$6" || true ;;
   record)
     read wx wy ww wh <<< "$(frame)"
-    [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no sai window frame; not recording" >&2; exit 1; }
+    [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no $app window frame; not recording" >&2; exit 1; }
     [ -n "$3" ] || { echo "usage: drive.sh record <secs> <file.mov>" >&2; exit 2; }
     # Video capture takes a screen rect, not a window id; the rect is the
     # window's frame, so keep other windows off it while it runs.
     screencapture -x -V "$2" -R "$wx,$wy,$ww,$wh" "$3"
     echo "recorded $3" ;;
-  quit) pkill -f "$bin" || true; sleep 1; ! pgrep -f "$bin" >/dev/null && echo "sai closed" ;;
+  quit) pkill -f "$bin" || true; sleep 1; ! pgrep -f "$bin" >/dev/null && echo "$app closed" ;;
   *) sed -n 2,14p "$0"; exit 2 ;;
 esac

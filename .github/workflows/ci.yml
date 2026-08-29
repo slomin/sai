@@ -81,9 +81,13 @@ jobs:
         # which `dart compile exe` refuses — hence `dart build cli`.
         # Prove it builds and starts; the settings path keeps the run
         # off any real file.
+        # Both flavors' entry points (ADR 0019): each names itself.
         run: |
           dart build cli -t apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui
           SAI_SETTINGS_FILE="$RUNNER_TEMP/settings.json" build/tui/bundle/bin/sai_tui reasoning
+          [ "$(SAI_SETTINGS_FILE="$RUNNER_TEMP/settings.json" build/tui/bundle/bin/sai_tui version)" = "sai_tui $(sed -n 's/^version: //p' packages/sai_core/pubspec.yaml)" ]
+          dart build cli -t apps/sai_tui/bin/sai_tui-dev.dart --root-package=sai_tui -o build/tui-dev
+          [ "$(SAI_SETTINGS_FILE="$RUNNER_TEMP/settings-dev.json" build/tui-dev/bundle/bin/sai_tui-dev version)" = "sai_tui-dev $(sed -n 's/^version: //p' packages/sai_core/pubspec.yaml)" ]
 
   macos:
     name: Test and build (app)
@@ -103,9 +107,14 @@ jobs:
       - name: Test sai_app
         working-directory: apps/sai_app
         run: flutter test
-      - name: Build sai.app (debug)
+      - name: Build sai.app and sai-dev.app (debug)
+        # Both flavors (ADR 0019); each bundle must say which it is.
         working-directory: apps/sai_app
-        run: flutter build macos --debug
+        run: |
+          flutter build macos --debug --flavor stable
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :SaiFlavor' build/macos/Build/Products/Debug-stable/sai.app/Contents/Info.plist)" = stable ]
+          flutter build macos --debug --flavor dev
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :SaiFlavor' build/macos/Build/Products/Debug-dev/sai-dev.app/Contents/Info.plist)" = dev ]
       - name: Test the local install against temporary roots
         # tool/install-local.sh (#87) with an ad-hoc-signed fixture
         # release; HOME and every root point into the runner's temp dir.

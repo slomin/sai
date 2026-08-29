@@ -9,8 +9,9 @@ Steps are a JSON list of [kind, arg, seconds]:
   ["snap", "name", 0]    save the stripped screen text as <dir>/<name>.txt
   ["sleep", 2, 0]        just wait
 
-Runs `dart run apps/sai_tui/bin/sai_tui.dart` (or the compiled binary
-named by SAI_TUI_BIN) with SAI_ARCHIVE_ROOT and SAI_SETTINGS_FILE under
+Runs `dart run apps/sai_tui/bin/sai_tui.dart` (SAI_TUI_ENTRY names another
+entry point, e.g. bin/sai_tui-dev.dart; SAI_TUI_BIN a compiled binary)
+with SAI_ARCHIVE_ROOT and SAI_SETTINGS_FILE under
 <scratch-dir>, a 100x30 terminal, and always
 kills the process at the end. Prints one line per step.
 
@@ -110,7 +111,8 @@ def main(scratch, steps):
         binary = os.environ.get('SAI_TUI_BIN')
         if binary:
             os.execvpe(binary, [binary], env)
-        os.execvpe('dart', ['dart', 'run', 'apps/sai_tui/bin/sai_tui.dart'], env)
+        entry = os.environ.get('SAI_TUI_ENTRY', 'apps/sai_tui/bin/sai_tui.dart')
+        os.execvpe('dart', ['dart', 'run', entry], env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 100, 0, 0))
     screen = Screen()
 
