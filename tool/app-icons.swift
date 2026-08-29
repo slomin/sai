@@ -12,6 +12,8 @@ private let artworkSize = 824
 private let artworkInset = (sourceSize - artworkSize) / 2
 private let cornerRadius = CGFloat(artworkSize) * 0.225
 private let flavors = ["stable", "dev"]
+private let resampleChannelTolerance = 2
+private let resampleOutlierFraction = 0.001
 private let placeholderDigests: Set<String> = [
   "6232e5815af17e25e0268b2fec7aea9e068cc92ec709e9605c2b31df4ff2a313",
   "15591f03f31313af6fd644ed0512106cc04365130b8b73244f1cfa6dddfb4400",
@@ -235,6 +237,31 @@ private func grayscaleDifference(_ left: CGImage, _ right: CGImage) throws
   return pixels == 0 ? 0 : Double(changed) / Double(pixels)
 }
 
+private func matchesGeneratedImage(_ actual: CGImage, _ expected: CGImage) throws
+  -> Bool
+{
+  let a = try rgba(actual)
+  let b = try rgba(expected)
+  guard a.count == b.count else { return false }
+  let pixelCount = a.count / 4
+  let allowedOutliers = max(
+    1,
+    Int(Double(pixelCount) * resampleOutlierFraction)
+  )
+  var outliers = 0
+  for index in stride(from: 0, to: a.count, by: 4) {
+    let withinTolerance = (0..<4).allSatisfy { channel in
+      abs(Int(a[index + channel]) - Int(b[index + channel]))
+        <= resampleChannelTolerance
+    }
+    if !withinTolerance {
+      outliers += 1
+      if outliers > allowedOutliers { return false }
+    }
+  }
+  return true
+}
+
 private func prepare() throws {
   guard fileManager.fileExists(atPath: runner.path) else {
     throw IconToolError.message("run this command from the repository root")
@@ -307,7 +334,7 @@ private func check() throws {
         throw IconToolError.message("\(url.path) is not \(size)×\(size)")
       }
       let expected = try resize(prepared, to: size)
-      guard try rgba(actual) == rgba(expected) else {
+      guard try matchesGeneratedImage(actual, expected) else {
         throw IconToolError.message(
           "\(url.path) is stale; run swift tool/app-icons.swift prepare"
         )

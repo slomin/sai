@@ -83,13 +83,31 @@ void main() {
         .readAsStringSync();
     expect(
       stable,
-      contains('ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon-stable'),
+      matches(
+        RegExp(
+          r'^\s*ASSETCATALOG_COMPILER_APPICON_NAME\s*=\s*AppIcon-stable\s*$',
+          multiLine: true,
+        ),
+      ),
     );
-    expect(dev, contains('ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon-dev'));
+    expect(
+      dev,
+      matches(
+        RegExp(
+          r'^\s*ASSETCATALOG_COMPILER_APPICON_NAME\s*=\s*AppIcon-dev\s*$',
+          multiLine: true,
+        ),
+      ),
+    );
     for (final config in [stable, dev]) {
       expect(
         config,
-        contains('ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO'),
+        matches(
+          RegExp(
+            r'^\s*ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS\s*=\s*NO\s*$',
+            multiLine: true,
+          ),
+        ),
       );
     }
 
@@ -97,7 +115,14 @@ void main() {
         .readAsStringSync();
     expect(
       project,
-      isNot(contains('ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;')),
+      isNot(
+        matches(
+          RegExp(
+            r'^\s*ASSETCATALOG_COMPILER_APPICON_NAME\s*=\s*AppIcon\s*;\s*$',
+            multiLine: true,
+          ),
+        ),
+      ),
     );
   });
 }

@@ -1,6 +1,6 @@
 # 19. Stable and dev are two installed identities
 
-Date: 2026-08-29 · Status: accepted · Issue: #90 · Builds on: [0006](0006-settings-live-in-a-file-beside-the-archive.md), [0008](0008-secrets-live-in-the-file-keychain.md), [0015](0015-the-workspace-is-restored-from-settings.md), [0017](0017-releases-are-signed-with-an-apple-development-identity.md)
+Date: 2026-08-29 · Amended: 2026-08-29 (#91) · Status: accepted · Issue: #90 · Builds on: [0006](0006-settings-live-in-a-file-beside-the-archive.md), [0008](0008-secrets-live-in-the-file-keychain.md), [0015](0015-the-workspace-is-restored-from-settings.md), [0017](0017-releases-are-signed-with-an-apple-development-identity.md)
 
 ## Context
 

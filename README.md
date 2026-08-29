@@ -261,7 +261,7 @@ dart analyze --fatal-infos packages apps
 (cd packages/sai_core && dart test)
 (cd apps/sai_tui && dart test)
 (cd apps/sai_app && flutter test)
-swift tool/app-icons.swift check
+swift tool/app-icons.swift check         # macOS
 (cd apps/sai_app && flutter build macos --debug --flavor stable)
 (cd apps/sai_app && flutter build macos --debug --flavor dev)
 dart build cli -t apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui

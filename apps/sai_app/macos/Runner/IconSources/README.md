@@ -5,6 +5,12 @@ installed identities in ADR 0019. GPT image generation produced the raster
 geometry; the checked-in masters, rather than another model run, are the
 reproducible input to the shipping assets.
 
+Keeping the curated raster treatment is deliberate: its slight tonal variation
+is part of the approved artwork, rather than an attempt at a token-perfect
+vector asset. The palette values in the prompts are art direction, not a claim
+that every sampled pixel equals those hex values. `prepare` preserves the
+masters as approved instead of posterising them or redrawing their geometry.
+
 - `sai-stable-1024.png`: the canonical Sai mark — a near-white ground, an
   ink square and the red square it holds.
 - `sai-dev-1024.png`: the same mark with a large diagonal green upper-right
@@ -34,4 +40,6 @@ swift tool/app-icons.swift check
 
 The tool applies the macOS transparent margin and rounded tile, writes 16,
 32, 64, 128, 256, 512 and 1024px PNGs, rejects Flutter's retired placeholder,
-and requires stable and dev to remain distinct in grayscale at every size.
+allows only tightly bounded CoreGraphics resampling drift across macOS
+versions, and requires stable and dev to remain distinct in grayscale at every
+size.
