@@ -4,6 +4,10 @@ version: 0.0.1-dev.1
 publish_to: none
 resolution: workspace
 
+executables:
+  sai_tui:
+  sai_tui-dev:
+
 environment:
   sdk: ^3.13.0
 

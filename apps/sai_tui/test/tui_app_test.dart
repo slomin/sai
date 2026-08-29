@@ -51,6 +51,19 @@ void main() {
     }, size: size);
   });
 
+  test('the dev client greets as sai dev (#90)', () async {
+    await testNocterm('dev greeting', (tester) async {
+      await pumpTui(
+        tester,
+        overrides: [identityProvider.overrideWithValue(SaiIdentity.dev)],
+      );
+      expect(
+        tester.terminalState,
+        containsText('sai dev $saiVersion — nothing here yet'),
+      );
+    }, size: size);
+  });
+
   test('the footer names the missing provider', () async {
     await testNocterm('no provider', (tester) async {
       await pumpTui(tester);

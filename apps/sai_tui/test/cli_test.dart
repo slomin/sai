@@ -104,6 +104,22 @@ void main() {
     expect(out.toString().trim(), 'sai_tui $saiVersion');
   });
 
+  test('the dev client names itself sai_tui-dev everywhere (#90)', () async {
+    container = testContainer(
+      overrides: [identityProvider.overrideWithValue(SaiIdentity.dev)],
+    );
+    expect(await run('version'), cliOk);
+    expect(out.toString().trim(), 'sai_tui-dev $saiVersion');
+    out.clear();
+    expect(await run('help'), cliOk);
+    expect(out.toString(), contains('usage: sai_tui-dev '));
+    expect(out.toString(), isNot(contains('sai_tui ')));
+    expect(await run('frobnicate now'), cliUsageError);
+    expect(err.toString(), startsWith('sai_tui-dev: '));
+    expect(await run('provider add lan --kind fake --key'), cliOk);
+    expect(out.toString(), contains('sai_tui-dev secret set lan'));
+  });
+
   test('help and an unknown command', () async {
     expect(await run('help'), cliOk);
     expect(out.toString(), contains('usage: sai_tui'));

@@ -49,6 +49,11 @@ task, --skip-repeat-history drops the completion history of repeating
 tasks (their open next instances still come), --logbook-since keeps
 only tasks finished on or after that day; each reports what it left.''';
 
+/// [cliUsage] for the command a flavor is installed as (`sai_tui` for
+/// stable, `sai_tui-dev` for dev, ADR 0019): the text is written once and
+/// the program name substituted.
+String usageFor(String program) => cliUsage.replaceAll('sai_tui', program);
+
 /// What `privacy` prints for each position of the switch.
 String privacyLine(PrivacyPolicy policy) => policy.shareTasksWithCloud
     ? 'cloud sharing: on — cloud providers see your tasks'
@@ -75,17 +80,18 @@ Future<int> runCli(
   required StringSink err,
   required FutureOr<String?> Function(String prompt) readSecret,
 }) async {
+  final program = container.read(identityProvider).tuiCommand;
   if (args.isEmpty || args.first == 'help' || args.first == '--help') {
-    out.writeln(cliUsage);
+    out.writeln(usageFor(program));
     return cliOk;
   }
   if (args.first == 'version' || args.first == '--version') {
-    out.writeln('sai_tui $saiVersion');
+    out.writeln('$program $saiVersion');
     return cliOk;
   }
   int usage(String message) {
-    err.writeln('sai_tui: $message');
-    err.writeln(cliUsage);
+    err.writeln('$program: $message');
+    err.writeln(usageFor(program));
     return cliUsageError;
   }
 
@@ -94,7 +100,7 @@ Future<int> runCli(
       case ['provider', 'list']:
         final settings = container.read(settingsProvider);
         if (settings.problem != null) {
-          err.writeln('sai_tui: ${settings.problem}');
+          err.writeln('$program: ${settings.problem}');
         }
         final registry = container.read(llmRegistryProvider);
         for (final provider in registry.values) {
@@ -222,36 +228,36 @@ Future<int> runCli(
         );
         if (hadKey && !key) {
           out.writeln(
-            'its key is still in the Keychain; sai_tui secret clear $id '
+            'its key is still in the Keychain; $program secret clear $id '
             'removes it',
           );
         }
         if (!container.read(llmFactoriesProvider).containsKey(kind)) {
           err.writeln(
-            "sai_tui: kind '$kind' is not available in this build; the "
+            "$program: kind '$kind' is not available in this build; the "
             'provider is stored but cannot be used yet',
           );
         }
         final missing = container.read(misconfiguredLlmsProvider)[id];
         if (missing != null) {
           err.writeln(
-            "sai_tui: provider '$id' is ${misconfiguredNote(missing)}; add it "
+            "$program: provider '$id' is ${misconfiguredNote(missing)}; add it "
             'with --${missing == 'default_model' ? 'model' : missing}',
           );
         }
         if (key && wasBound && !config.keyBound) {
           out.writeln(
-            'the endpoint moved; enter its key again: sai_tui secret set $id',
+            'the endpoint moved; enter its key again: $program secret set $id',
           );
         } else if (key && !hadKey) {
-          out.writeln('set its key with: sai_tui secret set $id');
+          out.writeln('set its key with: $program secret set $id');
         }
         return cliOk;
 
       case ['provider', 'remove', final id]:
         final settings = container.read(settingsProvider);
         if (settings.provider(id) == null) {
-          err.writeln("sai_tui: no configured provider '$id'");
+          err.writeln("$program: no configured provider '$id'");
           return cliFailed;
         }
         final hadKey =
@@ -261,7 +267,7 @@ Future<int> runCli(
         out.writeln('removed provider $id');
         if (hadKey) {
           out.writeln(
-            'its key is still in the Keychain; sai_tui secret clear $id '
+            'its key is still in the Keychain; $program secret clear $id '
             'removes it',
           );
         }
@@ -275,14 +281,14 @@ Future<int> runCli(
           return cliOk;
         }
         if (!container.read(llmRegistryProvider).containsKey(id)) {
-          err.writeln("sai_tui: provider '$id' is not available");
+          err.writeln("$program: provider '$id' is not available");
           return cliFailed;
         }
         notifier.selectLlm(id);
         out.writeln(container.read(llmStatusProvider));
         final warning = container.read(activeLlmWarningProvider);
         if (warning != null) {
-          out.writeln('$warning: sai_tui privacy share-tasks on');
+          out.writeln('$warning: $program privacy share-tasks on');
         }
         return cliOk;
 
@@ -326,18 +332,18 @@ Future<int> runCli(
         if (verb == 'set') {
           // Storing needs a provider that will use the key.
           if (config == null) {
-            err.writeln("sai_tui: no configured provider '$id'");
+            err.writeln("$program: no configured provider '$id'");
             return cliFailed;
           }
           if (config.credential == null) {
             err.writeln(
-              "sai_tui: provider '$id' takes no key (add it with --key)",
+              "$program: provider '$id' takes no key (add it with --key)",
             );
             return cliFailed;
           }
           final value = await readSecret('API key for $id: ');
           if (value == null || value.isEmpty) {
-            err.writeln('sai_tui: no key given; nothing changed');
+            err.writeln('$program: no key given; nothing changed');
             return cliFailed;
           }
           credentials.set(id, value);
@@ -401,14 +407,14 @@ Future<int> runCli(
               );
         } on ThingsAmbiguousDatabase catch (e) {
           err.writeln(
-            'sai_tui: ${e.count} Things databases found under the group '
+            '$program: ${e.count} Things databases found under the group '
             'container; pass --db <main.sqlite> to say which one',
           );
           return cliFailed;
         }
         if (path == null) {
           err.writeln(
-            'sai_tui: no Things 3 database found; pass --db <main.sqlite> '
+            '$program: no Things 3 database found; pass --db <main.sqlite> '
             'or set $thingsDatabaseEnv',
           );
           return cliFailed;
@@ -423,10 +429,10 @@ Future<int> runCli(
             db.dispose();
           }
         } on FileSystemException {
-          err.writeln('sai_tui: cannot read the Things database at $path');
+          err.writeln('$program: cannot read the Things database at $path');
           return cliFailed;
         } on ThingsSchemaException catch (e) {
-          err.writeln('sai_tui: not a Things 3 database (${e.message})');
+          err.writeln('$program: not a Things 3 database (${e.message})');
           return cliFailed;
         }
         await container.read(tasksProvider.future);
@@ -445,7 +451,7 @@ Future<int> runCli(
             ),
           );
         } on ThingsImportException catch (e) {
-          err.writeln('sai_tui: import stopped: $e');
+          err.writeln('$program: import stopped: $e');
           return cliFailed;
         }
         out.writeln(
@@ -481,10 +487,10 @@ Future<int> runCli(
   } on _Usage catch (e) {
     return usage(e.message);
   } on SecretStoreException catch (e) {
-    err.writeln('sai_tui: $e');
+    err.writeln('$program: $e');
     return cliFailed;
   } on StateError catch (e) {
-    err.writeln('sai_tui: ${e.message}');
+    err.writeln('$program: ${e.message}');
     return cliFailed;
   }
 }
