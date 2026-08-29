@@ -114,6 +114,29 @@ void main() {
     expect(await run('help'), cliOk);
     expect(out.toString(), contains('usage: sai_tui-dev '));
     expect(out.toString(), isNot(contains('sai_tui ')));
+    // Every column of the table moves by exactly the name's extra width,
+    // so what lined up for sai_tui still lines up; the prose is untouched.
+    final dev = usageFor('sai_tui-dev').split('\n');
+    final stable = cliUsage.split('\n');
+    expect(dev.length, stable.length);
+    const extra = 'sai_tui-dev'.length - 'sai_tui'.length;
+    for (final text in [
+      'open the terminal client',
+      'show the cloud-sharing switch',
+      'print the version',
+      '[--model <name>]',
+      '(or from stdin when piped)',
+      '[--open-only]',
+      'bring the Things 3 database over',
+    ]) {
+      final was = stable.firstWhere((l) => l.contains(text));
+      final now = dev.firstWhere((l) => l.contains(text));
+      expect(now.indexOf(text), was.indexOf(text) + extra, reason: now);
+    }
+    final prose = stable.indexOf('');
+    expect(dev.sublist(prose), stable.sublist(prose));
+    expect(usageFor('sai_tui'), cliUsage);
+    expect(out.toString(), contains('Provider settings go to settings.json'));
     expect(await run('frobnicate now'), cliUsageError);
     expect(err.toString(), startsWith('sai_tui-dev: '));
     expect(await run('provider add lan --kind fake --key'), cliOk);

@@ -5,7 +5,8 @@ void main() {
   group('SaiIdentity', () {
     test('stable is exactly what sai was before flavors', () {
       const s = SaiIdentity.stable;
-      expect(s.name, 'sai');
+      expect(s.displayName, 'sai');
+      expect(s.name, 'stable');
       expect(s.slug, 'sai');
       expect(s.bundleId, 'me.slominski.sai');
       expect(s.keychainService, saiKeychainService);
@@ -19,7 +20,8 @@ void main() {
 
     test('dev differs in every location-bearing value', () {
       const d = SaiIdentity.dev;
-      expect(d.name, 'sai dev');
+      expect(d.displayName, 'sai dev');
+      expect(d.name, 'dev');
       expect(d.slug, 'sai-dev');
       expect(d.bundleId, 'me.slominski.sai.dev');
       expect(d.keychainService, 'me.slominski.sai.dev');
@@ -50,10 +52,15 @@ void main() {
 
     test('there is no third flavor', () {
       expect(() => SaiIdentity.fromFlavor('qa'), throwsStateError);
-      expect(() => SaiIdentity.parse('qa'), throwsFormatException);
-      expect(() => SaiIdentity.parse(''), throwsFormatException);
-      expect(SaiIdentity.parse('stable'), SaiIdentity.stable);
-      expect(SaiIdentity.parse('dev'), SaiIdentity.dev);
+      expect(() => SaiIdentity.values.byName('qa'), throwsArgumentError);
+    });
+
+    test('the flavor word round-trips through the enum name', () {
+      for (final identity in SaiIdentity.values) {
+        expect(identity.flavor, identity.name);
+        expect(SaiIdentity.values.byName(identity.flavor), identity);
+        expect(SaiIdentity.fromFlavor(identity.flavor), identity);
+      }
     });
   });
 }

@@ -75,7 +75,9 @@ class TopBar extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(6, 3, 6, 2),
               decoration: BoxDecoration(
                 color: SaiColors.redTint,
-                borderRadius: BorderRadius.circular(3),
+                borderRadius: const BorderRadius.all(
+                  Radius.circular(SaiRadius.small),
+                ),
               ),
               child: Text('DEV', style: text.eyebrow),
             ),

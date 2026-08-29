@@ -19,6 +19,9 @@ set -eu
 cd "$(dirname "$0")/.."
 identity="${SAI_CODESIGN_IDENTITY:?set SAI_CODESIGN_IDENTITY to the signing identity name}"
 out="${1:-build/tui}"
+case "$out" in
+  stable|dev) echo "tool/sign-tui.sh: the flavor comes second: tool/sign-tui.sh <output-dir> $out" >&2; exit 2 ;;
+esac
 case "${2:-stable}" in
   stable) tui=sai_tui ;;
   dev) tui=sai_tui-dev ;;

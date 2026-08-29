@@ -8,27 +8,28 @@
 /// an existing installation needs no migration.
 enum SaiIdentity {
   stable(
-    name: 'sai',
+    displayName: 'sai',
     slug: 'sai',
     bundleId: 'me.slominski.sai',
     tuiCommand: 'sai_tui',
   ),
   dev(
-    name: 'sai dev',
+    displayName: 'sai dev',
     slug: 'sai-dev',
     bundleId: 'me.slominski.sai.dev',
     tuiCommand: 'sai_tui-dev',
   );
 
   const SaiIdentity({
-    required this.name,
+    required this.displayName,
     required this.slug,
     required this.bundleId,
     required this.tuiCommand,
   });
 
   /// What a person sees: the window title, the app menu, the greeting.
-  final String name;
+  /// (The enum's own [name] — `stable`, `dev` — is the flavor.)
+  final String displayName;
 
   /// What the file system sees: the data directory, the app bundle
   /// (`<slug>.app`), the local bundle directory, kept-release names.
@@ -41,8 +42,8 @@ enum SaiIdentity {
   final String tuiCommand;
 
   /// The Flutter flavor / Xcode scheme name, and what the release tooling
-  /// writes into a staged artifact's `flavor` seal.
-  String get flavor => toString().split('.').last;
+  /// writes into a staged artifact's `flavor` seal: the enum's own name.
+  String get flavor => name;
 
   /// The Keychain `service` this flavor's credentials are filed under.
   String get keychainService => bundleId;
@@ -71,11 +72,4 @@ enum SaiIdentity {
         throw StateError('unknown sai flavor "$flavor" (stable or dev)');
     }
   }
-
-  /// Parses a flavor name from tooling (`stable` or `dev`, nothing else).
-  static SaiIdentity parse(String flavor) => switch (flavor) {
-    'stable' => stable,
-    'dev' => dev,
-    _ => throw FormatException('unknown sai flavor "$flavor"'),
-  };
 }

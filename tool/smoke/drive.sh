@@ -36,10 +36,16 @@ root=$(cd "$here/../.." && pwd)
 # SAI_APP_BIN points at another bundle, e.g. a release from dist/ (#42).
 # A flavorless `flutter build macos --debug` is the dev flavor (ADR 0019).
 bin=${SAI_APP_BIN:-$root/apps/sai_app/build/macos/Build/Products/Debug-dev/sai-dev.app/Contents/MacOS/sai-dev}
-app=${SAI_APP_NAME:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$(dirname "$bin")/../Info.plist" 2>/dev/null || echo sai)}
+plist=$(dirname "$bin")/../Info.plist
+if [ -z "${SAI_APP_NAME:-}" ] && [ ! -f "$plist" ]; then
+  # Never fall back to a name: with no bundle to read, "sai" would be the
+  # daily copy, and every click and shot would land in it.
+  echo "no app bundle behind $bin; build first or set SAI_APP_BIN" >&2; exit 1
+fi
+app=${SAI_APP_NAME:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$plist")}
 # Activation goes by bundle id: AppleScript resolves `application "sai
 # dev"` no better than a stranger, while `application id` always does.
-bid=${SAI_APP_BUNDLE_ID:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$(dirname "$bin")/../Info.plist" 2>/dev/null || echo me.slominski.sai)}
+bid=${SAI_APP_BUNDLE_ID:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")}
 tools=${TMPDIR:-/tmp}/sai-smoke-tools
 mkdir -p "$tools"
 [ -x "$tools/click" ] || swiftc -O -o "$tools/click" "$here/click.swift"

@@ -50,9 +50,27 @@ tasks (their open next instances still come), --logbook-since keeps
 only tasks finished on or after that day; each reports what it left.''';
 
 /// [cliUsage] for the command a flavor is installed as (`sai_tui` for
-/// stable, `sai_tui-dev` for dev, ADR 0019): the text is written once and
-/// the program name substituted.
-String usageFor(String program) => cliUsage.replaceAll('sai_tui', program);
+/// stable, `sai_tui-dev` for dev, ADR 0019). The text is written once for
+/// `sai_tui`; in the table only the command word is renamed — what
+/// follows it on the line moves with it, and a continuation line (no
+/// command word) is indented by the same amount — so the columns stay
+/// aligned, and the prose below the table is never touched.
+String usageFor(String program) {
+  const width = 'sai_tui'.length;
+  final shift = ' ' * (program.length - width);
+  final command = RegExp(r'^(usage: |       )sai_tui(.*)$');
+  final lines = cliUsage.split('\n');
+  final end = lines.indexOf('');
+  return [
+    for (final (i, line) in lines.indexed)
+      if (i >= end)
+        line
+      else if (command.firstMatch(line) case final m?)
+        '${m[1]}$program${m[2]}'
+      else
+        '$shift$line',
+  ].join('\n');
+}
 
 /// What `privacy` prints for each position of the switch.
 String privacyLine(PrivacyPolicy policy) => policy.shareTasksWithCloud

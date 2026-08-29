@@ -20,7 +20,7 @@ class SaiApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
-      title: ref.watch(identityProvider).name,
+      title: ref.watch(identityProvider).displayName,
       debugShowCheckedModeBanner: false,
       theme: saiTheme(),
       themeMode: ThemeMode.light,

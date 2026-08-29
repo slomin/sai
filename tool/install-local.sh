@@ -43,9 +43,10 @@
 # directory) — never the signing identity. The archive, the settings
 # file and the Keychain are never touched. The roots are overridable for
 # tests: SAI_INSTALL_APPS_DIR, SAI_INSTALL_SHARE_ROOT (the parent of
-# sai/ and sai-dev/) or SAI_INSTALL_SHARE_DIR (one flavor's directory),
-# SAI_INSTALL_BIN_DIR, SAI_INSTALL_KEEP_DIR, SAI_INSTALL_SYSTEM_APPS_DIR
-# (where a download would sit) or SAI_INSTALL_SYSTEM_APP (that copy).
+# sai/ and sai-dev/), SAI_INSTALL_BIN_DIR, SAI_INSTALL_KEEP_DIR and
+# SAI_INSTALL_SYSTEM_APPS_DIR (where a download would sit). Every root
+# is a parent; the flavor's own directory and app name are never
+# overridable, so no override can point two flavors at one place.
 set -eu
 
 [ $# -ge 1 ] || { echo "usage: tool/install-local.sh <dist-dir> [--dry-run]" >&2; exit 2; }
@@ -80,10 +81,10 @@ short=${version%%-*}
 name="$slug-v$version-$(printf %.7s "$commit")"
 
 apps="${SAI_INSTALL_APPS_DIR:-$HOME/Applications}"
-share="${SAI_INSTALL_SHARE_DIR:-${SAI_INSTALL_SHARE_ROOT:-$HOME/.local/share}/$slug}"
+share="${SAI_INSTALL_SHARE_ROOT:-$HOME/.local/share}/$slug"
 bin="${SAI_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 keep="${SAI_INSTALL_KEEP_DIR:-references/releases}"
-system_app="${SAI_INSTALL_SYSTEM_APP:-${SAI_INSTALL_SYSTEM_APPS_DIR:-/Applications}/$slug.app}"
+system_app="${SAI_INSTALL_SYSTEM_APPS_DIR:-/Applications}/$slug.app"
 
 app_dst="$apps/$slug.app"
 bundle_dst="$share/bundle"
@@ -100,10 +101,6 @@ flavor_of() {
 [ -L "$app_dst" ] && fail "$app_dst is a symlink; move it aside first"
 if [ -e "$system_app" ] && [ "$system_app" != "$app_dst" ]; then
   fail "$system_app exists; one Mac keeps one $slug.app, or the Dock and Spotlight may open the other — remove it (or move it aside) first"
-fi
-installed_flavor=$(flavor_of "$app_dst")
-if [ -n "$installed_flavor" ] && [ "$installed_flavor" != "$flavor" ]; then
-  fail "$app_dst is a $installed_flavor build; a $flavor release does not replace it — move it aside first"
 fi
 # An interrupted run may have left the live copy under a .old name and
 # its destination empty: put it back before anything is judged. A .old
@@ -136,6 +133,11 @@ running() {
 if [ "$dry" = 0 ]; then
   recover "$apps/.$slug.app" "$app_dst"
   recover "$share/.bundle" "$bundle_dst"
+fi
+# Judged after the recovery, so a live copy put back is the one judged.
+installed_flavor=$(flavor_of "$app_dst")
+if [ -n "$installed_flavor" ] && [ "$installed_flavor" != "$flavor" ]; then
+  fail "$app_dst is a $installed_flavor build; a $flavor release does not replace it — move it aside first"
 fi
 
 (cd "$dist" && shasum -a 256 -c --quiet checksums.txt) || fail "checksums do not match in $dist"

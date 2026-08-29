@@ -256,12 +256,12 @@ unchanged "an unwritable keep directory"
 pass "an unwritable keep directory refuses before the swap"
 
 # A first install whose bundle swap fails must not leave the new app behind.
-rm -rf "$work/home2"; mkdir -p "$work/home2/share"
-printf 'pinned' > "$work/home2/share/bundle"
-chflags uchg "$work/home2/share/bundle"
-SAI_INSTALL_APPS_DIR="$work/home2/apps" SAI_INSTALL_SHARE_DIR="$work/home2/share" SAI_INSTALL_BIN_DIR="$work/home2/bin" \
-  tool/install-local.sh "$work/dist1" >"$work/err" 2>&1 && { chflags nouchg "$work/home2/share/bundle"; fail "first install succeeded with the bundle path pinned"; }
-chflags nouchg "$work/home2/share/bundle"
+rm -rf "$work/home2"; mkdir -p "$work/home2/share/sai"
+printf 'pinned' > "$work/home2/share/sai/bundle"
+chflags uchg "$work/home2/share/sai/bundle"
+SAI_INSTALL_APPS_DIR="$work/home2/apps" SAI_INSTALL_SHARE_ROOT="$work/home2/share" SAI_INSTALL_BIN_DIR="$work/home2/bin" \
+  tool/install-local.sh "$work/dist1" >"$work/err" 2>&1 && { chflags nouchg "$work/home2/share/sai/bundle"; fail "first install succeeded with the bundle path pinned"; }
+chflags nouchg "$work/home2/share/sai/bundle"
 [ ! -e "$work/home2/apps/sai.app" ] || fail "the new app was left behind after the failed first install"
 ls -A "$work/home2/apps" | grep -q '^\.' && fail "orphans after the failed first install: $(ls -A "$work/home2/apps")"
 pass "a failed first install removes the app it had placed"
@@ -377,6 +377,14 @@ grep -q "sai dev is running (pid $sleeper)" "$work/err" || { kill "$sleeper"; fa
 kill "$sleeper"; wait "$sleeper" 2>/dev/null || true
 [ "$(installed_version)" = "sai_tui 0.0.1-test.3" ] || fail "stable is not what was installed while dev ran"
 pass "one flavor running never blocks the other, and still blocks itself"
+
+# A download of the same flavor in /Applications is judged per flavor.
+mkdir -p "$work/system/sai-dev.app"
+tool/install-local.sh "$work/keep/sai-dev-v0.0.1-test.1-4444444" >"$work/err" 2>&1 && fail "dev installed beside a system-wide sai-dev.app"
+grep -q "one Mac keeps one sai-dev.app" "$work/err" || fail "wrong message: $(cat "$work/err")"
+tool/install-local.sh "$work/dist3" >"$work/err" 2>&1 || fail "a system-wide sai-dev.app blocked a stable install: $(cat "$work/err")"
+rm -rf "$work/system"
+pass "a download in /Applications blocks only its own flavor"
 
 # A failed dev swap puts dev back and never touches stable.
 stable_before=$(stable_snapshot)

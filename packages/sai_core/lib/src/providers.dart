@@ -47,7 +47,10 @@ final identityProvider = Provider<SaiIdentity>((ref) => SaiIdentity.stable);
 
 /// The application identity every client shows.
 final appInfoProvider = Provider<AppInfo>(
-  (ref) => AppInfo(name: ref.watch(identityProvider).name, version: saiVersion),
+  (ref) => AppInfo(
+    name: ref.watch(identityProvider).displayName,
+    version: saiVersion,
+  ),
 );
 
 /// The line an empty shell shows until there is something to show.

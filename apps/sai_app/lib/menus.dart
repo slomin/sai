@@ -14,16 +14,19 @@ import 'settings/settings_screen.dart';
 /// (#76); the items keep every list discoverable from the menu bar.
 ///
 /// [chatShown] is whether the assistant's band is open right now;
-/// [taskSelected] whether the Task menu has a task to act on.
+/// [taskSelected] whether the Task menu has a task to act on;
+/// [appName] is what the app menu is called — the flavor's display name
+/// (ADR 0019), so two running copies can be told apart in the menu bar.
 List<PlatformMenuItem> saiMenus({
   required AppCommands commands,
+  String appName = 'sai',
   required bool canUndo,
   required bool chatShown,
   required bool reasoningOn,
   required bool taskSelected,
 }) => [
   PlatformMenu(
-    label: 'sai',
+    label: appName,
     menus: [
       const PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.about),
       // Where Settings lives on macOS (#40).
@@ -252,7 +255,7 @@ class SaiChrome extends ConsumerStatefulWidget {
 }
 
 class _SaiChromeState extends ConsumerState<SaiChrome> {
-  (bool, bool, bool, bool)? _menuState;
+  (bool, bool, bool, bool, String)? _menuState;
   List<PlatformMenuItem> _menus = const [];
   // The handler lives on the node: a scope built around a node of its
   // own reads `onKeyEvent` from the node, not the widget.
@@ -316,11 +319,13 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
     final shown = ref.watch(chatVisibleProvider);
     final reasoning = ref.watch(reasoningProvider);
     final taskSelected = ref.watch(selectedTaskProvider) != null;
-    final state = (canUndo, shown, reasoning, taskSelected);
+    final appName = ref.watch(identityProvider).displayName;
+    final state = (canUndo, shown, reasoning, taskSelected, appName);
     if (state != _menuState) {
       _menuState = state;
       _menus = saiMenus(
         commands: commands,
+        appName: appName,
         canUndo: canUndo,
         chatShown: shown,
         reasoningOn: reasoning,
