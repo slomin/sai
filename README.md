@@ -245,6 +245,10 @@ fresh start rather than a mirror, `--open-only`, `--skip-repeat-history`
 and `--logbook-since YYYY-MM-DD` leave finished tasks behind (and say how
 many); the mapping is in `docs/tasks/task-model-v0.md` § Imports.
 
+The arrow keys walk the workspace (#89): `↑`/`↓` move through the sidebar
+rows, `→` enters the list (or unfolds a folded area) and `↑`/`↓` then move
+through its rows across the headings, `←` comes back to the sidebar row (or
+folds the area). A text field, a dialog or an open menu keeps its own arrows.
 The task inspector (#74) opens on the selected row (⌘I opens it on the
 first row) and edits in place: a field commits when it is left, so every
 edit is one archive event and one undo step. Areas, projects and headings

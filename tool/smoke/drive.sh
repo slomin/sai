@@ -14,6 +14,11 @@
 #                                              moved or resized since
 #   tool/smoke/drive.sh drag <x1> <y1> <x2> <y2> [name]  real mouse drag
 #                                              between window-relative points
+#   tool/smoke/drive.sh key <name|code> [name] one bare key (up, down,
+#                                              left, right, return, escape,
+#                                              tab, or a macOS key code),
+#                                              then shot; a chord is not a
+#                                              key — use the menu item
 #   tool/smoke/drive.sh record <secs> <file.mov>  clip of the sai window's
 #                                              screen rect, for a PR
 #   tool/smoke/drive.sh quit
@@ -132,6 +137,16 @@ case $1 in
     "$tools/drag" $((wx + $2)) $((wy + $3)) $((wx + $4)) $((wy + $5))
     sleep 1
     [ -n "$6" ] && shot "$6" || true ;;
+  key)
+    case "$2" in
+      up) code=126 ;; down) code=125 ;; left) code=123 ;; right) code=124 ;;
+      return) code=36 ;; escape) code=53 ;; tab) code=48 ;;
+      *) [[ "$2" =~ ^[0-9]+$ ]] && code=$2 || { echo "usage: drive.sh key <up|down|left|right|return|escape|tab|code> [name]" >&2; exit 2; } ;;
+    esac
+    activate
+    osascript -e "tell application \"System Events\" to key code $code"
+    sleep 0.5
+    [ -n "$3" ] && shot "$3" || true ;;
   record)
     read wx wy ww wh <<< "$(frame)"
     [[ "$wx$wy$ww$wh" =~ ^[0-9-]+$ && -n "$ww" ]] || { echo "no $app window frame; not recording" >&2; exit 1; }
@@ -141,5 +156,5 @@ case $1 in
     screencapture -x -V "$2" -R "$wx,$wy,$ww,$wh" "$3"
     echo "recorded $3" ;;
   quit) pkill -f "$bin" || true; sleep 1; ! pgrep -f "$bin" >/dev/null && echo "$app closed" ;;
-  *) sed -n 2,14p "$0"; exit 2 ;;
+  *) sed -n 2,19p "$0"; exit 2 ;;
 esac
