@@ -23,24 +23,54 @@ List<SidebarEntry> visibleSidebarRows(
   ...model.archived,
 ];
 
-/// The row above or below [current] in [rows], staying put at either end.
-/// A [current] with no row (a tag view, a container just deleted) enters
-/// at the top going down and at the bottom going up. Only up and down are
-/// steps; anything else is null.
+/// The row above or below [current] in the sidebar as [collapsed] shows
+/// it, staying put at either end. A project hidden by its folded area
+/// steps from the area's row; a [current] with no row at all (a tag
+/// view, a container just deleted) enters at the top going down and at
+/// the bottom going up. Only up and down are steps; anything else is
+/// null.
 SidebarSection? stepSection(
-  List<SidebarEntry> rows,
+  SidebarModel model,
+  Set<AreaId> collapsed,
   SidebarSection current,
   NavDirection direction,
 ) {
+  final rows = visibleSidebarRows(model, collapsed);
   if (rows.isEmpty) return null;
-  final at = rows.indexWhere((r) => r.section == current);
+  final anchor = _shownRowFor(model, collapsed, current);
+  final at = rows.indexWhere((r) => r.section == anchor);
+  final last = rows.length - 1;
   return switch (direction) {
-    NavDirection.down => rows[at < 0 ? 0 : (at + 1).clamp(0, rows.length - 1)],
-    NavDirection.up =>
-      rows[at < 0 ? rows.length - 1 : (at - 1).clamp(0, rows.length - 1)],
+    NavDirection.down => rows[at < 0 ? 0 : (at + 1).clamp(0, last)],
+    NavDirection.up => rows[at < 0 ? last : (at - 1).clamp(0, last)],
     _ => null,
   }?.section;
 }
+
+/// [current], or the area row standing in for it while it is folded
+/// away — a nested project is still selected when its area is folded
+/// over it.
+SidebarSection _shownRowFor(
+  SidebarModel model,
+  Set<AreaId> collapsed,
+  SidebarSection current,
+) {
+  if (current is! ProjectSection) return current;
+  for (final area in model.areas) {
+    final id = (area.entry.section as AreaSection).area;
+    if (collapsed.contains(id) &&
+        area.projects.any((p) => p.section == current)) {
+      return AreaSection(id);
+    }
+  }
+  return current;
+}
+
+/// Whether [section] is an area the sidebar can fold: a live one — the
+/// archived group draws its areas flat, with no chevron.
+bool foldable(SidebarModel model, SidebarSection section) =>
+    section is AreaSection &&
+    model.areas.any((a) => a.entry.section == section);
 
 /// The task above or below [current] in [tasks] — a view's flat display
 /// order, so a step crosses headings — staying put at either end. With

@@ -164,8 +164,9 @@ final class SidebarModel {
   final List<SidebarEntry> archived;
 
   /// Every row top to bottom, areas immediately followed by their
-  /// projects — the order a client that cannot nest (or a keyboard walking
-  /// the sidebar) uses.
+  /// projects — the order a client that cannot nest uses. A keyboard
+  /// walking the sidebar as drawn, folds and the archived group included,
+  /// uses `visibleSidebarRows`.
   List<SidebarEntry> get rows => [
     ...lists,
     trash,

@@ -68,26 +68,69 @@ void main() {
   group('stepSection', () {
     test('down and up walk the rows and stop at the ends', () async {
       await store.createArea(title: 'Home');
-      final rows = visibleSidebarRows(model(), const {});
-      expect(stepSection(rows, inbox, NavDirection.down), todayList);
-      expect(stepSection(rows, inbox, NavDirection.up), inbox);
-      final last = rows.last.section;
-      expect(stepSection(rows, last, NavDirection.down), last);
-      expect(stepSection(rows, trash, NavDirection.down), last);
+      final m = model();
+      SidebarSection? step(SidebarSection from, NavDirection d) =>
+          stepSection(m, const {}, from, d);
+      expect(step(inbox, NavDirection.down), todayList);
+      expect(step(inbox, NavDirection.up), inbox);
+      final last = visibleSidebarRows(m, const {}).last.section;
+      expect(step(last, NavDirection.down), last);
+      expect(step(trash, NavDirection.down), last);
     });
 
     test('a section with no row starts from the top or the bottom', () async {
       final tag = await store.createTag(title: 'errand');
-      final rows = visibleSidebarRows(model(), const {});
-      expect(stepSection(rows, TagSection(tag), NavDirection.down), inbox);
-      expect(stepSection(rows, TagSection(tag), NavDirection.up), trash);
+      final m = model();
+      expect(
+        stepSection(m, const {}, TagSection(tag), NavDirection.down),
+        inbox,
+      );
+      expect(stepSection(m, const {}, TagSection(tag), NavDirection.up), trash);
+    });
+
+    test('a project folded away steps from its area', () async {
+      final home = await store.createArea(title: 'Home');
+      final garden = await store.createProject(title: 'Garden', area: home);
+      await store.createProject(title: 'Solo');
+      final m = model();
+      expect(
+        stepSection(m, {home}, ProjectSection(garden), NavDirection.down),
+        m.projects.single.section,
+        reason: 'the row after Home',
+      );
+      expect(
+        stepSection(m, {home}, ProjectSection(garden), NavDirection.up),
+        trash,
+      );
+      expect(
+        stepSection(m, const {}, ProjectSection(garden), NavDirection.up),
+        AreaSection(home),
+        reason: 'unfolded: its own row',
+      );
     });
 
     test('left and right are not steps', () {
-      final rows = visibleSidebarRows(model(), const {});
-      expect(stepSection(rows, inbox, NavDirection.left), isNull);
-      expect(stepSection(rows, inbox, NavDirection.right), isNull);
+      final m = model();
+      expect(stepSection(m, const {}, inbox, NavDirection.left), isNull);
+      expect(stepSection(m, const {}, inbox, NavDirection.right), isNull);
     });
+  });
+
+  group('foldable', () {
+    test(
+      'a live area is; an archived one, a project, a list are not',
+      () async {
+        final home = await store.createArea(title: 'Home');
+        final old = await store.createArea(title: 'Old');
+        await store.archiveArea(old);
+        final project = await store.createProject(title: 'Solo');
+        final m = model();
+        expect(foldable(m, AreaSection(home)), isTrue);
+        expect(foldable(m, AreaSection(old)), isFalse);
+        expect(foldable(m, ProjectSection(project)), isFalse);
+        expect(foldable(m, inbox), isFalse);
+      },
+    );
   });
 
   group('stepTask', () {
