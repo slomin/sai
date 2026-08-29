@@ -110,5 +110,5 @@ jobs:
         # tool/install-local.sh (#87) with an ad-hoc-signed fixture
         # release; HOME and every root point into the runner's temp dir.
         run: |
-          sh -n tool/release.sh tool/sign-tui.sh tool/install-local.sh
+          for s in tool/*.sh tool/test/*.sh; do sh -n "$s"; done
           sh tool/test/install_local_test.sh

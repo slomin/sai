@@ -11,7 +11,9 @@ the app with `tool/smoke/drive.sh` and the terminal client with
 are marked. Evidence — a screenshot per step, the archive line counts,
 the settings file — goes into the PR, **results, not claims**.
 
-Preconditions: `dist/sai-v<version>/` staged from the commit under test;
+Preconditions: the dogfood copy (#87) quit — `drive.sh` addresses sai by
+name, so a second running sai.app would take its clicks and shots;
+`dist/sai-v<version>/` staged from the commit under test;
 `codesign --verify --deep --strict` clean on both artefacts;
 `sai_tui version` prints the version the tag will carry.
 

@@ -7,7 +7,7 @@
 #   SAI_CODESIGN_IDENTITY="…" tool/release.sh                # build
 #   SAI_CODESIGN_IDENTITY="…" tool/release.sh publish        # tag + release
 #   SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install  # build + install here
-#   tool/release.sh local-install --dry-run                  # say what would happen
+#   SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install --dry-run  # say what would happen
 #   tool/release.sh install <dir>                            # reinstall a kept version
 #
 # The version is the one in packages/sai_core/pubspec.yaml (tests keep
@@ -129,13 +129,18 @@ publish() {
 local_install() {
   case "${1:-}" in
     --dry-run)
+      identity
       clean_tree
       echo "release: would build sai v$version (plist $short build $number) at $commit, then install it"
-      if [ -f "$dist/checksums.txt" ]; then
-        built_here
+      built=$(cat "$dist/commit" 2>/dev/null || true)
+      if [ -f "$dist/checksums.txt" ] && [ "$built" = "$head" ]; then
         tool/install-local.sh "$dist" --dry-run
       else
-        echo "release: nothing built in $dist yet; the install would use the fresh build"
+        if [ -n "$built" ]; then
+          echo "release: $dist is stale (built from $built); the install would use the fresh build"
+        else
+          echo "release: nothing built in $dist yet; the install would use the fresh build"
+        fi
       fi
       ;;
     '')

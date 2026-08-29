@@ -10,7 +10,7 @@ set -eu
 cd "$(dirname "$0")/../.."
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/sai-install-test.XXXXXX")
-trap 'pkill -f "$work/running/sai.app/Contents/MacOS/sai\$" 2>/dev/null || true; rm -rf "$work"' EXIT INT TERM
+trap 'pkill -f "^$work/" 2>/dev/null || true; rm -rf "$work"' EXIT INT TERM
 export HOME="$work/home"
 export SAI_INSTALL_APPS_DIR="$work/home/Applications"
 export SAI_INSTALL_SHARE_DIR="$work/home/.local/share/sai"
@@ -27,13 +27,18 @@ fixture() {
   dir=$1 version=$2 commit=$3 short=${2%%-*}
   rm -rf "$dir"
   mkdir -p "$dir/stage/sai.app/Contents/MacOS" "$dir/tui/bundle/bin" "$dir/tui/bundle/lib"
+  # Both stubs sleep when told to, so a test can hold the installed copy open.
   cat > "$work/sai.c" <<EOF
 #include <stdio.h>
-int main(void) { puts("sai app fixture"); return 0; }
+#include <unistd.h>
+int main(int argc, char **argv) { if (argc > 1) sleep(60); puts("sai app fixture"); return 0; }
 EOF
   cat > "$work/tui.c" <<EOF
 #include <stdio.h>
+#include <string.h>
+#include <unistd.h>
 int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "sleep") == 0) { sleep(60); return 0; }
   if (argc > 1) { printf("sai_tui %s\n", "$version"); return 0; }
   return 2;
 }
@@ -99,13 +104,25 @@ grep -q "^commit: $c1$" "$SAI_INSTALL_SHARE_DIR/installed" || fail "installed fi
 grep -q "^version: 0.0.1-test.1$" "$SAI_INSTALL_SHARE_DIR/installed" || fail "installed file lacks the version"
 [ -f "$work/keep/sai-v0.0.1-test.1-1111111/checksums.txt" ] || fail "artefacts not kept"
 grep -rq "Authority\|Apple Development" "$SAI_INSTALL_SHARE_DIR/installed" "$work/out1" && fail "identity in metadata or log"
-ls "$SAI_INSTALL_APPS_DIR" | grep -q '^\.sai' && fail "staging left behind in Applications"
+ls -A "$SAI_INSTALL_APPS_DIR" | grep -q '^\.' && fail "staging left behind in Applications: $(ls -A "$SAI_INSTALL_APPS_DIR")"
 pass "first install creates the roots, the symlink, the record and the kept copy"
+
+# --- a different signer is refused --------------------------------------
+# Ad-hoc signatures carry a per-build designated requirement, so every
+# fixture after the first counts as "signed differently" — which is the
+# refusal ADR 0008 wants, and the reason the cases below opt in.
+tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 && fail "a differently signed app was accepted"
+grep -q "signed differently" "$work/err" || fail "wrong message: $(cat "$work/err")"
+grep -q "designated\|cdhash\|anchor" "$work/err" && fail "the requirement leaked into the message"
+[ "$(installed_version)" = "sai_tui 0.0.1-test.1" ] || fail "the refusal changed the install"
+pass "a differently signed build is refused and the requirement is not printed"
+export SAI_INSTALL_ALLOW_RESIGN=1
 
 # --- upgrade -----------------------------------------------------------
 tool/install-local.sh "$work/dist2" >"$work/out2" 2>&1 || { cat "$work/out2"; fail "upgrade failed"; }
 [ "$(installed_version)" = "sai_tui 0.0.1-test.2" ] || fail "upgrade did not switch the client"
-[ "$(ls "$SAI_INSTALL_APPS_DIR" | wc -l | tr -d ' ')" = 1 ] || fail "more than one thing in Applications: $(ls "$SAI_INSTALL_APPS_DIR")"
+[ "$(ls -A "$SAI_INSTALL_APPS_DIR" | wc -l | tr -d ' ')" = 1 ] || fail "more than one thing in Applications: $(ls -A "$SAI_INSTALL_APPS_DIR")"
+ls -A "$SAI_INSTALL_SHARE_DIR" | grep -q '^\.' && fail "staging or backup left behind in share: $(ls -A "$SAI_INSTALL_SHARE_DIR")"
 [ -d "$work/keep/sai-v0.0.1-test.1-1111111" ] && [ -d "$work/keep/sai-v0.0.1-test.2-2222222" ] || fail "kept copies missing"
 grep -q "^commit: $c2$" "$SAI_INSTALL_SHARE_DIR/installed" || fail "installed file not updated"
 pass "a second install upgrades in place, one sai.app, both versions kept"
@@ -122,7 +139,7 @@ unchanged() {
 }
 
 fixture "$work/bad" 0.0.1-test.3 "$c2"
-sed -i '' 's/^[0-9a-f]/0/' "$work/bad/checksums.txt"
+sed -i '' -e '1s/^0/1/' -e '1t' -e '1s/^./0/' "$work/bad/checksums.txt"
 tool/install-local.sh "$work/bad" >"$work/err" 2>&1 && fail "corrupt checksums accepted"
 grep -q "checksums do not match" "$work/err" || fail "wrong message: $(cat "$work/err")"
 unchanged "a corrupt checksum"
@@ -144,19 +161,46 @@ grep -q "signature does not verify" "$work/err" || fail "wrong message: $(cat "$
 unchanged "a broken signature"
 pass "a tampered app fails its signature check"
 
-# A copied /bin/sleep would be killed by its launch constraint; build one.
-mkdir -p "$work/running/sai.app/Contents/MacOS"
-printf '#include <unistd.h>\nint main(void) { sleep(60); return 0; }\n' > "$work/sleep.c"
-cc -o "$work/running/sai.app/Contents/MacOS/sai" "$work/sleep.c"
-"$work/running/sai.app/Contents/MacOS/sai" &
+"$SAI_INSTALL_APPS_DIR/sai.app/Contents/MacOS/sai" hold &
 sleeper=$!
 sleep 0.2
-tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 && fail "install ran with sai running"
+out=$(tool/install-local.sh "$work/dist2" --dry-run) || fail "dry run failed while sai runs"
+echo "$out" | grep -q "sai is running (pid $sleeper); the install would refuse" || fail "dry run did not report the running app: $out"
+tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 && fail "install ran with the installed app running"
 grep -q "sai is running (pid $sleeper); quit sai first" "$work/err" || fail "wrong message: $(cat "$work/err")"
-kill "$sleeper"
-wait "$sleeper" 2>/dev/null || true
+kill "$sleeper"; wait "$sleeper" 2>/dev/null || true
 unchanged "a running sai"
-pass "a running sai is refused"
+pass "the installed app running is refused (and the dry run says so)"
+
+"$SAI_INSTALL_BIN_DIR/sai_tui" sleep &
+sleeper=$!
+sleep 0.2
+tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 && fail "install ran with sai_tui running through the symlink"
+grep -q "sai is running (pid $sleeper); quit sai first" "$work/err" || fail "wrong message: $(cat "$work/err")"
+kill "$sleeper"; wait "$sleeper" 2>/dev/null || true
+unchanged "a running sai_tui"
+pass "the installed terminal client running through the symlink is refused"
+
+mkdir -p "$work/other/sai.app/Contents/MacOS"
+cp "$SAI_INSTALL_APPS_DIR/sai.app/Contents/MacOS/sai" "$work/other/sai.app/Contents/MacOS/sai"
+"$work/other/sai.app/Contents/MacOS/sai" hold &
+other=$!
+sleep 0.2
+tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 || { kill "$other"; fail "another checkout's sai.app blocked the install: $(cat "$work/err")"; }
+kill "$other"; wait "$other" 2>/dev/null || true
+pass "a sai.app elsewhere does not count as running"
+before=$(snapshot)
+
+# The second swap failing after the first: pin the live bundle so its
+# rename is refused, and expect the app to come back with nothing left over.
+chflags uchg "$SAI_INSTALL_SHARE_DIR/bundle"
+tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 && { chflags nouchg "$SAI_INSTALL_SHARE_DIR/bundle"; fail "install succeeded with the bundle pinned"; }
+chflags nouchg "$SAI_INSTALL_SHARE_DIR/bundle"
+unchanged "a failed bundle swap"
+ls -A "$SAI_INSTALL_APPS_DIR" | grep -q '^\.' && fail "orphans after the failed swap: $(ls -A "$SAI_INSTALL_APPS_DIR")"
+ls -A "$SAI_INSTALL_SHARE_DIR" | grep -q '^\.' && fail "orphans after the failed swap: $(ls -A "$SAI_INSTALL_SHARE_DIR")"
+[ "$(installed_version)" = "sai_tui 0.0.1-test.2" ] || fail "the pair mismatches after the failed swap: $(installed_version)"
+pass "a failed bundle swap puts the app back and leaves nothing behind"
 
 rm "$SAI_INSTALL_BIN_DIR/sai_tui"
 echo stray > "$SAI_INSTALL_BIN_DIR/sai_tui"

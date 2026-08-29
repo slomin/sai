@@ -89,7 +89,7 @@ What the older build finds:
 | Archive (the task and chat log) | `~/Library/Application Support/sai/archive/` | `SAI_ARCHIVE_ROOT` |
 | Settings | `~/Library/Application Support/sai/settings.json` | `SAI_SETTINGS_FILE` |
 | Provider keys | login Keychain, service `me.slominski.sai`, one item per `provider:<id>` | — |
-| The app | `/Applications/sai.app` (a download), `~/Applications/sai.app` (the dogfood install) | — |
+| The app | `/Applications/sai.app` (a download) or `~/Applications/sai.app` (the dogfood install) — one Mac keeps one, never both | — |
 | The terminal client | `~/.local/share/sai/bundle/`, `~/.local/bin/sai_tui` | — |
 | What the dogfood install installed | `~/.local/share/sai/installed` | — |
 | Kept dogfood releases | `references/releases/<name>/` in the checkout (gitignored) | `SAI_INSTALL_KEEP_DIR` |
@@ -118,21 +118,27 @@ refused), then installs it: `~/Applications/sai.app`,
 No tag, no GitHub release, and the archive, the settings file and the
 Keychain are not touched — the same identity signs every build, so the
 provider keys keep working (ADR 0008). Before anything is replaced the
-staged artefacts are checked in full: `checksums.txt`, `codesign
---verify --deep --strict` on both, the commit each carries (`SaiCommit`
+staged artefacts are checked in full: `checksums.txt`; `codesign
+--verify --deep --strict` on the app and `--verify --strict` on every
+Mach-O in the bundle; that both are signed the way the installed copies
+are (a different certificate would strand the Keychain items, ADR 0008 —
+`SAI_INSTALL_ALLOW_RESIGN=1` accepts the change knowingly); the commit
+each carries (`SaiCommit`
 in the app's `Info.plist`, `bundle/commit` beside the terminal client)
 against the commit that built them, and the version the plist and
 `sai_tui version` report. The app and the bundle are unpacked beside
 their destinations and swapped in by rename, the pair together; if that
-fails part-way the app swap is undone. A running sai is refused (quit it
-first), as is a stray file where the symlink goes. `tool/release.sh
+fails part-way the app swap is undone. The installed sai.app or sai_tui running is refused (quit them first),
+as is a stray file where the symlink goes. `tool/release.sh
 local-install --dry-run` prints what would be built and replaced without
 writing anything.
 
 An upgrade is the same command on a newer commit. The artefacts that
 were installed are kept under `references/releases/sai-v<version>-<commit>/`
-(gitignored, this checkout only) and `~/.local/share/sai/installed`
-says which one is in place. Rollback is quitting sai and reinstalling a
+(gitignored, this checkout only — `git clean -xdf` or removing the
+checkout removes them) and `~/.local/share/sai/installed` says which
+one is in place (it describes the dogfood install only; untarring a
+download over the bundle bypasses it). Rollback is quitting sai and reinstalling a
 kept one through the same checks:
 
 ```sh

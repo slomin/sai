@@ -156,8 +156,9 @@ the layout and the toolchain; this file has the rules.
   (`docs/release/README.md`, ADR 0017); CI has no release job and a
   pushed `v*` tag does nothing. `tool/release.sh local-install` installs
   the same build on this Mac as the dogfood copy (#87) — it writes under
-  `~/Applications` and `~/.local`, so it runs outside the sandbox; an
-  agent says so first. `tool/test/install_local_test.sh` covers the
+  `~/Applications` and `~/.local`, which the sandbox denies — an agent
+  runs that one command with the sandbox switched off (`/sandbox`) and
+  says so first. `tool/test/install_local_test.sh` covers the
   installer with a fixture release against temporary roots. Bump `saiVersion` and the three pubspecs
   together before a release; tests keep them equal.
 
