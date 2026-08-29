@@ -11,7 +11,9 @@ the app with `tool/smoke/drive.sh` and the terminal client with
 are marked. Evidence — a screenshot per step, the archive line counts,
 the settings file — goes into the PR, **results, not claims**.
 
-Preconditions: `dist/sai-v<version>/` staged from the commit under test;
+Preconditions: the dogfood copy (#87) quit — `drive.sh` addresses sai by
+name, so a second running sai.app would take its clicks and shots;
+`dist/sai-v<version>/` staged from the commit under test;
 `codesign --verify --deep --strict` clean on both artefacts;
 `sai_tui version` prints the version the tag will carry.
 
@@ -51,7 +53,8 @@ Preconditions: `dist/sai-v<version>/` staged from the commit under test;
    preview and result screens; the second run reporting nothing to do;
    the archive line count unchanged by the second run.
 9. **Terminal client.** Run the packaged `sai_tui` — once through a
-   symlink like the install makes — against the same archive: Today
+   symlink like the install makes, or the `~/.local/bin/sai_tui` a
+   dogfood install (#87) made — against the same archive: Today
    matches the app; capture one task; the app shows it once after
    reload. Evidence: the TUI snapshot, the app's Today, one
    `task.created` line.
