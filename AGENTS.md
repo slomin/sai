@@ -27,7 +27,11 @@ the layout and the toolchain; this file has the rules.
   provider add …`) *before* launching the app: it reads the file once.
 - Drive the app yourself; do not hand the clicks to a person.
   `tool/smoke/drive.sh launch <dir>` starts the debug bundle with that env
-  (`open` drops env vars), `shot` captures the sai window, `click x y`
+  (`open` drops env vars) — the dev flavor's `Debug-dev/sai-dev.app`
+  unless `SAI_APP_BIN` names another; the window is found by the
+  bundle's display name (`sai` or `sai dev`), so stable and dev can run
+  through one smoke, each with its own scratch env — `shot` captures
+  that window, `click x y`
   posts a real mouse click at window-relative points (System Events'
   `click at` never reaches Flutter), `record <secs> <file.mov>` clips
   the window's screen rect for a PR, `quit` closes it. Re-read the window
@@ -158,9 +162,13 @@ the layout and the toolchain; this file has the rules.
   the same build on this Mac as the dogfood copy (#87) — it writes under
   `~/Applications` and `~/.local`, which the sandbox denies — an agent
   runs that one command with the sandbox switched off (`/sandbox`) and
-  says so first. `tool/test/install_local_test.sh` covers the
-  installer with a fixture release against temporary roots. Bump `saiVersion` and the three pubspecs
-  together before a release; tests keep them equal.
+  says so first. Two flavors exist and no third (ADR 0019): `stable` is
+  the daily copy, `dev` (`local-install dev`) the isolated one beside it;
+  a flavorless `flutter run`/`build` is dev, and publishing is
+  stable-only. `tool/test/install_local_test.sh` covers the installer,
+  both flavors and their isolation, with fixture releases against
+  temporary roots. Bump `saiVersion` and the three pubspecs together
+  before a release; tests keep them equal.
 
 ## Commits and pull requests
 

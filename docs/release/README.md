@@ -84,18 +84,22 @@ What the older build finds:
 
 ## Where the data lives
 
-| What | Path | Override |
-| --- | --- | --- |
-| Archive (the task and chat log) | `~/Library/Application Support/sai/archive/` | `SAI_ARCHIVE_ROOT` |
-| Settings | `~/Library/Application Support/sai/settings.json` | `SAI_SETTINGS_FILE` |
-| Provider keys | login Keychain, service `me.slominski.sai`, one item per `provider:<id>` | — |
-| The app | `/Applications/sai.app` (a download) or `~/Applications/sai.app` (the dogfood install) — one Mac keeps one, never both | — |
-| The terminal client | `~/.local/share/sai/bundle/`, `~/.local/bin/sai_tui` | — |
-| What the dogfood install installed | `~/.local/share/sai/installed` | — |
-| Kept dogfood releases | `references/releases/<name>/` in the checkout (gitignored) | `SAI_INSTALL_KEEP_DIR` |
+| What | Stable | Dev | Override |
+| --- | --- | --- | --- |
+| Archive (the task and chat log) | `~/Library/Application Support/sai/archive/` | `~/Library/Application Support/sai-dev/archive/` | `SAI_ARCHIVE_ROOT` |
+| Settings | `~/Library/Application Support/sai/settings.json` | `…/sai-dev/settings.json` | `SAI_SETTINGS_FILE` |
+| Provider keys | login Keychain, service `me.slominski.sai`, one item per `provider:<id>` | service `me.slominski.sai.dev` | — |
+| The app | `/Applications/sai.app` (a download) or `~/Applications/sai.app` (the dogfood install) — one Mac keeps one, never both | `~/Applications/sai-dev.app` | — |
+| The terminal client | `~/.local/share/sai/bundle/`, `~/.local/bin/sai_tui` | `~/.local/share/sai-dev/bundle/`, `~/.local/bin/sai_tui-dev` | — |
+| What the dogfood install installed | `~/.local/share/sai/installed` | `~/.local/share/sai-dev/installed` | — |
+| Kept dogfood releases | `references/releases/sai-v<version>-<commit>/` in the checkout (gitignored) | `references/releases/sai-dev-v<version>-<commit>/` | `SAI_INSTALL_KEEP_DIR` |
 
-Both clients read the same archive and settings; a scratch run sets both
-overrides. Until #15 lands, a backup by hand is a copy of the
+Stable is the daily-use copy and the only one a release page ever
+carries; dev is the developer's isolated copy (ADR 0019) — its own app,
+data, settings, Keychain service and window, installed beside stable
+and never over it, and nothing is ever copied between the two. Both
+clients of a flavor read the same archive and settings; a scratch run
+sets both overrides, for either flavor. Until #15 lands, a backup by hand is a copy of the
 `Application Support/sai` directory taken while sai is quit; the Keychain
 items are not in it and are re-entered, never copied.
 
@@ -109,12 +113,20 @@ before removing the binary).
 The developer's own copy comes from the tree, not from a release:
 
 ```sh
-SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install
+SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install       # stable
+SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install dev   # the dev flavor
 ```
 
 builds the release exactly as `build` does (a dirty worktree is
 refused), then installs it: `~/Applications/sai.app`,
-`~/.local/share/sai/bundle/` and the symlink `~/.local/bin/sai_tui`.
+`~/.local/share/sai/bundle/` and the symlink `~/.local/bin/sai_tui` —
+or, for dev, `sai-dev.app`, `~/.local/share/sai-dev/bundle/` and
+`sai_tui-dev`. The flavor is a closed word (`stable` or `dev`, ADR
+0019), never a destination: it picks the Xcode scheme and the entry
+point, and is sealed into the staged directory (`dist/sai-dev-v…/flavor`,
+`SaiFlavor` in the app's `Info.plist`, `bundle/flavor` beside the
+client) so the installer can check that every artefact is what the
+release says. Installing one flavor is allowed while the other runs.
 No tag, no GitHub release, and the archive, the settings file and the
 Keychain are not touched — the same identity signs every build, so the
 provider keys keep working (ADR 0008). Before anything is replaced the
@@ -125,13 +137,17 @@ are (a different certificate would strand the Keychain items, ADR 0008 —
 `SAI_INSTALL_ALLOW_RESIGN=1` accepts the change knowingly); the commit
 each carries (`SaiCommit`
 in the app's `Info.plist`, `bundle/commit` beside the terminal client)
-against the commit that built them, and the version the plist and
-`sai_tui version` report. The app and the bundle are unpacked beside
+against the commit that built them, the version the plist and
+`sai_tui version` report, and the flavor every artefact carries against
+the directory's seal (a dev app in a stable release, a client that
+names itself wrongly, or a dev app already sitting at `sai.app` all
+stop it). The app and the bundle are unpacked beside
 their destinations and swapped in by rename, the pair together; if that
-fails part-way the app swap is undone. The installed sai.app or sai_tui
-running is refused (quit them first), as is a stray file where the
-symlink goes and a `/Applications/sai.app` from a download (one Mac
-keeps one copy). A backup left by an interrupted run is put back on the
+fails part-way the app swap is undone. That flavor's installed app or
+client running is refused (quit them first) — the other flavor running
+is not — as is a stray file where the symlink goes and a
+`/Applications/sai.app` from a download (one Mac keeps one copy of a
+flavor). A backup left by an interrupted run is put back on the
 next run before anything is judged. `tool/release.sh local-install
 --dry-run` prints what would be built and replaced without writing
 anything.
@@ -141,19 +157,22 @@ the `dist/` a release is about to be published from, say — installs
 without rebuilding:
 
 ```sh
-tool/install-local.sh dist/sai-v<version>
+tool/install-local.sh dist/sai-v<version>       # or dist/sai-dev-v<version>
 ```
 
 An upgrade is the same command on a newer commit. The artefacts that
 were installed are kept under `references/releases/sai-v<version>-<commit>/`
-(gitignored, this checkout only — `git clean -xdf` or removing the
-checkout removes them) and `~/.local/share/sai/installed` says which
-one is in place (it describes the dogfood install only; untarring a
-download over the bundle bypasses it). Rollback is quitting sai and
+(`sai-dev-v…` for dev; gitignored, this checkout only — `git clean -xdf`
+or removing the checkout removes them) and `~/.local/share/sai/installed`
+(`sai-dev/installed`) says which one is in place, flavor included (it
+describes the dogfood install only; untarring a download over the
+bundle bypasses it). A kept release from before flavors existed carries
+no seal and installs as stable. Rollback is quitting that flavor and
 reinstalling a kept one through the same checks:
 
 ```sh
 tool/release.sh install references/releases/sai-v0.0.1-dev.1-6a8e367
+tool/release.sh install references/releases/sai-dev-v0.0.1-dev.1-6a8e367
 ```
 
 What an older build finds in a newer archive and settings file is the
@@ -188,10 +207,12 @@ SAI_CODESIGN_IDENTITY="…" tool/release.sh publish
 
 creates the `v<version>` tag on that commit and the pre-release with the
 three files attached. This is the only path that publishes anything;
-`local-install` never does. Publish from the merged commit, never from a
-branch: the script refuses a `dist/` built from another commit (the
-build writes its commit there), a `HEAD` that is not on `origin/main`,
-and an existing `v<version>` tag that points anywhere else.
+`local-install` never does, and only stable is ever published — `publish`
+takes no flavor and refuses a `dist/` sealed as dev. Publish from the
+merged commit, never from a branch: the script refuses a `dist/` built
+from another commit (the build writes its commit there), a `HEAD` that
+is not on `origin/main`, and an existing `v<version>` tag that points
+anywhere else.
 
 Why not Developer ID and notarisation: one person installs this, on
 their own Macs. The paid program, the notarisation round-trip and the
