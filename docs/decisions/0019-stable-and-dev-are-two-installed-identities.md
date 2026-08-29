@@ -60,6 +60,13 @@ replaced on its own, while the daily copy stays what it is.
 - **Dev says so.** The app header wears a `DEV` label at all times, the
   window and menus say `sai dev`, and the terminal client greets as
   `sai dev` and names itself `sai_tui-dev`.
+- **The launcher says so too.** Stable uses the canonical
+  near-white/ink/red Sai mark. Dev preserves it but replaces the ink
+  square's upper-right corner with one large diagonal green field, so
+  the distinction survives small sizes and grayscale without text.
+  Each flavor's `AppInfo-<flavor>.xcconfig` selects only its own catalog;
+  `tool/app-icons.swift` derives every committed size from the curated
+  masters under `Runner/IconSources/`.
 
 ## Consequences
 
@@ -75,5 +82,4 @@ replaced on its own, while the daily copy stays what it is.
   README; it is a certificate name, not the flavor. Both flavors are
   signed with the same identity, so each keeps trusting its own Keychain
   items across rebuilds.
-- App-icon artwork per flavor is #91; the two flavors differ in nothing
-  functional.
+- The two flavors differ in launcher artwork but nothing functional.

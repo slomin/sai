@@ -20,7 +20,7 @@ This repository is a Dart workspace:
 | `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
 | `docs/settings/`     | The settings file contract ([settings v0](docs/settings/settings-v0.md)).   |
 | `docs/release/`      | Installing, upgrading and building a release ([README](docs/release/README.md)). |
-| `tool/`              | Developer scripts (`release.sh`, `install-local.sh`, `sign-tui.sh`) with their test (`test/`) and the smoke drivers (`smoke/`). |
+| `tool/`              | Developer scripts (`release.sh`, `install-local.sh`, `sign-tui.sh`, `app-icons.swift`) with their tests and smoke drivers. |
 | `docs/decisions/`    | Technical ADRs.                                                            |
 
 Both clients read the same providers from `sai_core`; nothing in `sai_core`
@@ -65,6 +65,13 @@ label in its header. The two share nothing and run at once. A
 accident can pass for the daily copy; `--flavor stable` is deliberate.
 The same is true in Xcode: the `stable` and `dev` schemes are the
 flavors, and the plain `Runner` scheme builds dev.
+
+The icons make the same distinction before a window opens: stable uses
+the canonical near-white/ink/red Sai mark; dev keeps that mark and cuts
+its upper-right ink corner into one large green field. Their curated
+1024px masters live under `apps/sai_app/macos/Runner/IconSources/` and
+`swift tool/app-icons.swift prepare` regenerates both macOS catalogs;
+`check` refuses stale sizes or Flutter's retired placeholder.
 
 Both clients of a flavor read and write the same archive. The terminal client
 follows the app's writes as they land (it polls the archive head every
@@ -254,6 +261,7 @@ dart analyze --fatal-infos packages apps
 (cd packages/sai_core && dart test)
 (cd apps/sai_tui && dart test)
 (cd apps/sai_app && flutter test)
+swift tool/app-icons.swift check
 (cd apps/sai_app && flutter build macos --debug --flavor stable)
 (cd apps/sai_app && flutter build macos --debug --flavor dev)
 dart build cli -t apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui

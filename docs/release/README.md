@@ -103,6 +103,15 @@ sets both overrides, for either flavor. Until #15 lands, a backup by hand is a c
 `Application Support/sai` directory taken while sai is quit; the Keychain
 items are not in it and are re-entered, never copied.
 
+The app icons carry the same identity: stable is the canonical
+near-white/ink/red Sai mark; dev adds the large diagonal green corner.
+The source masters and their prompt provenance are in
+`apps/sai_app/macos/Runner/IconSources/`; from the repository root,
+`swift tool/app-icons.swift prepare` regenerates both committed catalogs
+and `swift tool/app-icons.swift check` proves the sizes are current and
+distinct. Release and local-install builds select the catalog belonging
+to their flavor; the other catalog is not compiled into the bundle.
+
 Uninstall: delete the app, the bundle and the symlink; delete
 `~/Library/Application Support/sai` if the archive should go too; `sai_tui
 secret clear <id>` for each provider removes the Keychain items (do that

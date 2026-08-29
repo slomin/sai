@@ -5,6 +5,10 @@
 // The daily-use copy: everything here is what sai was before flavors.
 SAI_FLAVOR = stable
 
+// Only the stable Sai icon is compiled into this bundle (#91).
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon-stable
+ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO
+
 // The bundle's file name (sai.app) and its executable.
 PRODUCT_NAME = sai
 

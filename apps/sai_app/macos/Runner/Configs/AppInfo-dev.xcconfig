@@ -5,6 +5,10 @@
 // The isolated development and QA copy, beside stable and never in it.
 SAI_FLAVOR = dev
 
+// The large green corner keeps the development copy distinct at a glance.
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon-dev
+ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO
+
 // The bundle's file name (sai-dev.app) and its executable.
 PRODUCT_NAME = sai-dev
 
