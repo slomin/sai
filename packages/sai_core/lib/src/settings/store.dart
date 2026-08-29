@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../archive/archive_root.dart';
+import '../identity.dart';
 import 'settings.dart';
 
 /// Where the settings file lives: `SAI_SETTINGS_FILE` when set, else
@@ -12,12 +13,14 @@ import 'settings.dart';
 File resolveSettingsFile({
   required Map<String, String> environment,
   required String operatingSystem,
+  SaiIdentity identity = SaiIdentity.stable,
 }) {
   final override = environment['SAI_SETTINGS_FILE'];
   if (override != null && override.isNotEmpty) return File(override);
   final data = resolveDataDir(
     environment: environment,
     operatingSystem: operatingSystem,
+    identity: identity,
     what: 'the settings file: no SAI_SETTINGS_FILE',
   );
   return File(p.join(data.path, 'settings.json'));

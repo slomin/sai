@@ -5,6 +5,7 @@
 library;
 
 export 'src/app_info.dart';
+export 'src/identity.dart';
 export 'src/archive.dart';
 export 'src/chat.dart';
 export 'src/context.dart';

@@ -39,6 +39,33 @@ void main() {
       );
     });
 
+    test('the dev flavor has its own directory beside stable', () {
+      expect(
+        resolveArchiveRoot(
+          environment: {'HOME': '/Users/x'},
+          operatingSystem: 'macos',
+          identity: SaiIdentity.dev,
+        ).path,
+        '/Users/x/Library/Application Support/sai-dev/archive',
+      );
+      expect(
+        resolveArchiveRoot(
+          environment: {'HOME': '/home/x'},
+          operatingSystem: 'linux',
+          identity: SaiIdentity.dev,
+        ).path,
+        '/home/x/.local/share/sai-dev/archive',
+      );
+      expect(
+        resolveArchiveRoot(
+          environment: {'SAI_ARCHIVE_ROOT': '/tmp/scratch', 'HOME': '/x'},
+          operatingSystem: 'macos',
+          identity: SaiIdentity.dev,
+        ).path,
+        '/tmp/scratch',
+      );
+    });
+
     test('no HOME and no override is an error', () {
       expect(
         () => resolveArchiveRoot(environment: {}, operatingSystem: 'macos'),
