@@ -1,0 +1,18 @@
+// Application-level settings for the Runner target, one file per flavor
+// (ADR 0019). The stock Debug/Release/Profile configurations use the dev
+// file on purpose: a build that names no flavor is dev, never stable.
+
+// The isolated development and QA copy, beside stable and never in it.
+SAI_FLAVOR = dev
+
+// The bundle's file name (sai-dev.app) and its executable.
+PRODUCT_NAME = sai-dev
+
+// What the Dock and the menu bar show.
+PRODUCT_DISPLAY_NAME = sai dev
+
+// The application's bundle identifier; also the Keychain service.
+PRODUCT_BUNDLE_IDENTIFIER = me.slominski.sai.dev
+
+// The copyright displayed in application information
+PRODUCT_COPYRIGHT = Copyright © 2026 Jan Slominski. All rights reserved.

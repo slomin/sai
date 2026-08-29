@@ -10,9 +10,13 @@ class MainFlutterWindow: NSWindow {
     // Where the window was left (#76, ADR 0015): AppKit keeps the frame
     // under this name in the app's defaults and clamps a restored frame
     // to the screens that exist; a floor keeps the sidebar on screen.
+    // The dev flavor (ADR 0019) names its frame apart from stable's, so
+    // the two windows come back where each was left.
+    let flavor = Bundle.main.infoDictionary?["SaiFlavor"] as? String
+    let frameName = flavor == "dev" ? "sai-dev.main" : "sai.main"
     self.minSize = NSSize(width: 720, height: 520)
-    _ = self.setFrameAutosaveName("sai.main")
-    self.setFrameUsingName("sai.main")
+    _ = self.setFrameAutosaveName(frameName)
+    self.setFrameUsingName(frameName)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     registerAccessibility(flutterViewController)
