@@ -454,7 +454,7 @@ final llmRegistryProvider = Provider<Map<String, LlmProvider>>((ref) {
 /// selected id is not installed. Selection is an app-level setting, not
 /// per conversation.
 final activeLlmProvider = Provider<LlmProvider?>((ref) {
-  final id = ref.watch(settingsProvider).llm;
+  final id = ref.watch(settingsProvider.select((s) => s.llm));
   if (id == null) return null;
   return ref.watch(llmRegistryProvider)[id];
 });
@@ -480,13 +480,16 @@ final activeLlmWarningProvider = Provider<String?>((ref) {
 /// The status-bar line naming the active LLM provider and its privacy
 /// tag — the same words in every client (`llm/status.dart`).
 final llmStatusProvider = Provider<String>((ref) {
-  final settings = ref.watch(settingsProvider);
-  if (settings.problem != null) return unreadableSettingsStatus;
-  final id = settings.llm;
+  // Only what the line is made of: the workspace part of settings moves
+  // with every click and must not redraw it.
+  final (problem, id) = ref.watch(
+    settingsProvider.select((s) => (s.problem, s.llm)),
+  );
+  if (problem != null) return unreadableSettingsStatus;
   if (id == null) return noProviderStatus;
   final active = ref.watch(activeLlmProvider);
   if (active == null) {
-    final config = settings.provider(id);
+    final config = ref.watch(settingsProvider.select((s) => s.provider(id)));
     if (config == null) return missingProviderStatus(id);
     final missing = ref.watch(misconfiguredLlmsProvider)[id];
     if (missing != null) return misconfiguredStatus(id, missing);
@@ -976,11 +979,14 @@ class Connection extends Notifier<ConnectionStatus> {
       _timer = null;
       _epoch++;
     });
-    final settings = ref.watch(settingsProvider);
-    if (settings.problem != null) {
+    // Selected, not the whole file: a workspace save (#76) must not turn
+    // a ready connection amber and ask the endpoint again.
+    final (problem, id) = ref.watch(
+      settingsProvider.select((s) => (s.problem, s.llm)),
+    );
+    if (problem != null) {
       return const ConnectionStatus.down('settings unreadable');
     }
-    final id = settings.llm;
     if (id == null) return const ConnectionStatus.down('no provider');
     final active = ref.watch(activeLlmProvider);
     if (active == null) {

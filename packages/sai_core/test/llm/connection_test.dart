@@ -197,6 +197,33 @@ void main() {
       });
     });
 
+    test('saving the workspace neither re-probes nor flickers', () {
+      fakeAsync((async) {
+        final probed = _Probed(const EndpointInfo(health: EndpointHealth.ok));
+        final c = make(builtins: [() => probed]);
+        c.read(settingsProvider.notifier).selectLlm('probed');
+        expect(c.read(connectionProvider).text, 'probing…');
+        async.flushMicrotasks();
+        expect(
+          c.read(connectionProvider),
+          const ConnectionStatus.ready('ready'),
+        );
+        final seen = <ConnectionStatus>[];
+        c.listen(connectionProvider, (_, next) => seen.add(next));
+        final status = c.read(llmStatusProvider);
+        // Moving around the workspace rewrites settings (#76); the
+        // connection is not about that.
+        c
+            .read(settingsProvider.notifier)
+            .setWorkspace(const WorkspaceState(section: 'list:inbox'));
+        async.flushMicrotasks();
+        expect(seen, isEmpty, reason: 'no attention, no new ready');
+        expect(probed.probes, 1);
+        expect(c.read(llmStatusProvider), status);
+        c.dispose();
+      });
+    });
+
     test('a slow older probe cannot overwrite a newer answer', () async {
       final probed = _Slow();
       final c = make(builtins: [() => probed]);
