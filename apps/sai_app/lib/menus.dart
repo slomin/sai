@@ -5,6 +5,7 @@ import 'package:sai_core/sai_core.dart';
 
 import 'commands.dart';
 import 'settings/settings_screen.dart';
+import 'workspace/navigation.dart';
 
 /// The native menu bar, built in Dart (ADR 0005). The standard items are
 /// the platform's own; everything else routes to [commands]. Built to
@@ -261,7 +262,10 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
   // own reads `onKeyEvent` from the node, not the widget.
   late final _resting = FocusScopeNode(
     debugLabel: 'workspace',
-    onKeyEvent: (_, event) => _typed(event, AppCommands.of(context)),
+    onKeyEvent: (_, event) {
+      final commands = AppCommands.of(context);
+      return _arrowed(event, commands) ?? _typed(event, commands);
+    },
   );
 
   @override
@@ -295,6 +299,36 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
     return KeyEventResult.handled;
   }
 
+  /// The arrow keys move the selection (#89) — from the resting scope only,
+  /// like typing: a field anywhere keeps its own arrows, a dialog is a
+  /// route of its own, a native menu takes them before the view does.
+  /// Down and repeat both count, so a held key keeps moving; any modifier
+  /// makes it something else (⌥→ is a word jump, ⌘↑ a scroll) and it
+  /// falls through untouched. Null when it is not an arrow at all.
+  KeyEventResult? _arrowed(KeyEvent event, AppCommands commands) {
+    final direction = _arrows[event.logicalKey];
+    if (direction == null) return null;
+    if (!_resting.hasPrimaryFocus || event is KeyUpEvent) {
+      return KeyEventResult.ignored;
+    }
+    final keys = HardwareKeyboard.instance;
+    if (keys.isMetaPressed ||
+        keys.isControlPressed ||
+        keys.isAltPressed ||
+        keys.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    commands.navigate(direction);
+    return KeyEventResult.handled;
+  }
+
+  static final _arrows = {
+    LogicalKeyboardKey.arrowUp: NavDirection.up,
+    LogicalKeyboardKey.arrowDown: NavDirection.down,
+    LogicalKeyboardKey.arrowLeft: NavDirection.left,
+    LogicalKeyboardKey.arrowRight: NavDirection.right,
+  };
+
   static final _notTyping = {
     LogicalKeyboardKey.escape,
     LogicalKeyboardKey.enter,
@@ -314,6 +348,9 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
 
   @override
   Widget build(BuildContext context) {
+    // Kept alive from launch, so it has seen where a clicked selection
+    // stood before that task leaves its list.
+    ref.listen(workspaceNavigatorProvider, (_, _) {});
     final commands = AppCommands.of(context);
     final canUndo = ref.watch(canUndoProvider);
     final shown = ref.watch(chatVisibleProvider);

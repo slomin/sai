@@ -8,6 +8,7 @@ import 'find/quick_find.dart';
 import 'settings/archive_page.dart' show revealArchiveInFinder;
 import 'settings/settings_screen.dart';
 import 'widgets/sai_dialog.dart';
+import 'workspace/navigation.dart';
 import 'workspace/task_commands.dart';
 
 /// Focus for the quick-capture field: Cmd+N and File > New Task land
@@ -83,6 +84,7 @@ class AppCommands {
     required this.completeSelected,
     required this.cancelSelected,
     required this.deleteSelected,
+    required this.navigate,
   });
 
   /// The live handlers, reading through the [ProviderScope] above
@@ -108,6 +110,7 @@ class AppCommands {
       completeSelected: () => _completeSelected(container),
       cancelSelected: () => _cancelSelected(container),
       deleteSelected: () => _deleteSelected(context, container),
+      navigate: container.read(workspaceNavigatorProvider.notifier).move,
     );
   }
 
@@ -156,6 +159,10 @@ class AppCommands {
   final VoidCallback completeSelected;
   final VoidCallback cancelSelected;
   final VoidCallback deleteSelected;
+
+  /// The arrow keys (#89): a row up or down in the sidebar or the list,
+  /// into the list or back out of it, an area folded or unfolded.
+  final void Function(NavDirection direction) navigate;
 
   static Future<void> _undo(ProviderContainer container) async {
     if (!container.read(canUndoProvider)) return;
@@ -268,9 +275,16 @@ class AppCommands {
       body: 'It moves to the Trash; the archive keeps its history.',
       confirm: 'Delete',
     );
-    if (answer.confirmed) {
-      await container.read(taskCommandsProvider).delete(task.id);
+    if (!answer.confirmed) return;
+    // The row below takes the selection (else the one above), so the
+    // keyboard stays in the list rather than falling back to the sidebar.
+    final section = container.read(selectedSectionProvider);
+    final tasks = container.read(taskViewProvider(section)).value?.tasks;
+    final next = tasks == null ? null : neighbourOf(tasks, task.id);
+    if (next != null && container.read(selectedTaskProvider) == task.id) {
+      container.read(selectedTaskProvider.notifier).select(next);
     }
+    await container.read(taskCommandsProvider).delete(task.id);
   }
 
   static void _open(ProviderContainer container, FindResult result) {
