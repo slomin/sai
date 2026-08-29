@@ -101,6 +101,8 @@ jobs:
           cache: true
       - name: Resolve the workspace
         run: dart pub get
+      - name: Check the committed app icons
+        run: swift tool/app-icons.swift check
       - name: Test sai_core against the Keychain (macOS only)
         working-directory: packages/sai_core
         run: dart test test/secrets
@@ -112,9 +114,22 @@ jobs:
         working-directory: apps/sai_app
         run: |
           flutter build macos --debug --flavor stable
-          [ "$(/usr/libexec/PlistBuddy -c 'Print :SaiFlavor' build/macos/Build/Products/Debug-stable/sai.app/Contents/Info.plist)" = stable ]
+          stable_app=build/macos/Build/Products/Debug-stable/sai.app
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :SaiFlavor' "$stable_app/Contents/Info.plist")" = stable ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$stable_app/Contents/Info.plist")" = AppIcon-stable ]
+          [ -f "$stable_app/Contents/Resources/AppIcon-stable.icns" ]
+          xcrun assetutil --info "$stable_app/Contents/Resources/Assets.car" | grep -q '"Name" : "AppIcon-stable"'
+          ! xcrun assetutil --info "$stable_app/Contents/Resources/Assets.car" | grep -q '"Name" : "AppIcon-dev"'
+          stable_icon=$(shasum -a 256 "$stable_app/Contents/Resources/AppIcon-stable.icns" | cut -d ' ' -f 1)
           flutter build macos --debug --flavor dev
-          [ "$(/usr/libexec/PlistBuddy -c 'Print :SaiFlavor' build/macos/Build/Products/Debug-dev/sai-dev.app/Contents/Info.plist)" = dev ]
+          dev_app=build/macos/Build/Products/Debug-dev/sai-dev.app
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :SaiFlavor' "$dev_app/Contents/Info.plist")" = dev ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$dev_app/Contents/Info.plist")" = AppIcon-dev ]
+          [ -f "$dev_app/Contents/Resources/AppIcon-dev.icns" ]
+          xcrun assetutil --info "$dev_app/Contents/Resources/Assets.car" | grep -q '"Name" : "AppIcon-dev"'
+          ! xcrun assetutil --info "$dev_app/Contents/Resources/Assets.car" | grep -q '"Name" : "AppIcon-stable"'
+          dev_icon=$(shasum -a 256 "$dev_app/Contents/Resources/AppIcon-dev.icns" | cut -d ' ' -f 1)
+          [ "$stable_icon" != "$dev_icon" ]
       - name: Test the local install against temporary roots
         # tool/install-local.sh (#87) with an ad-hoc-signed fixture
         # release; HOME and every root point into the runner's temp dir.

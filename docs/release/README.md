@@ -178,6 +178,15 @@ tool/release.sh install references/releases/sai-dev-v0.0.1-dev.1-6a8e367
 What an older build finds in a newer archive and settings file is the
 same as for a downloaded release (Rollback, above).
 
+The app icons carry the same identity: stable is the canonical
+near-white/ink/red Sai mark; dev adds the large diagonal green corner.
+The source masters and their prompt provenance are in
+`apps/sai_app/macos/Runner/IconSources/`; from the repository root,
+`swift tool/app-icons.swift prepare` regenerates both committed catalogs
+and `swift tool/app-icons.swift check` proves the sizes are current and
+distinct. Release and local-install builds select the catalog belonging
+to their flavor; the other catalog is not compiled into the bundle.
+
 ## Publishing on GitHub
 
 On the machine that holds the identity:
