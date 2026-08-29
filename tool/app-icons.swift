@@ -190,8 +190,8 @@ private func rgba(_ image: CGImage) throws -> [UInt8] {
   guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
     throw IconToolError.message("cannot create the sRGB comparison space")
   }
-  let created = bytes.withUnsafeMutableBytes { buffer in
-    CGContext(
+  try bytes.withUnsafeMutableBytes { buffer in
+    guard let canvas = CGContext(
       data: buffer.baseAddress,
       width: image.width,
       height: image.height,
@@ -200,16 +200,15 @@ private func rgba(_ image: CGImage) throws -> [UInt8] {
       space: colorSpace,
       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         | CGBitmapInfo.byteOrder32Big.rawValue
+    ) else {
+      throw IconToolError.message("cannot compare a \(image.width) px icon")
+    }
+    canvas.setBlendMode(.copy)
+    canvas.draw(
+      image,
+      in: CGRect(x: 0, y: 0, width: image.width, height: image.height)
     )
   }
-  guard let canvas = created else {
-    throw IconToolError.message("cannot compare a \(image.width) px icon")
-  }
-  canvas.setBlendMode(.copy)
-  canvas.draw(
-    image,
-    in: CGRect(x: 0, y: 0, width: image.width, height: image.height)
-  )
   return bytes
 }
 
