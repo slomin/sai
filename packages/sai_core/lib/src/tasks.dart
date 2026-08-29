@@ -9,6 +9,7 @@ export 'tasks/events.dart';
 export 'tasks/find.dart';
 export 'tasks/lists.dart';
 export 'tasks/model.dart';
+export 'tasks/navigation.dart';
 export 'tasks/projection.dart';
 export 'tasks/sidebar.dart';
 export 'tasks/store.dart';
