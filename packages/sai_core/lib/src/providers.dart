@@ -12,6 +12,7 @@ import 'context/assemble.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
 import 'archive/verify_state.dart';
+import 'llm/call.dart';
 import 'llm/connection.dart';
 import 'llm/failure.dart';
 import 'llm/builtins.dart';
@@ -564,6 +565,196 @@ class ContextWindows extends Notifier<Map<String, int>> {
   void clear(String providerId) {
     if (!state.containsKey(providerId)) return;
     state = Map.unmodifiable({...state}..remove(providerId));
+  }
+}
+
+/// Whether the cache warmer runs at all. Test harnesses switch it off
+/// so a probeable provider in a widget test never fires an inference.
+final warmEnabledProvider = Provider<bool>((ref) => true);
+
+/// How long the catalog must sit unchanged before a warm is sent; null
+/// disables scheduling.
+final warmDebounceProvider = Provider<Duration?>(
+  (ref) => const Duration(seconds: 5),
+);
+
+/// How often the warming fraction is re-estimated; null, no ticking.
+final warmTickEveryProvider = Provider<Duration?>(
+  (ref) => const Duration(seconds: 1),
+);
+
+/// Pre-warms a local endpoint's prompt cache (#105): whenever the
+/// active provider is a reachable local endpoint and the catalog prefix
+/// has changed, [assembleWarmup]'s one-token request goes through the
+/// recorder in the background, so the minutes of prompt ingestion a
+/// large collection costs on a laptop happen before the person asks —
+/// the real turn then reuses the server's cached prefix and starts
+/// fast. Held for the session by the clients' indicator widgets; the
+/// CLI never activates it.
+final cacheWarmerProvider = NotifierProvider<CacheWarmer, WarmState>(
+  CacheWarmer.new,
+);
+
+class CacheWarmer extends Notifier<WarmState> {
+  Timer? _debounce;
+  Timer? _tick;
+  RecordedCall? _call;
+  var _epoch = 0;
+
+  /// The prefix each provider id last warmed (catalog bytes and the
+  /// reasoning flag), so an unchanged prefix is never re-sent.
+  final _warmed = <String, (String, bool?)>{};
+
+  /// The prefix each id last failed on — retried only once something
+  /// changes, so a probe-ok-but-chat-failing endpoint cannot loop.
+  final _failed = <String, (String, bool?)>{};
+
+  /// Measured ingestion per id, in recorded request bytes per second,
+  /// behind the indicator's percentage.
+  final _rates = <String, double>{};
+
+  LlmProvider? _lastProvider;
+
+  @override
+  WarmState build() {
+    _debounce?.cancel();
+    _debounce = null;
+    _tick?.cancel();
+    _tick = null;
+    // A rebuild means an input moved: a running warm's prefix is stale
+    // (or the slot is wanted for a real turn) — the server keeps what
+    // it already ingested either way.
+    _call?.cancel();
+    _call = null;
+    final epoch = ++_epoch;
+    ref.onDispose(() {
+      _epoch++;
+      _debounce?.cancel();
+      _tick?.cancel();
+      _call?.cancel();
+    });
+    if (!ref.watch(warmEnabledProvider)) return const WarmState(WarmPhase.idle);
+    final provider = ref.watch(activeLlmProvider);
+    if (provider == null ||
+        provider.privacy != LlmPrivacy.local ||
+        provider is! LlmEndpointProbe) {
+      return const WarmState(WarmPhase.idle);
+    }
+    if (!identical(provider, _lastProvider)) {
+      // A rebuilt provider is a changed configuration: its endpoint's
+      // cache is not ours to assume.
+      _warmed.remove(provider.id);
+      _failed.remove(provider.id);
+      _lastProvider = provider;
+    }
+    final projection = ref.watch(tasksProvider).value;
+    if (projection == null) return const WarmState(WarmPhase.idle);
+    final connection = ref.watch(connectionProvider);
+    if (connection.level == ConnectionLevel.down) {
+      // A down endpoint may have restarted; what it held is gone.
+      _warmed.remove(provider.id);
+      return const WarmState(WarmPhase.idle);
+    }
+    if (connection.level != ConnectionLevel.ready) {
+      return const WarmState(WarmPhase.idle);
+    }
+    final reasoning = ref.watch(reasoningProvider) ? null : false;
+    final request = assembleWarmup(
+      profile: defaultProfile,
+      projection: projection,
+      today: ref.watch(todayProvider),
+      reasoning: reasoning,
+    );
+    final key = (request.taskContext!, reasoning);
+    // A finished local catalog turn ingested this very prefix; note it
+    // rather than re-sending 35 KB of request line after every answer.
+    ref.listen(chatProvider, (previous, next) {
+      if (previous == null || !previous.busy || next.busy) return;
+      final last = next.turns.isEmpty ? null : next.turns.last;
+      if (last != null &&
+          last.role == ChatRole.assistant &&
+          !last.failed &&
+          last.provenance == TaskProvenance.catalog) {
+        _warmed[provider.id] = key;
+        if (epoch == _epoch) state = const WarmState(WarmPhase.warm);
+      }
+    });
+    if (ref.watch(chatProvider.select((s) => s.busy))) {
+      return const WarmState(WarmPhase.idle);
+    }
+    if (_warmed[provider.id] == key) return const WarmState(WarmPhase.warm);
+    if (_failed[provider.id] == key) return const WarmState(WarmPhase.idle);
+    final debounce = ref.watch(warmDebounceProvider);
+    if (debounce == null) return const WarmState(WarmPhase.idle);
+    _debounce = Timer(debounce, () => _warm(epoch, provider, request, key));
+    return const WarmState(WarmPhase.idle);
+  }
+
+  Future<void> _warm(
+    int epoch,
+    LlmProvider provider,
+    LlmRequest request,
+    (String, bool?) key,
+  ) async {
+    if (epoch != _epoch) return;
+    final container = ref.container;
+    final bytes = recordedRequestBytes(request);
+    final known = _rates[provider.id];
+    final started = DateTime.now();
+    state = WarmState(WarmPhase.warming, fraction: known == null ? null : 0);
+    if (container.read(warmTickEveryProvider) case final every?) {
+      _tick = Timer.periodic(every, (_) {
+        if (epoch != _epoch) return;
+        final rate = _rates[provider.id];
+        if (rate == null) return;
+        final elapsed =
+            DateTime.now().difference(started).inMilliseconds / 1000;
+        state = WarmState(
+          WarmPhase.warming,
+          fraction: (elapsed * rate / bytes).clamp(0.0, 0.99),
+        );
+      });
+    }
+    try {
+      final recorder = await container.read(llmRecorderProvider.future);
+      if (epoch != _epoch) return;
+      final call = await recorder.start(provider, request);
+      if (epoch != _epoch) {
+        call.cancel();
+        return;
+      }
+      _call = call;
+      final result = await call.done;
+      if (epoch != _epoch) return;
+      _tick?.cancel();
+      _call = null;
+      switch (result.finish) {
+        case LlmFinish.failed:
+          _failed[provider.id] = key;
+          // The light learns of transport trouble as it does from a
+          // failed turn.
+          container
+              .read(connectionProvider.notifier)
+              .callFailed(result.failure!);
+          state = const WarmState(WarmPhase.idle);
+        case LlmFinish.cancelled:
+          state = const WarmState(WarmPhase.idle);
+        case LlmFinish.stop || LlmFinish.length:
+          final seconds =
+              DateTime.now().difference(started).inMilliseconds / 1000;
+          if (seconds > 0.001) {
+            final observed = bytes / seconds;
+            final old = _rates[provider.id];
+            _rates[provider.id] = old == null ? observed : (old + observed) / 2;
+          }
+          _warmed[provider.id] = key;
+          state = const WarmState(WarmPhase.warm);
+      }
+    } on Object {
+      // An unrecordable or refused warm is only a lost optimization.
+      _failed[provider.id] = key;
+      if (epoch == _epoch) state = const WarmState(WarmPhase.idle);
+    }
   }
 }
 

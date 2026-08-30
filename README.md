@@ -233,7 +233,13 @@ task in Inbox, Anytime, Someday, projects, Logbook and Trash, with
 notes, checklists, tags and placement — so it can answer questions
 across all of it (#105); its budget follows the context window the
 endpoint reports on probe, with a conservative default until the first
-answer. A cloud provider sees at most Today and Upcoming as you see
+answer. Reading all that in can take a local machine minutes, so sai
+warms the endpoint ahead of time: once the connection is ready (and
+again after your tasks change), the catalog is sent in the background
+with a one-token reply — the status line shows `warming up` with an
+estimate — and your actual question then reuses the server's cached
+prefix and starts fast. Warm-up calls are recorded in the archive like
+any other. A cloud provider sees at most Today and Upcoming as you see
 them, and never the catalog nor answers derived from it, whatever the
 sharing switch says. Both shapes are rendered by one function in
 `sai_core` and carried apart from the messages so the privacy policy

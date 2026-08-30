@@ -155,5 +155,23 @@ Two context shapes now exist, and the follow-ups above landed:
   memory, then refusal; the compact order (turns, Upcoming days,
   memory) and the `dropped` vocabulary are unchanged. A window at or
   under the reply reserve refuses every send, truthfully — no clamping.
+- **Ingestion is expected to take minutes, and is paid in advance.**
+  The first-token deadline grows with the encoded request (one second
+  per 64 bytes over the flat floor — a whole-catalog turn measured
+  3 m 45 s on a 2-bit 27B laptop), so a big first turn is never cut
+  down mid-ingestion. The cache warmer (`cacheWarmerProvider`) sends
+  the shared prefix of every turn — profile and catalog, one reply
+  token, `assembleWarmup` — through the recorder whenever the active
+  local endpoint is ready and the prefix changed (debounced, never
+  while a turn runs, cancelled when one starts; a finished catalog turn
+  counts as the warm), so the endpoint's prompt cache holds the prefix
+  before the person asks and the real turn pays only for its tail. A
+  warm is a recorded call like any other: it carries the catalog, so it
+  goes through ADR 0010's one gate and into the log. The clients show
+  `warming up`, with a percentage estimated from the machine's measured
+  ingestion rate; the CLI never warms. A failed warm is retried only
+  when something changes, and never reaches a cloud provider by
+  construction (the warmer only runs for a `local` endpoint, and the
+  policy would withhold a catalog anyway).
 - Accepted limit: two identical titles in identically-titled containers
   render indistinguishably — ids stay out of the prompt.

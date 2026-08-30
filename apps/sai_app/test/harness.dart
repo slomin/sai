@@ -179,6 +179,9 @@ List<Override> appOverrides({
   // The light probes on selection and on demand, never on a timer
   // here: a periodic timer would outlive the test.
   connectionProbeEveryProvider.overrideWithValue(null),
+  // The band watches the warmer; a test provider must never be sent a
+  // background inference, and its timers would outlive the test (#105).
+  warmEnabledProvider.overrideWithValue(false),
 ];
 
 /// Pumps and lets real async run until [ready] — for a dialog that

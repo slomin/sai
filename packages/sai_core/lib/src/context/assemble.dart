@@ -164,6 +164,30 @@ final class ContextSizeError implements Exception {
       'the archive allows $limit';
 }
 
+/// The shared prefix of every catalog turn as a request of its own
+/// (#105): the profile and the whole catalog, one reply token. Sent
+/// ahead by the cache warmer, it lets a local endpoint ingest and cache
+/// the expensive prefix in the background, so the next real turn pays
+/// only for its own tail. Byte-identical to a turn's leading messages
+/// by construction — same profile, same renderer, same splice — and
+/// [reasoning] mirrors the chat's switch so the served template cannot
+/// differ.
+LlmRequest assembleWarmup({
+  required String profile,
+  required TaskProjection projection,
+  required CalendarDate today,
+  bool? reasoning,
+}) {
+  if (profile.isEmpty) throw ArgumentError('profile must not be empty');
+  return LlmRequest(
+    messages: [LlmMessage(LlmRole.system, profile)],
+    maxTokens: 1,
+    taskContext: taskCatalog(projection, today: today),
+    taskContextProvenance: TaskProvenance.catalog,
+    reasoning: reasoning,
+  );
+}
+
 /// Builds the one request a chat turn sends (ADR 0011). Pure and
 /// deterministic: the same inputs give the same request and hash.
 ///

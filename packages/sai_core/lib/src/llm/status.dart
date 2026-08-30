@@ -38,6 +38,36 @@ String misconfiguredNote(String missing) => 'missing its $missing';
 /// secret store does not hold.
 const missingCredentialSuffix = ' · no key';
 
+/// Where the cache warmer stands (#105): nothing to do, ingesting the
+/// catalog prefix, or the endpoint holds the current prefix.
+enum WarmPhase { idle, warming, warm }
+
+/// The warmer's state, for the clients' indicator. [fraction] estimates
+/// how much of the prompt is ingested, 0..1, while warming — null until
+/// a first completed warm has taught the machine's rate.
+final class WarmState {
+  const WarmState(this.phase, {this.fraction});
+
+  final WarmPhase phase;
+  final double? fraction;
+
+  @override
+  bool operator ==(Object other) =>
+      other is WarmState && other.phase == phase && other.fraction == fraction;
+
+  @override
+  int get hashCode => Object.hash(phase, fraction);
+
+  @override
+  String toString() => 'WarmState(${phase.name}, $fraction)';
+}
+
+/// The words both clients put beside the connection while the catalog
+/// is being ingested; a percentage once the machine's rate is known.
+String warmingWord(double? fraction) => fraction == null
+    ? 'warming up…'
+    : 'warming up ${(fraction * 100).round()}%';
+
 /// Appended when the key is there and bound to this endpoint.
 const setCredentialSuffix = ' · key set';
 
