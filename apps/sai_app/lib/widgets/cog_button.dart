@@ -3,56 +3,32 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../theme/sai_tokens.dart';
+import 'glyph_button.dart';
 
-/// A small cog button — [GlyphButton]'s frame (tooltip, one semantic
-/// button, an ink well) around a drawn cog, because neither bundled face
-/// has U+2699 and an icon font is blank under `flutter test`. [label] is
-/// what assistive tech hears and the tooltip.
+/// A small cog button — the [GlyphFrame] around a drawn cog, because
+/// neither bundled face has U+2699 and an icon font is blank under
+/// `flutter test`. [label] is what assistive tech hears and the tooltip.
 class CogButton extends StatelessWidget {
   const CogButton({
     super.key,
     required this.label,
     required this.onPressed,
     this.color,
-    this.size = 16,
-    this.minSize = 28,
   });
 
   final String label;
   final VoidCallback? onPressed;
   final Color? color;
-  final double size;
-  final double minSize;
 
   @override
   Widget build(BuildContext context) {
     final iconColor = color ?? IconTheme.of(context).color ?? SaiColors.inkDim;
-    return Tooltip(
-      message: label,
-      child: Semantics(
-        button: true,
-        label: label,
-        enabled: onPressed != null,
-        child: ExcludeSemantics(
-          child: InkWell(
-            onTap: onPressed,
-            borderRadius: const BorderRadius.all(
-              Radius.circular(SaiRadius.small),
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minWidth: minSize,
-                minHeight: minSize,
-              ),
-              child: Center(
-                child: CustomPaint(
-                  size: Size.square(size),
-                  painter: _CogPainter(iconColor),
-                ),
-              ),
-            ),
-          ),
-        ),
+    return GlyphFrame(
+      label: label,
+      onPressed: onPressed,
+      child: CustomPaint(
+        size: const Size.square(16),
+        painter: _CogPainter(iconColor),
       ),
     );
   }

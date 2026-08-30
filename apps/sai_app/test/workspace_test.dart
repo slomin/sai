@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -688,6 +689,33 @@ void main() {
       expect(find.byKey(settingsScreenKey), findsNothing);
       expect(FocusManager.instance.primaryFocus?.debugLabel, 'workspace');
     }, variant: macOS);
+
+    testWidgets('assistive tech activates it through its own node', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      final handle = tester.ensureSemantics();
+      await tester.pump();
+      final button = find.descendant(
+        of: find.byKey(settingsButtonKey),
+        matching: find.bySemanticsLabel('Settings'),
+      );
+      expect(
+        tester
+            .getSemantics(button)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      tester.semantics.performAction(
+        find.semantics.byLabel('Settings'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(settingsScreenKey), findsOneWidget);
+      handle.dispose();
+    });
 
     testWidgets('it is a named button the keyboard reaches', (tester) async {
       await pumpApp(tester);
