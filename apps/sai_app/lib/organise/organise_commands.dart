@@ -107,6 +107,29 @@ class OrganiseCommands {
     );
   }
 
+  /// A drop (#98): [area] lands after [after], or first when null. The
+  /// store refuses a stale or foreign anchor, and the notice says so.
+  Future<bool> reorderArea(AreaId area, {required AreaId? after}) =>
+      runStoreCommand(
+        _ref,
+        'reorder',
+        (store) => store.reorderArea(area, after: after),
+      );
+
+  Future<bool> reorderProject(ProjectId project, {required ProjectId? after}) =>
+      runStoreCommand(
+        _ref,
+        'reorder',
+        (store) => store.reorderProject(project, after: after),
+      );
+
+  Future<bool> reorderHeading(HeadingId heading, {required HeadingId? after}) =>
+      runStoreCommand(
+        _ref,
+        'reorder',
+        (store) => store.reorderHeading(heading, after: after),
+      );
+
   Future<bool> nudgeHeading(HeadingId heading, int by) {
     final projection = _projection;
     final target = projection.headings[heading];

@@ -5,6 +5,7 @@ import 'package:sai_core/sai_core.dart';
 
 import '../commands.dart';
 import '../organise/heading_menu.dart';
+import '../organise/organise_commands.dart';
 import '../reorder/reorder.dart';
 import '../widgets/empty_state.dart';
 import 'dates.dart';
@@ -82,8 +83,10 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
   final _ghosts = <TaskId, _Ghost>{};
 
   /// One drag mechanic per section shown (#98), kept across rebuilds so
-  /// a live drag survives the store's emissions.
+  /// a live drag survives the store's emissions — and one for a
+  /// project's headings.
   final _groups = <_SectionKey, ReorderController<TaskId>>{};
+  ReorderController<HeadingId>? _headings;
   var _known = <TaskId>{};
   var _entering = <TaskId>{};
   SidebarSection? _knownSection;
@@ -105,6 +108,8 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         group.dispose();
       }
       _groups.clear();
+      _headings?.dispose();
+      _headings = null;
     }
     _knownSection = widget.view.section;
     // A ghost whose task is back in the view (undo) gives way to the row.
@@ -129,8 +134,22 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     for (final group in _groups.values) {
       group.dispose();
     }
+    _headings?.dispose();
     super.dispose();
   }
+
+  /// The drag group of a project's headings (#98): a drop reorders them
+  /// within the project; a task or a row from elsewhere is refused.
+  ReorderController<HeadingId> _headingGroup(ProjectId project) =>
+      _headings ??= ReorderController<HeadingId>(
+        group: ('headings', project),
+        refusal: 'a heading is ordered within its project',
+        onRefused: (reason) =>
+            ref.read(noticeProvider.notifier).show('reorder failed: $reason'),
+        onDrop: (moved, after) => ref
+            .read(organiseCommandsProvider)
+            .reorderHeading(moved, after: after),
+      );
 
   /// The drag group of the section keyed [key]: a drop is a reorder in
   /// Today's own order or a structural move, the anchor the nearest open
@@ -311,19 +330,38 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         final label = section.kind == TaskViewSectionKind.day
             ? dayGroupLabel(section.day!, today: widget.today)
             : section.title;
-        slivers.add(
-          SliverToBoxAdapter(
-            child: TaskSectionHeader(
-              label: label,
-              meta: _meta(section.tasks.length),
-              trailing:
-                  section.kind == TaskViewSectionKind.heading &&
-                      view.section is ProjectSection
-                  ? HeadingMenu(heading: section.heading!, title: section.title)
-                  : null,
-            ),
-          ),
+        final ownHeading =
+            section.kind == TaskViewSectionKind.heading &&
+            view.section is ProjectSection;
+        Widget header(Widget? handle) => TaskSectionHeader(
+          label: label,
+          meta: _meta(section.tasks.length),
+          leading: handle,
+          trailing: ownHeading
+              ? HeadingMenu(heading: section.heading!, title: section.title)
+              : null,
         );
+        if (ownHeading) {
+          final project = (view.section as ProjectSection).project;
+          final headings = [
+            for (final h in widget.projection.headingsOf(project)) h.id,
+          ];
+          final group = _headingGroup(project)..order = headings;
+          slivers.add(
+            SliverToBoxAdapter(
+              child: ReorderRow<HeadingId>(
+                key: ValueKey('reorder-heading-${section.heading}'),
+                controller: group,
+                id: section.heading!,
+                title: section.title,
+                enabled: headings.length > 1,
+                builder: (context, handle) => header(handle),
+              ),
+            ),
+          );
+        } else {
+          slivers.add(SliverToBoxAdapter(child: header(null)));
+        }
       }
       final canDrag = reorderable(view, section) && items.length > 1;
       ReorderController<TaskId>? group;

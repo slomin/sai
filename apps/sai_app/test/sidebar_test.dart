@@ -2,6 +2,8 @@ import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sai_app/commands.dart';
+import 'package:sai_app/reorder/drag_handle.dart';
 import 'package:sai_app/sidebar.dart';
 import 'package:sai_app/theme/sai_tokens.dart';
 import 'package:sai_core/sai_core.dart';
@@ -84,6 +86,138 @@ void main() {
     expect(find.text('plant'), findsOneWidget);
     expect(find.text('dust'), findsNothing);
     expect(sidebarRow(ProjectSection(album)), findsOneWidget);
+  });
+
+  testWidgets('areas and projects drag within their groups by their '
+      'handles; across groups a drop is refused (#98)', (tester) async {
+    final container = await pumpApp(tester);
+    final store = container.read(tasksProvider.notifier).store;
+    final ids = await tester.runAsync(() async {
+      final home = await store.createArea(title: 'Home');
+      final work = await store.createArea(title: 'Work');
+      final garden = await store.createProject(title: 'Garden', area: home);
+      final kitchen = await store.createProject(title: 'Kitchen', area: home);
+      final report = await store.createProject(title: 'Report', area: work);
+      final album = await store.createProject(title: 'Album');
+      final solo = await store.createProject(title: 'Solo');
+      final old = await store.createProject(title: 'Old');
+      await store.archiveProject(old);
+      return (
+        home: home,
+        work: work,
+        garden: garden,
+        kitchen: kitchen,
+        report: report,
+        album: album,
+        solo: solo,
+        old: old,
+      );
+    });
+    await tester.pump();
+    Finder handleOf(BlobRef id) => find.byKey(dragHandleKey(id));
+    expect(
+      tester
+          .getSemantics(
+            find.descendant(
+              of: handleOf(ids!.home),
+              matching: find.byType(DragHandle),
+            ),
+          )
+          .label,
+      'Drag Home',
+    );
+    // Archived rows carry no handle.
+    expect(handleOf(ids.old), findsNothing);
+
+    // An area above another.
+    await settleEvents(
+      tester,
+      container,
+      () => dragRow(
+        tester,
+        handle: handleOf(ids.work),
+        source: sidebarRow(AreaSection(ids.work)),
+        target: sidebarRow(AreaSection(ids.home)),
+        below: false,
+      ),
+    );
+    expect(
+      archiveLines(container.read(archiveRootProvider)).last,
+      contains('"area.reorder"'),
+    );
+    expect(store.projection.areaOrder, [ids.work, ids.home]);
+    expect(
+      tester.getTopLeft(sidebarRow(AreaSection(ids.work))).dy,
+      lessThan(tester.getTopLeft(sidebarRow(AreaSection(ids.home))).dy),
+    );
+
+    // A project within its area, and a standalone among the standalones.
+    await settleEvents(
+      tester,
+      container,
+      () => dragRow(
+        tester,
+        handle: handleOf(ids.kitchen),
+        source: sidebarRow(ProjectSection(ids.kitchen)),
+        target: sidebarRow(ProjectSection(ids.garden)),
+        below: false,
+      ),
+    );
+    expect(
+      archiveLines(container.read(archiveRootProvider)).last,
+      contains('"project.reorder"'),
+    );
+    await settleEvents(
+      tester,
+      container,
+      () => dragRow(
+        tester,
+        handle: handleOf(ids.solo),
+        source: sidebarRow(ProjectSection(ids.solo)),
+        target: sidebarRow(ProjectSection(ids.album)),
+        below: false,
+      ),
+    );
+    // One sequence serves every group: "first among the standalones" is
+    // first of all, and the sidebar reads each group out of it.
+    expect(store.projection.projectOrder, [
+      ids.solo,
+      ids.kitchen,
+      ids.garden,
+      ids.report,
+      ids.album,
+      ids.old,
+    ]);
+
+    // Garden onto Work's group: no slot, nothing written, the notice.
+    final count = store.projection.eventCount;
+    final gesture = await dragRow(
+      tester,
+      handle: handleOf(ids.garden),
+      source: sidebarRow(ProjectSection(ids.garden)),
+      target: sidebarRow(ProjectSection(ids.report)),
+      release: false,
+    );
+    expect(openGap(), findsNothing);
+    await gesture.up();
+    await tester.pump();
+    await tester.pump();
+    expect(store.projection.eventCount, count);
+    expect(
+      container.read(noticeProvider),
+      'reorder failed: a project is ordered within its area',
+    );
+
+    // The order survives a replay.
+    final replayed = await tester.runAsync(
+      () async => TaskStore.open(
+        await Archive.open(container.read(archiveRootProvider)),
+        source: 'sai/tui',
+      ),
+    );
+    expect(replayed!.projection.areaOrder, [ids.work, ids.home]);
+    expect(replayed.projection.projectOrder, store.projection.projectOrder);
+    replayed.dispose();
   });
 
   testWidgets('the selection survives a capture', (tester) async {

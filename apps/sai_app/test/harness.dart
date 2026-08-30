@@ -358,8 +358,15 @@ Future<TestGesture> dragRow(
   );
   await gesture.moveBy(const Offset(0, 24));
   await tester.pump();
+  // A quarter in from the edge: the pointer, which is what picks the
+  // target, sits a few points off the proxy's centre and must land on
+  // the row too.
   final rect = tester.getRect(target);
-  final aim = Offset(rect.center.dx, below ? rect.bottom - 6 : rect.top + 6);
+  final quarter = rect.height / 4;
+  final aim = Offset(
+    rect.center.dx,
+    below ? rect.bottom - quarter : rect.top + quarter,
+  );
   await gesture.moveTo(aim - toCentre);
   await tester.pump();
   if (release) {
