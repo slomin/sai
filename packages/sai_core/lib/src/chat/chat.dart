@@ -204,6 +204,9 @@ class ChatNotifier extends Notifier<ChatState> {
       );
     } on ContextBudgetError catch (error) {
       return _refuse(error.toString());
+    } on ContextSizeError catch (error) {
+      // Refused before anything was written: no orphan chat.message.
+      return _refuse(error.toString());
     }
 
     final generation = ++_generation;

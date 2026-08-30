@@ -319,6 +319,62 @@ void main() {
         );
       });
     });
+
+    group('the exact-size preflight (#105)', () {
+      // A window so large only the byte ceiling is in play. JSON doubles
+      // a quote character, so the estimate (raw bytes / 4) stays far
+      // under the token budget while the encoded payload crosses the cap.
+      const roomy = ContextBudget(maxTokens: 1000000, replyReserve: 4096);
+      final heavy = '"' * 400000;
+
+      test('escape-heavy history is cut by encoded size', () {
+        final out = assembleContext(
+          profile: 'p',
+          projection: TaskProjection.empty,
+          today: today,
+          history: [
+            LlmMessage(LlmRole.user, heavy),
+            LlmMessage(LlmRole.assistant, heavy),
+            const LlmMessage(LlmRole.user, 'recent'),
+            const LlmMessage(LlmRole.assistant, 'yes'),
+          ],
+          draft: 'now',
+          budget: roomy,
+        );
+        expect(out.dropped, ['turns:2']);
+        expect(
+          recordedRequestBytes(out.request),
+          lessThanOrEqualTo(maxRecordedTextBytes),
+        );
+      });
+
+      test('past every cut it refuses with the exact size', () {
+        expect(
+          () => assembleContext(
+            profile: '"' * 600000,
+            projection: TaskProjection.empty,
+            today: today,
+            history: const [],
+            draft: 'now',
+            budget: roomy,
+          ),
+          throwsA(
+            isA<ContextSizeError>()
+                .having(
+                  (e) => e.bytes,
+                  'bytes',
+                  greaterThan(maxRecordedTextBytes),
+                )
+                .having((e) => e.limit, 'limit', maxRecordedTextBytes)
+                .having(
+                  (e) => e.toString(),
+                  'message',
+                  contains('once recorded'),
+                ),
+          ),
+        );
+      });
+    });
   });
 
   test('estimateTokens rounds four bytes up to a token', () {

@@ -169,6 +169,24 @@ void main() {
     expect(answer.text, isNot(contains('Ring dentist')));
   });
 
+  test('an oversized catalog turn writes no event at all', () async {
+    final container = await make();
+    final store = container.read(tasksProvider.notifier).store;
+    // Escape-heavy notes: the token estimate fits the roomy window, but
+    // the JSON-encoded request crosses the recordable cap — and there is
+    // nothing left to cut, so the send refuses before the user's
+    // chat.message is written (#105).
+    await store.createTask(title: 'Huge', notes: '"' * 400000);
+    final chat = container.read(chatProvider.notifier);
+    chat.budget = const ContextBudget(maxTokens: 1000000, replyReserve: 4096);
+    final before = lines().length;
+    final accepted = await chat.send('what do I have?');
+    expect(accepted, isFalse);
+    expect(container.read(chatProvider).error, contains('once recorded'));
+    expect(container.read(chatProvider).turns, isEmpty);
+    expect(lines().length, before, reason: 'no orphan chat.message');
+  });
+
   test('the conversation carries forward', () async {
     final container = await make();
     final chat = container.read(chatProvider.notifier);

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../llm/call.dart';
+import '../llm/recorder.dart';
 import '../tasks/capture.dart';
 import '../tasks/date.dart';
 import '../tasks/lists.dart';
@@ -145,6 +146,24 @@ final class ContextBudgetError implements Exception {
       'the budget allows ${budget.available}';
 }
 
+/// Thrown when what remains after every permitted cut still encodes past
+/// the archive's recordable size (#105): what cannot be recorded is not
+/// sent — and, measured here in assembly, nothing was written first.
+final class ContextSizeError implements Exception {
+  const ContextSizeError(this.bytes, this.limit);
+
+  /// The exact encoded size of the irreducible request payload.
+  final int bytes;
+
+  /// [maxRecordedTextBytes].
+  final int limit;
+
+  @override
+  String toString() =>
+      'the request would take $bytes bytes once recorded; '
+      'the archive allows $limit';
+}
+
 /// Builds the one request a chat turn sends (ADR 0011). Pure and
 /// deterministic: the same inputs give the same request and hash.
 ///
@@ -193,7 +212,7 @@ AssembledContext assembleContext({
   var keptMemory = memory;
   final dropped = <String>[];
 
-  (LlmRequest, int) build() {
+  (LlmRequest, int, int) build() {
     final tasks =
         catalog ?? taskContextFor(projection, today, upcomingDays: keptDays);
     final notes = keptMemory;
@@ -212,30 +231,38 @@ AssembledContext assembleContext({
       reasoning: reasoning,
     );
     final estimate = request.sent.fold(0, (n, m) => n + estimateTokens(m.text));
-    return (request, estimate);
+    return (request, estimate, recordedRequestBytes(request));
   }
 
-  var (request, estimate) = build();
+  // Two ceilings, deliberately in different units (#105): the token
+  // estimate against the model's window, and the payload's exact encoded
+  // size against what the archive records — measured here, before the
+  // user's line is written, so an oversized turn refuses atomically.
+  var (request, estimate, bytes) = build();
+  bool over() => estimate > budget.available || bytes > maxRecordedTextBytes;
   var droppedTurns = 0;
-  while (estimate > budget.available && keptHistory.isNotEmpty) {
+  while (over() && keptHistory.isNotEmpty) {
     final cut = keptHistory.length >= 2 ? 2 : 1;
     keptHistory = keptHistory.sublist(cut);
     droppedTurns += cut;
-    (request, estimate) = build();
+    (request, estimate, bytes) = build();
   }
   if (droppedTurns > 0) dropped.add('turns:$droppedTurns');
-  while (estimate > budget.available && keptDays > 0) {
+  while (over() && keptDays > 0) {
     keptDays--;
     dropped.add('upcoming:${upcomingDays[keptDays].title}');
-    (request, estimate) = build();
+    (request, estimate, bytes) = build();
   }
-  if (estimate > budget.available && keptMemory != null) {
+  if (over() && keptMemory != null) {
     keptMemory = null;
     dropped.add('memory');
-    (request, estimate) = build();
+    (request, estimate, bytes) = build();
   }
   if (estimate > budget.available) {
     throw ContextBudgetError(estimate, budget);
+  }
+  if (bytes > maxRecordedTextBytes) {
+    throw ContextSizeError(bytes, maxRecordedTextBytes);
   }
   return AssembledContext(
     request: request,

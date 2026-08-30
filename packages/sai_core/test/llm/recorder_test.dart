@@ -492,6 +492,20 @@ void main() {
     expect(lines(), isEmpty);
   });
 
+  test('assembly measures the recorded request to the byte', () async {
+    final request = LlmRequest(
+      messages: const [LlmMessage(LlmRole.user, 'due? — "quoted" ż')],
+      taskContext: 'Today: buy milk',
+    );
+    final call = await recorder.start(FakeLlmProvider(), request);
+    await call.done;
+    final payload = lines()[0]['payload'];
+    expect(
+      utf8.encode(jsonEncode(payload)).length,
+      recordedRequestBytes(request),
+    );
+  });
+
   test('the request line exists before the provider is started', () async {
     final fake = _SpyProvider(() => lines().length);
     final call = await recorder.start(fake, ask('x'));
