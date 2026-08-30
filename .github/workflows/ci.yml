@@ -136,3 +136,4 @@ jobs:
         run: |
           for s in tool/*.sh tool/test/*.sh; do sh -n "$s"; done
           sh tool/test/install_local_test.sh
+          sh tool/test/release_sign_test.sh

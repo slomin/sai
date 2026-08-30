@@ -296,6 +296,7 @@ swift tool/app-icons.swift check         # macOS
 dart build cli -t apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui
 dart build cli -t apps/sai_tui/bin/sai_tui-dev.dart --root-package=sai_tui -o build/tui-dev
 sh tool/test/install_local_test.sh       # the installer, both flavors, against temporary roots
+sh tool/test/release_sign_test.sh        # the signing phase, with a fake security/codesign on PATH
 gitleaks git . --config .gitleaks.toml   # no secret in any commit
 ```
 
