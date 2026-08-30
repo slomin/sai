@@ -568,4 +568,41 @@ void main() {
     expect(await run('reasoning maybe'), cliUsageError);
     expect(err.toString(), contains('reasoning takes on or off'));
   });
+
+  test('finished-tasks shows, sets and refuses (#97)', () async {
+    expect(await run('finished-tasks'), cliOk);
+    expect(
+      out.toString().trim(),
+      finishedTasksLine(FinishedTaskVisibility.endOfDay),
+    );
+    out.clear();
+    expect(await run('finished-tasks immediate'), cliOk);
+    expect(
+      out.toString().trim(),
+      finishedTasksLine(FinishedTaskVisibility.immediate),
+    );
+    expect(
+      container.read(settingsProvider).finishedTaskVisibility,
+      FinishedTaskVisibility.immediate,
+    );
+    expect(
+      jsonDecode(settingsFile().readAsStringSync()),
+      containsPair('finished_task_visibility', 'immediate'),
+    );
+    out.clear();
+    expect(await run('finished-tasks end-of-day'), cliOk);
+    expect(
+      container.read(settingsProvider).finishedTaskVisibility,
+      FinishedTaskVisibility.endOfDay,
+    );
+    expect(
+      jsonDecode(settingsFile().readAsStringSync()),
+      isNot(contains('finished_task_visibility')),
+    );
+    expect(await run('finished-tasks never'), cliUsageError);
+    expect(
+      err.toString(),
+      contains('finished-tasks takes end-of-day or immediate'),
+    );
+  });
 }
