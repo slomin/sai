@@ -204,7 +204,10 @@ names its decision line.
 | `provider.usage` | `finish` ∈ `stop` \| `length` \| `cancelled` \| `failed`, `duration_ms`; optional `prompt_tokens`, `completion_tokens`, `total_tokens`, `tokens_per_second` |
 
 The 1 MiB line cap applies asymmetrically. A request that cannot be
-recorded is not sent (the writer refuses before the call). A response or
+recorded is not sent (the writer refuses before the call) — and the
+chat measures the same encoded size during assembly (#105), so its
+refusal lands before even the user's `chat.message` is written; the
+writer's own check remains for other callers. A response or
 failure whose payload would not fit **once encoded** is recorded with
 `text` cut to a rune boundary until it does and `truncated` set to the
 original byte length (a failure `message` is capped at 4 KiB) — a marked

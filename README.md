@@ -151,7 +151,9 @@ Every provider is tagged `local` or `cloud`, and the tag is always on
 the status line and in `provider list`. A cloud provider sees your task
 list only while the switch "Allow cloud providers to see my tasks" is
 on — off by default, in Settings › Providers or `sai_tui privacy
-share-tasks on|off` (`sai_tui privacy` shows it). While it is off the
+share-tasks on|off` (`sai_tui privacy` shows it) — and the switch
+covers Today and Upcoming only: the complete catalog a local model
+reads, and answers derived from it, never go to the cloud (#105). While it is off the
 status line reads `· tasks withheld`, selecting a cloud provider says
 so, and the assistant answers without the list; each cloud call is
 preceded by a `policy.decision` line in the archive (ADR 0010). An
@@ -226,14 +228,21 @@ and JetBrains Mono, for metadata and code. Light appearance only for now.
 Both clients carry the conversation (#34): the pane in the app (⌘J
 shows and hides it; Enter sends, Esc or **Stop** ends an answer) and
 the lower pane in the TUI (Tab moves between capture and chat; Enter
-sends, Esc stops). The assistant sees Today and Upcoming as you see
-them, rendered by one function in `sai_core` and carried apart from the
-messages so the privacy policy can withhold them (ADR 0011, 0010); it
-reads the list and cannot change it. Every turn is in the archive — the
-user's `chat.message`, the call's `provider.*` lines with a
-`context_hash` of exactly what the model saw, and the assistant's
-`chat.message` naming the model that answered. With a cloud provider
-and sharing off, the answer is marked `tasks withheld`. A model that
+sends, Esc stops). A local model sees your complete collection — every
+task in Inbox, Anytime, Someday, projects, Logbook and Trash, with
+notes, checklists, tags and placement — so it can answer questions
+across all of it (#105); its budget follows the context window the
+endpoint reports on probe, with a conservative default until the first
+answer. A cloud provider sees at most Today and Upcoming as you see
+them, and never the catalog nor answers derived from it, whatever the
+sharing switch says. Both shapes are rendered by one function in
+`sai_core` and carried apart from the messages so the privacy policy
+can withhold them (ADR 0011, 0010); the assistant reads the list and
+cannot change it. Every turn is in the archive — the user's
+`chat.message`, the call's `provider.*` lines with a `context_hash` of
+exactly what the model saw, and the assistant's `chat.message` naming
+the model that answered. With a cloud provider and sharing off, the
+answer is marked `tasks withheld`. A model that
 thinks before it answers (LM Studio's reasoning models do) is asked not
 to unless the reasoning switch is on — in Settings › Providers, View ›
 **Enable Reasoning** (⌘R), or `sai_tui reasoning on`; off is faster and
