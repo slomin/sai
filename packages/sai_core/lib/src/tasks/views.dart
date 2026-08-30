@@ -80,14 +80,28 @@ final class TaskView {
 }
 
 /// Builds the shared view for [section] from one projection snapshot.
+///
+/// [visibility] is the finished-task policy (#97): under
+/// [FinishedTaskVisibility.endOfDay] every working section keeps a task
+/// finished today at its position, greyed by the client; the Trash and
+/// the Logbook are what they are either way.
 TaskView taskView(
   TaskProjection projection,
   SidebarSection section, {
   required CalendarDate today,
+  FinishedTaskVisibility visibility = FinishedTaskVisibility.immediate,
 }) {
   final title = sectionTitle(projection, section);
+  final retaining = visibility == FinishedTaskVisibility.endOfDay
+      ? today
+      : null;
   final sections = switch (section) {
-    ListSection(:final list) => _listSections(projection, list, today),
+    ListSection(:final list) => _listSections(
+      projection,
+      list,
+      today,
+      visibility,
+    ),
     TrashSection() => [
       TaskViewSection(
         kind: TaskViewSectionKind.flat,
@@ -95,16 +109,17 @@ TaskView taskView(
         tasks: projection.trash(),
       ),
     ],
-    AreaSection(:final area) => _areaSections(projection, area),
+    AreaSection(:final area) => _areaSections(projection, area, retaining),
     ProjectSection(:final project) => _selectedProjectSections(
       projection,
       project,
+      retaining,
     ),
     TagSection(:final tag) => [
       TaskViewSection(
         kind: TaskViewSectionKind.flat,
         title: title,
-        tasks: projection.withTag(tag),
+        tasks: projection.withTag(tag, retaining: retaining),
       ),
     ],
   };
@@ -115,26 +130,32 @@ List<TaskViewSection> _listSections(
   TaskProjection projection,
   TaskList list,
   CalendarDate today,
+  FinishedTaskVisibility visibility,
 ) => switch (list) {
   TaskList.inbox || TaskList.today => [
     TaskViewSection(
       kind: TaskViewSectionKind.flat,
       title: listTitle(list),
-      tasks: projection.list(list, today: today),
+      tasks: projection.list(list, today: today, visibility: visibility),
     ),
   ],
-  TaskList.upcoming => _upcomingSections(projection, today),
+  TaskList.upcoming => _upcomingSections(projection, today, visibility),
   TaskList.anytime ||
-  TaskList.someday => _hierarchySections(projection, list, today),
+  TaskList.someday => _hierarchySections(projection, list, today, visibility),
   TaskList.logbook => _logbookSections(projection, today),
 };
 
 List<TaskViewSection> _upcomingSections(
   TaskProjection projection,
   CalendarDate today,
+  FinishedTaskVisibility visibility,
 ) {
   final days = <CalendarDate, List<Task>>{};
-  for (final task in projection.list(TaskList.upcoming, today: today)) {
+  for (final task in projection.list(
+    TaskList.upcoming,
+    today: today,
+    visibility: visibility,
+  )) {
     final start = switch (task.when) {
       TaskWhenDate(:final date) when date > today => date,
       _ => null,
@@ -180,10 +201,13 @@ List<TaskViewSection> _hierarchySections(
   TaskProjection projection,
   TaskList list,
   CalendarDate today,
+  FinishedTaskVisibility visibility,
 ) {
-  final included = {
-    for (final task in projection.list(list, today: today)) task.id,
-  };
+  final retaining = visibility == FinishedTaskVisibility.endOfDay
+      ? today
+      : null;
+  final listed = projection.list(list, today: today, visibility: visibility);
+  final included = {for (final task in listed) task.id};
   List<Task> keep(Iterable<Task> tasks) => [
     for (final task in tasks)
       if (included.contains(task.id)) task,
@@ -195,14 +219,10 @@ List<TaskViewSection> _hierarchySections(
       kind: TaskViewSectionKind.loose,
       title: listTitle(list),
       tasks: keep(
-        projection
-            .list(list, today: today)
-            .where(
-              (task) =>
-                  task.project == null &&
-                  task.area == null &&
-                  task.heading == null,
-            ),
+        listed.where(
+          (task) =>
+              task.project == null && task.area == null && task.heading == null,
+        ),
       ),
     ),
   ];
@@ -214,22 +234,26 @@ List<TaskViewSection> _hierarchySections(
         kind: TaskViewSectionKind.area,
         title: model.title,
         area: area,
-        tasks: keep(projection.inArea(area)),
+        tasks: keep(projection.inArea(area, retaining: retaining)),
       ),
     );
     for (final projectRow in areaRow.projects) {
       final project = (projectRow.section as ProjectSection).project;
-      sections.addAll(_projectSections(projection, project, keep));
+      sections.addAll(_projectSections(projection, project, keep, retaining));
     }
   }
   for (final projectRow in sidebar.projects) {
     final project = (projectRow.section as ProjectSection).project;
-    sections.addAll(_projectSections(projection, project, keep));
+    sections.addAll(_projectSections(projection, project, keep, retaining));
   }
   return sections;
 }
 
-List<TaskViewSection> _areaSections(TaskProjection projection, AreaId area) {
+List<TaskViewSection> _areaSections(
+  TaskProjection projection,
+  AreaId area,
+  CalendarDate? retaining,
+) {
   final model = projection.areas[area];
   if (model == null || model.deletedAt != null) return const [];
   final sections = <TaskViewSection>[
@@ -237,7 +261,7 @@ List<TaskViewSection> _areaSections(TaskProjection projection, AreaId area) {
       kind: TaskViewSectionKind.area,
       title: model.title,
       area: area,
-      tasks: projection.inArea(area, archived: true),
+      tasks: projection.inArea(area, archived: true, retaining: retaining),
     ),
   ];
   final projects = [
@@ -246,7 +270,12 @@ List<TaskViewSection> _areaSections(TaskProjection projection, AreaId area) {
   ];
   for (final project in projects) {
     sections.addAll(
-      _projectSections(projection, project.id, (tasks) => tasks.toList()),
+      _projectSections(
+        projection,
+        project.id,
+        (tasks) => tasks.toList(),
+        retaining,
+      ),
     );
   }
   return sections;
@@ -255,19 +284,30 @@ List<TaskViewSection> _areaSections(TaskProjection projection, AreaId area) {
 List<TaskViewSection> _selectedProjectSections(
   TaskProjection projection,
   ProjectId project,
+  CalendarDate? retaining,
 ) {
   final model = projection.projects[project];
   if (model == null || model.deletedAt != null) return const [];
-  return _projectSections(projection, project, (tasks) => tasks.toList());
+  return _projectSections(
+    projection,
+    project,
+    (tasks) => tasks.toList(),
+    retaining,
+  );
 }
 
 List<TaskViewSection> _projectSections(
   TaskProjection projection,
   ProjectId projectId,
   List<Task> Function(Iterable<Task>) keep,
+  CalendarDate? retaining,
 ) {
   final project = projection.projects[projectId]!;
-  final all = projection.inProject(projectId, archived: true);
+  final all = projection.inProject(
+    projectId,
+    archived: true,
+    retaining: retaining,
+  );
   final sections = <TaskViewSection>[
     TaskViewSection(
       kind: TaskViewSectionKind.project,

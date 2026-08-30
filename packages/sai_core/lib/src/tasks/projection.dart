@@ -141,11 +141,20 @@ final class TaskProjection implements UndoState {
   /// v0.1 order (manual ordering is #20). A task whose project, area or
   /// heading is deleted is hidden here — that is container visibility,
   /// deliberately outside the pure list rules.
-  List<Task> list(TaskList list, {required CalendarDate today}) =>
-      _sorted(list, [
-        for (final task in tasks.values)
-          if (_visible(task) && listsOf(task, today).contains(list)) task,
-      ]);
+  ///
+  /// Under [FinishedTaskVisibility.endOfDay] a task finished today stays
+  /// in its working lists (#97, [isRetained]); the default hands out open
+  /// tasks only, so counts and the assistant's context cannot drift.
+  List<Task> list(
+    TaskList list, {
+    required CalendarDate today,
+    FinishedTaskVisibility visibility = FinishedTaskVisibility.immediate,
+  }) => _sorted(list, [
+    for (final task in tasks.values)
+      if (_visible(task) &&
+          listsOf(task, today, visibility: visibility).contains(list))
+        task,
+  ]);
 
   /// Deleted tasks, newest deletion first. The Trash is a query, not a list.
   List<Task> trash() {
@@ -163,34 +172,58 @@ final class TaskProjection implements UndoState {
   /// Open, undeleted tasks placed in [id] (directly or under one of its
   /// headings), visible containers only, in structural order. With
   /// [archived] the container's own archived state is overlooked, so an
-  /// archived project selected in the sidebar still shows its tasks.
-  List<Task> inProject(ProjectId id, {bool archived = false}) =>
-      _placed((t) => t.project == id, archived: archived);
+  /// archived project selected in the sidebar still shows its tasks. With
+  /// [retaining] — the current local day — tasks finished on that day
+  /// are kept beside the open ones (#97, [isRetained]).
+  List<Task> inProject(
+    ProjectId id, {
+    bool archived = false,
+    CalendarDate? retaining,
+  }) =>
+      _placed((t) => t.project == id, archived: archived, retaining: retaining);
 
   /// Open, undeleted tasks placed directly in area [id], visible
   /// containers only.
-  List<Task> inArea(AreaId id, {bool archived = false}) =>
-      _placed((t) => t.area == id, archived: archived);
+  List<Task> inArea(
+    AreaId id, {
+    bool archived = false,
+    CalendarDate? retaining,
+  }) => _placed((t) => t.area == id, archived: archived, retaining: retaining);
 
   /// Open, undeleted tasks under heading [id], visible containers only.
-  List<Task> underHeading(HeadingId id, {bool archived = false}) =>
-      _placed((t) => t.heading == id, archived: archived);
+  List<Task> underHeading(
+    HeadingId id, {
+    bool archived = false,
+    CalendarDate? retaining,
+  }) =>
+      _placed((t) => t.heading == id, archived: archived, retaining: retaining);
 
   /// Open, undeleted tasks carrying [tag], visible containers only, in
   /// structural order — the tag view Quick Find opens (#76). Tasks parked
   /// in an archived container stay out unless [archived] says otherwise.
-  List<Task> withTag(TagId tag, {bool archived = false}) =>
-      _placed((t) => t.tags.contains(tag), archived: archived);
+  List<Task> withTag(
+    TagId tag, {
+    bool archived = false,
+    CalendarDate? retaining,
+  }) => _placed(
+    (t) => t.tags.contains(tag),
+    archived: archived,
+    retaining: retaining,
+  );
 
-  List<Task> _placed(bool Function(Task) where, {required bool archived}) =>
-      _ordered(structuralOrder, [
-        for (final task in tasks.values)
-          if (task.deletedAt == null &&
-              task.status == TaskStatus.open &&
-              _visible(task, archived: archived) &&
-              where(task))
-            task,
-      ]);
+  List<Task> _placed(
+    bool Function(Task) where, {
+    required bool archived,
+    required CalendarDate? retaining,
+  }) => _ordered(structuralOrder, [
+    for (final task in tasks.values)
+      if (task.deletedAt == null &&
+          (task.status == TaskStatus.open ||
+              (retaining != null && isRetained(task, retaining))) &&
+          _visible(task, archived: archived) &&
+          where(task))
+        task,
+  ]);
 
   /// Whether [task]'s containers show it: none deleted, and — unless the
   /// caller is looking at an [archived] container on purpose — none

@@ -1,6 +1,7 @@
 import 'dart:collection';
 import 'dart:convert';
 
+import '../tasks/lists.dart';
 import 'provider_config.dart';
 import 'workspace.dart';
 
@@ -39,6 +40,7 @@ final class Settings {
     this.reasoningOn = false,
     this.workspace = WorkspaceState.empty,
     this.setupDone = false,
+    this.finishedTaskVisibility = FinishedTaskVisibility.endOfDay,
     this.problem,
     this.extra = const {},
   });
@@ -75,6 +77,11 @@ final class Settings {
   /// an untouched first launch writes nothing — and never unset.
   final bool setupDone;
 
+  /// When a finished task leaves its working views (#97): end of the
+  /// local day by default, so the day stays reviewable; immediate keeps
+  /// the confirm-and-collapse.
+  final FinishedTaskVisibility finishedTaskVisibility;
+
   /// The configured provider with [id], or null.
   ProviderConfig? provider(String id) {
     for (final p in providers) {
@@ -99,6 +106,7 @@ final class Settings {
     reasoningOn: reasoningOn,
     workspace: workspace,
     setupDone: setupDone,
+    finishedTaskVisibility: finishedTaskVisibility,
     extra: extra,
   );
 
@@ -111,6 +119,7 @@ final class Settings {
     reasoningOn: show,
     workspace: workspace,
     setupDone: setupDone,
+    finishedTaskVisibility: finishedTaskVisibility,
     extra: extra,
   );
 
@@ -123,6 +132,7 @@ final class Settings {
     reasoningOn: reasoningOn,
     workspace: workspace,
     setupDone: setupDone,
+    finishedTaskVisibility: finishedTaskVisibility,
     extra: extra,
   );
 
@@ -141,6 +151,7 @@ final class Settings {
       reasoningOn: reasoningOn,
       workspace: workspace,
       setupDone: setupDone,
+      finishedTaskVisibility: finishedTaskVisibility,
       extra: extra,
     );
   }
@@ -157,6 +168,7 @@ final class Settings {
     reasoningOn: reasoningOn,
     workspace: workspace,
     setupDone: setupDone,
+    finishedTaskVisibility: finishedTaskVisibility,
     extra: extra,
   );
 
@@ -169,6 +181,7 @@ final class Settings {
     reasoningOn: reasoningOn,
     workspace: state,
     setupDone: setupDone,
+    finishedTaskVisibility: finishedTaskVisibility,
     extra: extra,
   );
 
@@ -181,8 +194,23 @@ final class Settings {
     reasoningOn: reasoningOn,
     workspace: workspace,
     setupDone: true,
+    finishedTaskVisibility: finishedTaskVisibility,
     extra: extra,
   );
+
+  /// The same settings with the finished-task policy set (#97). Clears
+  /// [problem] like [withLlm].
+  Settings withFinishedTaskVisibility(FinishedTaskVisibility visibility) =>
+      Settings(
+        llm: llm,
+        providers: providers,
+        shareTasksWithCloud: shareTasksWithCloud,
+        reasoningOn: reasoningOn,
+        workspace: workspace,
+        setupDone: setupDone,
+        finishedTaskVisibility: visibility,
+        extra: extra,
+      );
 
   /// Parses the file's text. Throws [SettingsFormatException] on anything
   /// that is not a v0 settings object and [NewerSettingsVersion] on a
@@ -219,6 +247,12 @@ final class Settings {
     if (reasoning != null && reasoning is! bool) {
       throw const SettingsFormatException('reasoning must be a boolean');
     }
+    final finished = json[finishedTaskVisibilityKey];
+    if (finished != null && finished is! String) {
+      throw const SettingsFormatException(
+        'finished_task_visibility must be end_of_day or immediate',
+      );
+    }
     final rawProviders = json['providers'];
     if (rawProviders != null && rawProviders is! List) {
       throw const SettingsFormatException('providers must be a list');
@@ -242,6 +276,13 @@ final class Settings {
       // Read leniently like the workspace: a value this sai does not
       // know is "not done", and, being a known key, it is not carried.
       setupDone: json['setup'] == setupDoneValue,
+      // A word this sai does not know is the default, and, being a known
+      // key, it is not carried either.
+      finishedTaskVisibility:
+          (finished == null
+              ? null
+              : FinishedTaskVisibility.fromWire(finished as String)) ??
+          FinishedTaskVisibility.endOfDay,
       extra: {
         for (final e in json.entries)
           if (!_known.contains(e.key)) e.key: e.value,
@@ -257,7 +298,11 @@ final class Settings {
     'reasoning',
     'workspace',
     'setup',
+    finishedTaskVisibilityKey,
   };
+
+  /// The key holding [finishedTaskVisibility].
+  static const finishedTaskVisibilityKey = 'finished_task_visibility';
 
   /// What `setup` holds once first-run setup is complete.
   static const setupDoneValue = 'done';
@@ -294,6 +339,8 @@ final class Settings {
       if (reasoningOn) 'reasoning': true,
       if (!workspace.isEmpty) 'workspace': workspace.toJson(),
       if (setupDone) 'setup': setupDoneValue,
+      if (finishedTaskVisibility != FinishedTaskVisibility.endOfDay)
+        finishedTaskVisibilityKey: finishedTaskVisibility.wireName,
     }),
   );
 }
