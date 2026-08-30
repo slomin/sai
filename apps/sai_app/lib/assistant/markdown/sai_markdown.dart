@@ -7,6 +7,7 @@ library;
 import 'package:flutter/widgets.dart';
 import 'package:markdown/markdown.dart' as md;
 
+import '../selection_join.dart';
 import 'markdown_blocks.dart';
 import 'markdown_inline.dart';
 
@@ -59,13 +60,17 @@ class _SaiMarkdownState extends State<SaiMarkdown> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: markdownBlocks(
-        _nodes,
-        MarkdownStyles(widget.style),
-        caret: widget.caret,
+    // Blocks copy as paragraphs: a blank line between them (#99).
+    return SelectionJoin(
+      separator: '\n\n',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: markdownBlocks(
+          _nodes,
+          MarkdownStyles(widget.style),
+          caret: widget.caret,
+        ),
       ),
     );
   }

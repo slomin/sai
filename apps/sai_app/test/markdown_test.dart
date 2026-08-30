@@ -3,6 +3,7 @@
 /// pump [SaiMarkdown] directly — no app, no archive.
 library;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -256,6 +257,65 @@ no language here
       matchesGoldenFile('goldens/assistant-markdown.png'),
     );
   });
+
+  testWidgets('a selection across blocks copies paragraphs and items', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        calls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: saiTheme(),
+        home: Scaffold(
+          body: SelectionArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: SaiMarkdown(
+                '# Plan\n\nOne **bold** step.\n\n1. first\n2. second\n\n'
+                '```\ncode\n```',
+                style: _body,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final gesture = await tester.startGesture(
+      tester.getTopLeft(find.text('Plan')) - const Offset(2, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(2, 0));
+    await tester.pump();
+    await gesture.moveTo(
+      tester.getBottomRight(find.text('code')) + const Offset(4, 0),
+    );
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+    final copy = calls.singleWhere((c) => c.method == 'Clipboard.setData');
+    expect(
+      (copy.arguments as Map)['text'],
+      'Plan\n\nOne bold step.\n\n1. first\n2. second\n\ncode',
+    );
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('a streaming turn matches its golden', (tester) async {
     await pumpMarkdown(

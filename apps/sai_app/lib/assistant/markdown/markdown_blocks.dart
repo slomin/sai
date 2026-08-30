@@ -4,6 +4,7 @@ library;
 import 'package:flutter/widgets.dart';
 import 'package:markdown/markdown.dart' as md;
 
+import '../selection_join.dart';
 import 'code_block.dart';
 import 'markdown_inline.dart';
 
@@ -110,33 +111,40 @@ Widget _list(
       if (child is md.Element && child.tag == 'li') child,
   ];
   final start = int.tryParse(element.attributes['start'] ?? '') ?? 1;
-  return Column(
-    mainAxisSize: MainAxisSize.min,
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      for (var i = 0; i < items.length; i++) ...[
-        if (i > 0) const SizedBox(height: 4),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 24,
-              child: Text(
-                ordered ? '${start + i}.' : '•',
-                style: styles.body.merge(MarkdownStyles.marker),
-              ),
+  // Items copy one per line, each after its marker (#99).
+  return SelectionJoin(
+    separator: '\n',
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0) const SizedBox(height: 4),
+          SelectionJoin(
+            separator: ' ',
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 24,
+                  child: Text(
+                    ordered ? '${start + i}.' : '•',
+                    style: styles.body.merge(MarkdownStyles.marker),
+                  ),
+                ),
+                Expanded(
+                  child: _listItem(
+                    items[i],
+                    styles,
+                    caret: caret && i == items.length - 1,
+                  ),
+                ),
+              ],
             ),
-            Expanded(
-              child: _listItem(
-                items[i],
-                styles,
-                caret: caret && i == items.length - 1,
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ],
-    ],
+    ),
   );
 }
 

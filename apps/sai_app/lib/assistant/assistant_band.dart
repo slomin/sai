@@ -9,6 +9,7 @@ import '../theme/sai_tokens.dart';
 import 'chat_composer.dart';
 import 'chat_keys.dart';
 import 'markdown/sai_markdown.dart';
+import 'selection_join.dart';
 import 'waiting_dots.dart';
 
 export 'chat_keys.dart';
@@ -233,27 +234,37 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
                       controller: _scroll,
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       children: [
-                        for (final turn in state.turns)
-                          _TurnRow(turn, reasoningOn: reasoningOn),
-                        if (state.busy)
-                          _Row(
-                            who: 'sai',
-                            reasoning: reasoningOn ? state.reasoning : null,
-                            text: state.streaming!,
-                            leading: state.streaming!.isEmpty
-                                ? WaitingDots(
-                                    key: chatWaitingKey,
-                                    label: state.reasoning == null
-                                        ? 'Waiting for sai'
-                                        : 'sai is thinking',
-                                  )
-                                : null,
-                            markdown: true,
-                            caret: true,
-                            note: state.tasksWithheld
-                                ? tasksWithheldWord
-                                : null,
+                        SelectionJoin(
+                          separator: '\n\n',
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (final turn in state.turns)
+                                _TurnRow(turn, reasoningOn: reasoningOn),
+                              if (state.busy)
+                                _Row(
+                                  who: 'sai',
+                                  reasoning: reasoningOn
+                                      ? state.reasoning
+                                      : null,
+                                  text: state.streaming!,
+                                  leading: state.streaming!.isEmpty
+                                      ? WaitingDots(
+                                          key: chatWaitingKey,
+                                          label: state.reasoning == null
+                                              ? 'Waiting for sai'
+                                              : 'sai is thinking',
+                                        )
+                                      : null,
+                                  markdown: true,
+                                  caret: true,
+                                  note: state.tasksWithheld
+                                      ? tasksWithheldWord
+                                      : null,
+                                ),
+                            ],
                           ),
+                        ),
                       ],
                     ),
                   ),
@@ -330,33 +341,36 @@ class _Row extends StatelessWidget {
     final mine = who == 'you';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            (note == null ? who : '$who · $note'),
-            style: styles.eyebrowDim.copyWith(
-              color: mine ? SaiColors.sheetDim : SaiColors.red,
-            ),
-          ),
-          const SizedBox(height: 4),
-          if (reasoning case final reasoning?)
+      child: SelectionJoin(
+        separator: '\n',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Text(
-              reasoning,
-              key: chatReasoningKey,
-              style: styles.small.copyWith(
-                color: SaiColors.sheetDim,
-                fontStyle: FontStyle.italic,
+              (note == null ? who : '$who · $note'),
+              style: styles.eyebrowDim.copyWith(
+                color: mine ? SaiColors.sheetDim : SaiColors.red,
               ),
             ),
-          ?leading,
-          if (text.isNotEmpty)
-            markdown
-                ? SaiMarkdown(text, style: bodyStyle, caret: caret)
-                : Text(text, style: bodyStyle),
-          if (error case final error?)
-            Text(error, style: styles.small.copyWith(color: SaiColors.red)),
-        ],
+            const SizedBox(height: 4),
+            if (reasoning case final reasoning?)
+              Text(
+                reasoning,
+                key: chatReasoningKey,
+                style: styles.small.copyWith(
+                  color: SaiColors.sheetDim,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ?leading,
+            if (text.isNotEmpty)
+              markdown
+                  ? SaiMarkdown(text, style: bodyStyle, caret: caret)
+                  : Text(text, style: bodyStyle),
+            if (error case final error?)
+              Text(error, style: styles.small.copyWith(color: SaiColors.red)),
+          ],
+        ),
       ),
     );
   }

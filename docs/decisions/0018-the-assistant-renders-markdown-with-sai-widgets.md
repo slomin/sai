@@ -50,7 +50,14 @@ workspace is deliberately dependency-lean.
   The transcript sits under a `SelectionArea`: a mouse drag selects
   across a person's plain text and the rendered spans alike and ⌘C
   copies exactly that text; a fence's label and copy control are
-  chrome, excluded from selection. Between a question and its first
+  chrome, excluded from selection. Flutter joins the selected pieces of
+  adjacent widgets back to back, so a `SelectionJoin` container (a
+  `StaticSelectionContainerDelegate` that joins with a separator) sits
+  around the rows inside the list — the scroll view is one selectable
+  to its parent — and around each turn, each Markdown body and each
+  list: a copy reads as the transcript does, a line break after an
+  eyebrow, a blank line between paragraphs and between turns, one
+  item per line after its marker. Between a question and its first
   delta the band shows three dots that breathe in turn; under Reduce
   Motion they hold still beside the word *Thinking*.
 - **What CommonMark itself reflows is accepted:** `**bo` is literal

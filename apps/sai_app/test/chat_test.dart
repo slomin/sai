@@ -724,6 +724,28 @@ void main() {
         expect(copied(), 'bold and code here');
       }, variant: macOS);
 
+      testWidgets('a sweep across turns copies them as they read', (
+        tester,
+      ) async {
+        fake = FakeLlmProvider(script: (_) => 'first line\n\n- one\n- two');
+        final container = await ready(tester);
+        await ask(tester, 'hello');
+        await until(
+          tester,
+          () => container.read(chatProvider).turns.length == 2,
+        );
+        final from = find.text('hello');
+        final to = find.text('two');
+        expect(to, findsOneWidget, reason: screen());
+        await selectByMouse(
+          tester,
+          tester.getTopLeft(from) - const Offset(4, 0),
+          tester.getBottomRight(to) + const Offset(4, 0),
+        );
+        await chord(tester, LogicalKeyboardKey.keyC);
+        expect(copied(), 'hello\n\nsai\nfirst line\n\n• one\n• two');
+      }, variant: macOS);
+
       testWidgets('a fence copies its code; its label and button stay out', (
         tester,
       ) async {
