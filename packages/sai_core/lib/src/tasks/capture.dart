@@ -111,8 +111,12 @@ final class CaptureSection {
   final String name;
   final List<Task> tasks;
 
-  /// The header both clients render, e.g. `Inbox (2)`.
-  String get label => '$name (${tasks.length})';
+  /// The header both clients render, e.g. `Inbox (2)` — open tasks only:
+  /// a retained finished row (#97) is shown, never counted.
+  String get label => '$name ($openCount)';
+
+  /// How many of [tasks] are still open.
+  int get openCount => tasks.where((t) => t.status == TaskStatus.open).length;
 }
 
 /// The sections the capture surfaces render (#19), in a fixed order
@@ -120,18 +124,24 @@ final class CaptureSection {
 /// Upcoming, Someday. The view unions of [TaskProjection.list] apply, so
 /// a task can show in more than one section — an Inbox task with a
 /// future deadline is also Upcoming. All-empty means show the empty
-/// state. Shared here so the clients cannot drift apart.
+/// state. Shared here so the clients cannot drift apart. [visibility] is
+/// the finished-task policy (#97): under end-of-day a task finished today
+/// stays in its section.
 List<CaptureSection> captureSections(
   TaskProjection projection,
-  CalendarDate today,
-) => [
+  CalendarDate today, {
+  FinishedTaskVisibility visibility = FinishedTaskVisibility.immediate,
+}) => [
   for (final list in [
     TaskList.inbox,
     TaskList.today,
     TaskList.upcoming,
     TaskList.someday,
   ])
-    CaptureSection(listTitle(list), projection.list(list, today: today)),
+    CaptureSection(
+      listTitle(list),
+      projection.list(list, today: today, visibility: visibility),
+    ),
 ];
 
 final _whitespace = RegExp(r'\s');

@@ -9,9 +9,11 @@ import 'package:sai_app/sidebar.dart';
 import 'package:sai_app/theme/sai_tokens.dart';
 import 'package:sai_app/top_bar.dart';
 import 'package:sai_app/widgets/cog_button.dart';
+import 'package:sai_app/widgets/check_mark.dart';
 import 'package:sai_app/widgets/chip.dart';
 import 'package:sai_app/widgets/empty_state.dart';
 import 'package:sai_app/widgets/glyph_button.dart';
+import 'package:sai_app/widgets/sai_dialog.dart';
 import 'package:sai_app/workspace/task_list.dart';
 import 'package:sai_app/workspace/task_row.dart';
 import 'package:sai_app/workspace/task_row_chips.dart';
@@ -282,7 +284,10 @@ void main() {
     testWidgets('the check completes the task and the row leaves', (
       tester,
     ) async {
-      final container = await pumpApp(tester);
+      final container = await pumpApp(
+        tester,
+        finishedTasks: FinishedTaskVisibility.immediate,
+      );
       await selectSection(tester, container, inbox);
       await capture(tester, container, 'Buy oat milk');
       await capture(tester, container, 'Water the plants');
@@ -303,7 +308,10 @@ void main() {
     });
 
     testWidgets('undo brings the row back where it was', (tester) async {
-      final container = await pumpApp(tester);
+      final container = await pumpApp(
+        tester,
+        finishedTasks: FinishedTaskVisibility.immediate,
+      );
       await selectSection(tester, container, inbox);
       for (final title in ['One', 'Two', 'Three']) {
         await capture(tester, container, title);
@@ -324,7 +332,10 @@ void main() {
     });
 
     testWidgets('the cross cancels the task', (tester) async {
-      final container = await pumpApp(tester);
+      final container = await pumpApp(
+        tester,
+        finishedTasks: FinishedTaskVisibility.immediate,
+      );
       await selectSection(tester, container, inbox);
       await capture(tester, container, 'Buy oat milk');
       final id = container.read(tasksProvider).value!.tasks.keys.single;
@@ -377,7 +388,11 @@ void main() {
     testWidgets('a new row grows in; a finished row confirms, then collapses', (
       tester,
     ) async {
-      final container = await pumpApp(tester, reduceMotion: false);
+      final container = await pumpApp(
+        tester,
+        reduceMotion: false,
+        finishedTasks: FinishedTaskVisibility.immediate,
+      );
       await selectSection(tester, container, inbox);
       await capture(tester, container, 'One');
       await capture(tester, container, 'Two');
@@ -412,7 +427,11 @@ void main() {
     testWidgets('a day that empties keeps its ghost under that day', (
       tester,
     ) async {
-      final container = await pumpApp(tester, reduceMotion: false);
+      final container = await pumpApp(
+        tester,
+        reduceMotion: false,
+        finishedTasks: FinishedTaskVisibility.immediate,
+      );
       final store = container.read(tasksProvider.notifier).store;
       final day = container.read(todayProvider);
       late TaskId soon;
@@ -447,7 +466,11 @@ void main() {
     testWidgets('the last row confirms before the empty state shows', (
       tester,
     ) async {
-      final container = await pumpApp(tester, reduceMotion: false);
+      final container = await pumpApp(
+        tester,
+        reduceMotion: false,
+        finishedTasks: FinishedTaskVisibility.immediate,
+      );
       await selectSection(tester, container, inbox);
       await capture(tester, container, 'Only one');
       await tester.pump(SaiDurations.enter);
@@ -464,7 +487,11 @@ void main() {
     });
 
     testWidgets('a ghost stays in the view it left', (tester) async {
-      final container = await pumpApp(tester, reduceMotion: false);
+      final container = await pumpApp(
+        tester,
+        reduceMotion: false,
+        finishedTasks: FinishedTaskVisibility.immediate,
+      );
       final store = container.read(tasksProvider.notifier).store;
       final day = container.read(todayProvider);
       late TaskId id;
@@ -509,6 +536,229 @@ void main() {
       await selectSection(tester, container, inbox);
       expect(tester.state<ScrollableState>(list()).position.pixels, 0);
       expect(find.text('I0'), findsOneWidget);
+    });
+  });
+
+  group('finished rows stay until midnight (#97)', () {
+    testWidgets('the check greys the row in place; the Logbook has it too', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      await selectSection(tester, container, inbox);
+      for (final title in ['One', 'Two', 'Three']) {
+        await capture(tester, container, title);
+      }
+      final ids = container.read(tasksProvider).value!.structuralOrder;
+      await tester.tap(row(ids[1]));
+      await tester.pump();
+      await settleEvents(tester, container, () => tester.tap(check(ids[1])));
+      expect(
+        archiveLines(container.read(archiveRootProvider)).last,
+        contains('"task.complete"'),
+      );
+      await tester.pump();
+      await tester.pump();
+      // Still there, at its place, finished — and no ghost's chip.
+      expect(rowTitles(tester), ['One', 'Two', 'Three']);
+      expect(find.text('COMPLETED'), findsNothing);
+      expect(find.byKey(ValueKey('ghost-${ids[1]}')), findsNothing);
+      final title = tester.widget<Text>(
+        find.descendant(of: row(ids[1]), matching: find.text('Two')),
+      );
+      expect(title.style!.decoration, TextDecoration.lineThrough);
+      expect(title.style!.color, SaiColors.inkFaint);
+      expect(tester.getSemantics(row(ids[1])).label, contains('completed'));
+      expect(container.read(selectedTaskProvider), ids[1]);
+      // Counted nowhere but the Logbook; the pane's meta counts the open.
+      expect(sidebarCount(tester, inbox), 2);
+      expect(sidebarCount(tester, logbook), 1);
+      expect(find.text('2 TASKS'), findsOneWidget);
+      // The ✕ is gone from a finished row.
+      expect(find.byKey(cancelButtonKey(ids[1])), findsNothing);
+      await selectSection(tester, container, logbook);
+      expect(rowTitles(tester), ['Two']);
+    });
+
+    testWidgets('the cross cancels in place, with the CANCELLED chip', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      await selectSection(tester, container, inbox);
+      await capture(tester, container, 'Buy oat milk');
+      final id = container.read(tasksProvider).value!.tasks.keys.single;
+      await settleEvents(
+        tester,
+        container,
+        () => tester.tap(find.byKey(cancelButtonKey(id))),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(rowTitles(tester), ['Buy oat milk']);
+      expect(find.text('CANCELLED'), findsOneWidget);
+      expect(find.text('Inbox is clear.'), findsNothing);
+      expect(tester.getSemantics(row(id)).label, contains('cancelled'));
+      expect(sidebarCount(tester, inbox), 0);
+    });
+
+    testWidgets('the check on a kept row reopens it where it stands', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      await selectSection(tester, container, inbox);
+      for (final title in ['One', 'Two', 'Three']) {
+        await capture(tester, container, title);
+      }
+      final ids = container.read(tasksProvider).value!.structuralOrder;
+      await settleEvents(tester, container, () => tester.tap(check(ids[1])));
+      await tester.pump();
+      expect(tester.getSemantics(check(ids[1])).label, startsWith('Reopen'));
+      await settleEvents(tester, container, () => tester.tap(check(ids[1])));
+      expect(
+        archiveLines(container.read(archiveRootProvider)).last,
+        contains('"task.reopen"'),
+      );
+      await tester.pump();
+      expect(rowTitles(tester), ['One', 'Two', 'Three']);
+      expect(
+        tester.getSemantics(row(ids[1])).label,
+        isNot(contains('completed')),
+      );
+      expect(sidebarCount(tester, inbox), 3);
+      expect(sidebarCount(tester, logbook), 0);
+    });
+
+    testWidgets('Delete moves a kept row to the Trash', (tester) async {
+      final container = await pumpApp(tester);
+      await selectSection(tester, container, inbox);
+      await capture(tester, container, 'Buy oat milk');
+      final id = container.read(tasksProvider).value!.tasks.keys.single;
+      await settleEvents(tester, container, () => tester.tap(check(id)));
+      await tester.tap(row(id));
+      await tester.pump();
+      menuItem(menuDelegate.menus, ['Task', 'Delete…']).onSelected!();
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => tester.tap(find.byKey(dialogPrimaryKey)),
+      );
+      await tester.pump();
+      expect(find.byType(TaskRow), findsNothing);
+      expect(sidebarCount(tester, const TrashSection()), 1);
+      expect(sidebarCount(tester, logbook), 0);
+    });
+
+    testWidgets('a row in the Trash offers selection and nothing else', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      late TaskId open, done;
+      await tester.runAsync(() async {
+        open = await store.createTask(title: 'Gone thing');
+        await store.deleteTask(open);
+        done = await store.createTask(title: 'Done and gone');
+        await store.cancelTask(done);
+        await store.deleteTask(done);
+      });
+      await selectSection(tester, container, const TrashSection());
+      expect(rowTitles(tester), ['Done and gone', 'Gone thing']);
+      // An open task in the Trash has no box to tick; a finished one keeps
+      // its mark as a plain indicator — neither announces an action.
+      expect(
+        find.descendant(of: row(open), matching: find.byType(CheckMark)),
+        findsNothing,
+      );
+      final mark = tester.widget<CheckMark>(
+        find.descendant(of: row(done), matching: find.byType(CheckMark)),
+      );
+      expect(mark.onTap, isNull);
+      expect(mark.cancelled, isTrue);
+      for (final id in [open, done]) {
+        final label = tester.getSemantics(row(id)).label;
+        expect(label, isNot(contains('Complete')), reason: label);
+        expect(label, isNot(contains('Reopen')), reason: label);
+        expect(find.byKey(cancelButtonKey(id)), findsNothing);
+      }
+      expect(tester.getSemantics(row(done)).label, contains('cancelled'));
+      final count = store.projection.eventCount;
+      await tester.tap(row(open));
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      await tester.pump();
+      expect(store.projection.eventCount, count, reason: 'nothing written');
+      expect(container.read(selectedTaskProvider), open, reason: 'selectable');
+      expect(find.text('Restore'), findsOneWidget, reason: 'the inspector');
+      await settleEvents(
+        tester,
+        container,
+        () => tester.tap(find.text('Restore')),
+      );
+      expect(store.projection.task(open)!.deletedAt, isNull);
+      expect(find.text('1 TASK'), findsOneWidget, reason: 'the Trash counts');
+    });
+
+    testWidgets('the Logbook and the Trash count what they hold', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      await tester.runAsync(() async {
+        for (final title in ['One', 'Two', 'Three']) {
+          final id = await store.createTask(title: title);
+          await store.completeTask(id);
+        }
+      });
+      await selectSection(tester, container, logbook);
+      expect(rowTitles(tester), hasLength(3));
+      expect(find.text('3 TASKS'), findsWidgets, reason: 'meta and day header');
+      expect(find.text('0 TASKS'), findsNothing);
+      // The same rows kept in the Inbox are shown, not counted: nothing
+      // is left to do there, as the sidebar says.
+      await selectSection(tester, container, inbox);
+      expect(rowTitles(tester), hasLength(3));
+      expect(find.text('0 TASKS'), findsOneWidget);
+      expect(sidebarCount(tester, inbox), 0);
+    });
+
+    testWidgets('a drag past a kept row anchors on the live row above', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      await selectSection(tester, container, inbox);
+      for (final title in ['A', 'B', 'C']) {
+        await capture(tester, container, title);
+      }
+      final ids = container.read(tasksProvider).value!.structuralOrder;
+      await settleEvents(tester, container, () => tester.tap(check(ids[1])));
+      await tester.pump();
+      expect(rowTitles(tester), ['A', 'B', 'C']);
+      await settleEvents(tester, container, () async {
+        final step = tester.getSize(row(ids[0])).height;
+        // A over B (finished) and C: it lands last, anchored on C.
+        await tester.drag(check(ids[0]), Offset(0, 4 * step));
+        await tester.pump(const Duration(milliseconds: 300));
+      });
+      final line = archiveLines(container.read(archiveRootProvider)).last;
+      expect(line, contains('"task.move"'));
+      expect(line, contains('"after":"${ids[2]}"'), reason: 'C, not B');
+      await tester.pump();
+      expect(rowTitles(tester), ['B', 'C', 'A']);
+      // And back to the top: nothing live above, so it goes first, and
+      // the finished B keeps its place.
+      await settleEvents(tester, container, () async {
+        final step = tester.getSize(row(ids[0])).height;
+        await tester.drag(check(ids[0]), Offset(0, -4 * step));
+        await tester.pump(const Duration(milliseconds: 300));
+      });
+      expect(
+        archiveLines(container.read(archiveRootProvider)).last,
+        contains('"after":null'),
+      );
+      await tester.pump();
+      expect(rowTitles(tester), ['A', 'B', 'C']);
     });
   });
 

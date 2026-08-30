@@ -26,6 +26,14 @@ class TaskListPane extends StatelessComponent {
   /// The marker on the selected row.
   static const marker = '› ';
 
+  /// What a row finished today and kept in its list (#97) starts with:
+  /// a tick for completed, a cross for cancelled; nothing for open.
+  static String status(Task task) => switch (task.status) {
+    TaskStatus.open => '',
+    TaskStatus.completed => '✓ ',
+    TaskStatus.cancelled => '✕ ',
+  };
+
   /// Every task in the order the rows show them.
   static List<Task> rows(List<CaptureSection> sections) => [
     for (final section in sections) ...section.tasks,
@@ -58,11 +66,17 @@ class TaskListPane extends StatelessComponent {
     for (final section in sections) {
       lines.add(Text(section.label));
       for (final entry in section.tasks) {
-        final line = formatQuickCapture(entry, today: today);
+        final line =
+            '${status(entry)}${formatQuickCapture(entry, today: today)}';
+        // A finished row is grey; the selection's reverse video wins.
+        final finished = entry.status != TaskStatus.open;
         lines.add(
           task == selected
               ? Text('$marker$line', style: const TextStyle(reverse: true))
-              : Text('  $line'),
+              : Text(
+                  '  $line',
+                  style: finished ? const TextStyle(color: Colors.gray) : null,
+                ),
         );
         task++;
       }

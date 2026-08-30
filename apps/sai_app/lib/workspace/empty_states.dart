@@ -25,8 +25,9 @@ EmptyCopy emptyCopy(SidebarSection section, String title) => switch (section) {
   ListSection(list: TaskList.logbook) => const EmptyCopy(
     'Logbook',
     'Nothing finished yet.',
-    'Everything you complete or cancel collects here, newest day first. '
-        'Nothing is ever removed.',
+    'Everything you complete or cancel collects here the moment it '
+        'happens, newest day first. Check a row to reopen it. Nothing is '
+        'ever removed.',
   ),
   ListSection(list: TaskList.upcoming) => const EmptyCopy(
     'Upcoming',
@@ -48,7 +49,9 @@ EmptyCopy emptyCopy(SidebarSection section, String title) => switch (section) {
   TrashSection() => const EmptyCopy(
     'Trash',
     'Trash is empty.',
-    'Deleted tasks wait here. Nothing is ever removed from the archive.',
+    'Deleted tasks wait here, exactly as they were. Select one and '
+        'choose Restore to bring it back. Nothing is ever removed from '
+        'the archive.',
   ),
   AreaSection() || ProjectSection() => EmptyCopy(
     title,

@@ -112,6 +112,23 @@ Completion/cancellation and deletion filter a task without removing it from
 either sequence. Reopen/restore therefore reveals it at its former position.
 Upcoming remains chronological. Logbook remains completion-driven.
 
+### End-of-day retention (#97)
+
+A presentation policy over the partition, not a change to it: with
+`finished_task_visibility` at `end_of_day` (the default,
+[settings v0](../settings/settings-v0.md)) a task completed or cancelled
+on the current local day — the finish instant's day in the host's zone,
+the Logbook's own rule — is **retained**: `listsOf`, the projection's
+placement queries and `taskView` keep it, greyed by the client, in every
+list and container it would be in if still open, at its position in the
+sequences, and in the Logbook at once. Local midnight removes it through
+`todayProvider`, with no event. The partition (`listOf`), sidebar counts,
+the assistant's task context and the capture headers never include a
+retained task: the queries default to open-only and only the views ask
+for retention. `immediate` is the pre-#97 behaviour. A retained row
+reopens from its check and offers no cancel; a deleted task is never
+retained — the Trash shows it, and offers Restore and nothing else.
+
 Containers have their own persisted manual order (#74, ADR 0014): three
 more replayed sequences — **area order** (the sidebar), **project order**
 (one sequence for every project, grouped at read time by the area it is

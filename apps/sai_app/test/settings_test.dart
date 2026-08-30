@@ -339,6 +339,49 @@ void main() {
       }
     });
 
+    testWidgets('the finished-tasks switch is the setting, with the words', (
+      tester,
+    ) async {
+      final tmp = tempDir();
+      final container = await pumpApp(tester, tmp: tmp, finishedTasks: null);
+      await open(tester);
+      expect(
+        tester.getSemantics(find.byKey(finishedVisibleKey)),
+        isSemantics(
+          label: 'Keep finished tasks visible until the end of the day',
+          isButton: true,
+          isToggled: true,
+        ),
+      );
+      expect(find.byKey(lifecycleNotesKey), findsOneWidget);
+      for (final (term, meaning) in lifecycleNotes) {
+        expect(
+          find.descendant(
+            of: find.byKey(lifecycleNotesKey),
+            matching: find.text(term),
+          ),
+          findsOneWidget,
+        );
+        expect(find.text(meaning), findsOneWidget);
+      }
+      await tester.tap(find.byKey(finishedVisibleKey));
+      await tester.pump();
+      expect(
+        container.read(finishedTaskVisibilityProvider),
+        FinishedTaskVisibility.immediate,
+      );
+      expect(
+        File('${tmp.path}/settings.json').readAsStringSync(),
+        contains('"finished_task_visibility":"immediate"'),
+      );
+      await tester.tap(find.byKey(finishedVisibleKey));
+      await tester.pump();
+      expect(
+        File('${tmp.path}/settings.json').readAsStringSync(),
+        isNot(contains('finished_task_visibility')),
+      );
+    });
+
     testWidgets('General renders in the reference treatment', (tester) async {
       await pumpApp(tester);
       await open(tester);

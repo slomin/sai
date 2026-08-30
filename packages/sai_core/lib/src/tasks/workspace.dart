@@ -28,6 +28,7 @@ RestoredWorkspace restoreWorkspace(
   required String? task,
   required Iterable<String> collapsedAreas,
   required CalendarDate today,
+  FinishedTaskVisibility visibility = FinishedTaskVisibility.immediate,
 }) {
   final parsed = section == null ? null : sectionFromKey(section);
   final valid = parsed != null && _live(projection, parsed);
@@ -40,6 +41,7 @@ RestoredWorkspace restoreWorkspace(
           projection,
           selected,
           today: today,
+          visibility: visibility,
         ).tasks.any((t) => t.id == id)) {
       shown = id;
     }

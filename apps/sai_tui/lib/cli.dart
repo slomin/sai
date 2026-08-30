@@ -16,6 +16,8 @@ usage: sai_tui                       open the terminal client
        sai_tui privacy               show the cloud-sharing switch
        sai_tui privacy share-tasks on|off
        sai_tui reasoning [on|off]    let the model think before answering
+       sai_tui finished-tasks [end-of-day|immediate]
+                                    when a finished task leaves its list
        sai_tui secret set <id>       read the key from a hidden prompt
                                     (or from stdin when piped)
        sai_tui secret clear <id>
@@ -37,7 +39,9 @@ provider that is no longer configured. A cloud provider sees your tasks
 only while share-tasks is on (off by default). --privacy says where a
 provider's inference happens; without it the fake is local and an
 openai_compatible endpoint is local on this machine or the LAN and cloud
-on any other host.
+on any other host. finished-tasks end-of-day (the default) keeps a task
+completed or cancelled today greyed in its lists until midnight;
+immediate drops it into the Logbook at once.
 
 things import reads a private copy of the Things 3 database (the one
 under ~/Library/Group Containers, or --db / SAI_THINGS_DB) and writes
@@ -81,6 +85,16 @@ String privacyLine(PrivacyPolicy policy) => policy.shareTasksWithCloud
 String reasoningLine(bool on) => on
     ? 'reasoning: on — the model thinks before it answers, and shows it'
     : 'reasoning: off — the model answers directly';
+
+/// What `finished-tasks` prints for each policy.
+String finishedTasksLine(FinishedTaskVisibility visibility) =>
+    switch (visibility) {
+      FinishedTaskVisibility.endOfDay =>
+        'finished tasks: end-of-day — stay greyed in their lists until '
+            'midnight',
+      FinishedTaskVisibility.immediate =>
+        'finished tasks: immediate — leave for the Logbook at once',
+    };
 
 /// Exit codes, as a shell expects them.
 const cliOk = 0;
@@ -338,6 +352,28 @@ Future<int> runCli(
         };
         container.read(settingsProvider.notifier).setReasoning(show);
         out.writeln(reasoningLine(container.read(reasoningProvider)));
+        return cliOk;
+
+      case ['finished-tasks']:
+        out.writeln(
+          finishedTasksLine(container.read(finishedTaskVisibilityProvider)),
+        );
+        return cliOk;
+
+      case ['finished-tasks', final word]:
+        final visibility = switch (word) {
+          'end-of-day' => FinishedTaskVisibility.endOfDay,
+          'immediate' => FinishedTaskVisibility.immediate,
+          _ => throw _Usage(
+            'finished-tasks takes end-of-day or immediate, not $word',
+          ),
+        };
+        container
+            .read(settingsProvider.notifier)
+            .setFinishedTaskVisibility(visibility);
+        out.writeln(
+          finishedTasksLine(container.read(finishedTaskVisibilityProvider)),
+        );
         return cliOk;
 
       case ['secret', final verb, final id]

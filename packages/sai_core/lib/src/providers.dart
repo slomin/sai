@@ -134,9 +134,13 @@ final taskViewProvider = Provider.family<AsyncValue<TaskView>, SidebarSection>((
   section,
 ) {
   final today = ref.watch(todayProvider);
+  final visibility = ref.watch(finishedTaskVisibilityProvider);
   return ref
       .watch(tasksProvider)
-      .whenData((projection) => taskView(projection, section, today: today));
+      .whenData(
+        (projection) =>
+            taskView(projection, section, today: today, visibility: visibility),
+      );
 });
 
 /// The reactive sidebar counts and hierarchy from the same snapshot/day as
@@ -234,6 +238,12 @@ final selectedTaskProvider = NotifierProvider<SelectedTask, TaskId?>(
 /// `reasoning_effort: none`, on is the model's default and shown.
 final reasoningProvider = Provider<bool>(
   (ref) => ref.watch(settingsProvider.select((s) => s.reasoningOn)),
+);
+
+/// When a finished task leaves its working views (#97), as settings hold
+/// it (`finished_task_visibility`, end of the local day by default).
+final finishedTaskVisibilityProvider = Provider<FinishedTaskVisibility>(
+  (ref) => ref.watch(settingsProvider.select((s) => s.finishedTaskVisibility)),
 );
 
 /// The conversation (#34): transcript, the answer as it streams, and
@@ -589,6 +599,10 @@ class SettingsNotifier extends Notifier<Settings> {
       _commit(state.withShareTasksWithCloud(share));
 
   void setReasoning(bool show) => _commit(state.withReasoning(show));
+
+  /// Sets when a finished task leaves its working views (#97).
+  void setFinishedTaskVisibility(FinishedTaskVisibility visibility) =>
+      _commit(state.withFinishedTaskVisibility(visibility));
 
   /// Remembers where the workspace was left (#76). A no-op when nothing
   /// changed, so a client may call it on every selection.

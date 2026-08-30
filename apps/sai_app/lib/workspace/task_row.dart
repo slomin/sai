@@ -173,14 +173,22 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
     if (finished) label.write(cancelled ? ', cancelled' : ', completed');
     if (widget.selected) label.write(', selected');
 
-    Widget check = CheckMark(
-      checked: finished && !cancelled,
-      cancelled: cancelled,
-      onTap: finishing == null ? widget.onCheck : null,
-      semanticLabel: finished
-          ? 'Reopen ${task.title}'
-          : 'Complete ${task.title}',
-    );
+    // A row that offers no lifecycle action — the Trash (#97) — shows a
+    // finished task's mark as a plain indicator, with no action to
+    // announce, and no box at all for an open one: nothing to tick.
+    final inert = finishing == null && widget.onCheck == null;
+    Widget check = inert && !finished
+        ? const SizedBox.square(dimension: CheckMark.size + 12)
+        : CheckMark(
+            checked: finished && !cancelled,
+            cancelled: cancelled,
+            onTap: finishing == null ? widget.onCheck : null,
+            semanticLabel: inert
+                ? null
+                : finished
+                ? 'Reopen ${task.title}'
+                : 'Complete ${task.title}',
+          );
     if (widget.gutter case final gutter?) check = gutter(check);
 
     final row = Semantics(

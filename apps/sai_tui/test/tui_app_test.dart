@@ -348,8 +348,11 @@ void main() {
     );
 
     /// Two Today tasks, `One` above `Two`; the cursor starts on `One`.
-    Future<ProviderContainer> pumpTwo(NoctermTester tester) async {
-      final container = testContainer();
+    Future<ProviderContainer> pumpTwo(
+      NoctermTester tester, {
+      FinishedTaskVisibility finishedTasks = FinishedTaskVisibility.endOfDay,
+    }) async {
+      final container = testContainer(finishedTasks: finishedTasks);
       await container.read(tasksProvider.future);
       final store = container.read(tasksProvider.notifier).store;
       final today = container.read(todayProvider);
@@ -391,7 +394,10 @@ void main() {
 
     test('Ctrl+D completes the selected task and the cursor stays', () async {
       await testNocterm('complete', (tester) async {
-        final container = await pumpTwo(tester);
+        final container = await pumpTwo(
+          tester,
+          finishedTasks: FinishedTaskVisibility.immediate,
+        );
         await tester.sendKey(LogicalKey.arrowDown);
         await pumpUntilText(tester, '› Two @today');
         await tester.sendKeyEvent(ctrlD);
@@ -419,7 +425,10 @@ void main() {
       'Ctrl+U after a completion puts the task back under the cursor',
       () async {
         await testNocterm('complete undo', (tester) async {
-          await pumpTwo(tester);
+          await pumpTwo(
+            tester,
+            finishedTasks: FinishedTaskVisibility.immediate,
+          );
           await tester.sendKey(LogicalKey.arrowDown);
           await pumpUntilText(tester, '› Two @today');
           await tester.sendKeyEvent(ctrlD);
@@ -430,6 +439,55 @@ void main() {
         }, size: size);
       },
     );
+
+    test('a finished row stays grey in its list until midnight (#97), '
+        'and Ctrl+D on it reopens', () async {
+      await testNocterm('retained', (tester) async {
+        final container = await pumpTwo(tester);
+        await tester.sendKey(LogicalKey.arrowDown);
+        await pumpUntilText(tester, '› Two @today');
+        await tester.sendKeyEvent(ctrlD);
+        await pumpUntilText(tester, 'done: Two');
+        // Still on screen, marked, at its place, under the cursor; the
+        // header counts the open row only.
+        expect(tester.terminalState, containsText('› ✓ Two @today'));
+        expect(tester.terminalState, containsText('  One @today'));
+        expect(tester.terminalState, containsText('Today (1)'));
+        await tester.sendKey(LogicalKey.arrowUp);
+        await pumpUntilText(tester, '› One @today');
+        expect(tester.terminalState, containsText('  ✓ Two @today'));
+        await tester.sendKey(LogicalKey.arrowDown);
+        await pumpUntilText(tester, '› ✓ Two @today');
+        await tester.sendKeyEvent(ctrlD);
+        await pumpUntilText(tester, 'reopened: Two');
+        expect(tester.terminalState, containsText('› Two @today'));
+        expect(tester.terminalState, containsText('Today (2)'));
+        final json =
+            jsonDecode(archiveLines(container).last) as Map<String, Object?>;
+        expect(json['type'], 'task.reopen');
+      }, size: size);
+    });
+
+    test('a task cancelled today shows its cross; one finished yesterday '
+        'is gone', () async {
+      await testNocterm('cancelled', (tester) async {
+        final container = await pumpTwo(tester);
+        final store = container.read(tasksProvider.notifier).store;
+        final today = container.read(todayProvider);
+        final ids = store.projection.todayOrder;
+        await store.cancelTask(ids[1]);
+        await pumpUntilText(tester, '✕ Two @today');
+        final yesterday = DateTime(
+          today.year,
+          today.month,
+          today.day,
+        ).subtract(const Duration(hours: 1));
+        await store.completeTask(ids[0], at: yesterday);
+        await pumpUntilText(tester, 'Today (0)');
+        expect(tester.terminalState, isNot(containsText('One @today')));
+        expect(tester.terminalState, containsText('✕ Two @today'));
+      }, size: size);
+    });
 
     test('Ctrl+D with no task says so', () async {
       await testNocterm('complete nothing', (tester) async {
@@ -483,7 +541,10 @@ void main() {
 
     test('↑ after completing the last task moves from the marker', () async {
       await testNocterm('stale cursor', (tester) async {
-        final container = await pumpTwo(tester);
+        final container = await pumpTwo(
+          tester,
+          finishedTasks: FinishedTaskVisibility.immediate,
+        );
         final store = container.read(tasksProvider.notifier).store;
         await store.createTask(
           title: 'Three',
