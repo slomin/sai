@@ -62,7 +62,9 @@ void main() {
     late Map<String, String> scripts;
     setUpAll(() {
       scripts = {
-        for (final f in Directory('${repo.path}/tool').listSync())
+        for (final f in Directory(
+          '${repo.path}/tool',
+        ).listSync(recursive: true))
           if (f is File && f.path.endsWith('.sh')) rel(f): f.readAsStringSync(),
       };
     });
@@ -148,7 +150,13 @@ void main() {
         r'(^|[\s(;|&])(dart|flutter|pub|xcodebuild|cc|clang|swift|make|'
         r'gh|git|tool/build-tui\.sh|\$\(.*hook)\b',
       );
-      for (final name in ['stable_identity', 'sign']) {
+      for (final name in [
+        'stable_identity',
+        'sign',
+        'sign_tree',
+        'package_release',
+        'replace_release',
+      ]) {
         expect(
           code(body(name)).where(toolchain.hasMatch),
           isEmpty,

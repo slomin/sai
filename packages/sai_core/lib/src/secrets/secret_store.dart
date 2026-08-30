@@ -1,6 +1,6 @@
 /// A secret could not be read or written. Carries a fixed message and, on
 /// macOS, the `OSStatus` — never the value that was being stored.
-final class SecretStoreException implements Exception {
+class SecretStoreException implements Exception {
   const SecretStoreException(this.message, {this.status});
 
   final String message;
@@ -99,7 +99,7 @@ final class NoSecretStore implements SecretStore {
 
   final String reason;
 
-  Never _refuse() => throw SecretStoreException(reason);
+  Never _refuse() => throw NoSecretsException(reason);
 
   @override
   String? read(String account) => _refuse();
@@ -112,4 +112,10 @@ final class NoSecretStore implements SecretStore {
 
   @override
   bool delete(String account) => _refuse();
+}
+
+/// What a [NoSecretStore] throws: a refusal by policy, not a Keychain
+/// that failed — a caller may say so in its own words.
+final class NoSecretsException extends SecretStoreException {
+  const NoSecretsException(super.message);
 }

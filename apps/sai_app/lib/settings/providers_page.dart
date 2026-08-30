@@ -189,7 +189,12 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                     child: const Text('Cancel test'),
                   )
                 : TextButton(
-                    onPressed: () => _runTest(provider),
+                    // A dev copy cannot send a key it does not hold.
+                    onPressed:
+                        ref.watch(credentialStatusProvider(provider.id)) ==
+                            CredentialStatus.absent
+                        ? null
+                        : () => _runTest(provider),
                     child: const Text('Test'),
                   ),
           ],

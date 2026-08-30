@@ -110,6 +110,20 @@ check_prepared() {
   [ "$built" = "$head" ] || fail "$prepared was built from ${built:-an unknown commit}, not $head; prepare it again"
 }
 
+# replace_release <new>: the previous release/ steps aside, the new one
+# moves in, and only then is the old one removed; restore_release, from a
+# trap, puts the old one back if the new one never landed.
+restore_release() {
+  if [ ! -e "$release" ] && [ -e "$dist/.release.old.$$" ]; then
+    mv "$dist/.release.old.$$" "$release"
+  fi
+}
+replace_release() {
+  if [ -e "$release" ]; then mv "$release" "$dist/.release.old.$$"; fi
+  mv "$1" "$release"
+  rm -rf "$dist/.release.old.$$"
+}
+
 # adhoc <path>: whether a Mach-O or bundle carries only an ad-hoc signature.
 adhoc() {
   codesign -dv "$1" 2>&1 | grep -q '^Signature=adhoc'
@@ -122,10 +136,15 @@ adhoc() {
 dev_identity() {
   probe=$(mktemp "${TMPDIR:-/tmp}/sai-dev-sign.XXXXXX")
   printf '#!/bin/sh\n' > "$probe"
-  if codesign --force --sign "sai dev" "$probe" >/dev/null 2>&1; then
+  if said=$(codesign --force --sign "sai dev" "$probe" 2>&1); then
     dev_identity="sai dev"
   else
-    dev_identity="-"
+    # Only a missing certificate means ad-hoc; a locked keychain, a
+    # cancelled dialog or a denied key is said, not papered over.
+    case "$said" in
+      *"no identity found"*) dev_identity="-" ;;
+      *) rm -f "$probe"; fail "the 'sai dev' identity could not be used: $said" ;;
+    esac
   fi
   rm -f "$probe"
 }
@@ -174,9 +193,12 @@ package_release() {
   tar -C "$tree/tui" -czf "$out/$tui-v$version-macos-$(uname -m).tar.gz" bundle
   (cd "$out" && shasum -a 256 *.zip *.tar.gz > checksums.txt)
   cp "$tree/commit" "$tree/flavor" "$out/"
+  # The seal names the prepared manifest it was made from, so a release
+  # can be told apart from a later prepare of the same commit.
   {
     echo "signer $signer"
     echo "checksums $(shasum -a 256 "$out/checksums.txt" | cut -d' ' -f1)"
+    echo "manifest $(sed -n 's/^manifest //p' "$prepared/seal")"
     echo "flavor $flavor"
     echo "commit $(cat "$tree/commit")"
     echo "version $version"
@@ -237,17 +259,27 @@ prepare() {
   seal_prepared "$work"
   rm -rf "$prepared"
   mv "$work" "$prepared"
-  trap - EXIT
   echo "release: prepared $prepared"
-  if [ "$flavor" = dev ]; then
-    package_release "$prepared" "$dist/.release.$$" dev
-    rm -rf "$release"
-    mv "$dist/.release.$$" "$release"
-    echo "release: staged $release"
-    cat "$release/checksums.txt"
-  else
-    echo "release: unsigned; run tool/release.sh sign to sign it from the dedicated keychain"
-  fi
+  case "$flavor" in
+    dev)
+      out="$dist/.release.$$"
+      trap 'restore_release; rm -rf "$work" "$out"' EXIT
+      package_release "$prepared" "$out" dev
+      replace_release "$out"
+      trap - EXIT
+      echo "release: staged $release"
+      cat "$release/checksums.txt"
+      ;;
+    stable)
+      # A release signed from an earlier prepare is not this one's.
+      trap - EXIT
+      if [ -e "$release" ]; then
+        rm -rf "$release"
+        echo "release: the previously signed release is gone; this tree is unsigned"
+      fi
+      echo "release: unsigned; run tool/release.sh sign to sign it from the dedicated keychain"
+      ;;
+  esac
 }
 
 # --- the stable identity: one query, one keychain, never printed ---------
@@ -275,7 +307,7 @@ sign() {
   fi
   staging="$dist/.signing.$$"
   rm -rf "$staging"
-  trap 'rm -rf "$staging"' EXIT
+  trap 'restore_release; rm -rf "$staging"' EXIT
   ditto "$prepared" "$staging"
   rm -f "$staging/manifest.txt" "$staging/seal"
   stable_identity
@@ -283,9 +315,8 @@ sign() {
   sign_tree "$stable_identity" "$staging/$slug.app" "$staging/tui/bundle" --keychain "$signing_keychain"
   unset stable_identity
   package_release "$staging" "$staging/release" stable
-  if [ -e "$release" ]; then mv "$release" "$dist/.release.old.$$"; fi
-  mv "$staging/release" "$release"
-  rm -rf "$dist/.release.old.$$" "$staging"
+  replace_release "$staging/release"
+  rm -rf "$staging"
   trap - EXIT
   echo "release: signed and staged $release"
   cat "$release/checksums.txt"
@@ -297,6 +328,9 @@ signed_release() {
   [ "$(sed -n 's/^signer //p' "$release/seal")" = stable ] || fail "$release is not sealed by the signing phase; run tool/release.sh sign"
   built=$(cat "$release/commit" 2>/dev/null || true)
   [ "$built" = "$head" ] || fail "$release was built from ${built:-an unknown commit}, not $head; prepare and sign again"
+  [ -f "$prepared/seal" ] || fail "$prepared is gone; prepare and sign again"
+  [ "$(sed -n 's/^manifest //p' "$release/seal")" = "$(sed -n 's/^manifest //p' "$prepared/seal")" ] \
+    || fail "$release was signed from an earlier prepare of this commit; run tool/release.sh sign again"
 }
 
 verify_release() {

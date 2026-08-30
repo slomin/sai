@@ -327,11 +327,13 @@ pass "dev upgrades and rolls back on its own; stable does not move"
 
 fixture "$work/legacy" 0.0.1-test.3 "$c2" legacy
 [ ! -e "$work/legacy/flavor" ] || fail "the legacy fixture carries a flavor file"
-tool/install-local.sh "$work/legacy" >"$work/err" 2>&1 || { cat "$work/err"; fail "a pre-flavor release did not install"; }
-[ "$(installed_version)" = "sai_tui 0.0.1-test.3" ] || fail "the pre-flavor release did not land as stable"
-grep -q "^flavor: stable$" "$share_stable/installed" || fail "the pre-flavor install is not recorded as stable"
-[ "$(installed_version sai_tui-dev)" = "sai_tui-dev 0.0.1-test.1" ] || fail "the pre-flavor install touched dev"
-pass "a kept release from before flavors installs as stable"
+[ ! -e "$work/legacy/seal" ] || fail "the legacy fixture carries a seal"
+# A pre-flavor, pre-seal release reads as stable; the fixture is ad-hoc,
+# which a real kept copy never is, so it is refused on that and only that.
+if out=$(tool/install-local.sh "$work/legacy" 2>&1); then fail "an ad-hoc legacy release installed"; fi
+echo "$out" | grep -q "without a seal must carry a real signature" || fail "wrong refusal: $out"
+echo "$out" | grep -q "install: sai v0.0.1-test.3" || fail "the legacy release did not read as stable: $out"
+pass "a pre-flavor release reads as stable and is judged by its signature"
 before=$(snapshot)
 
 # Each artefact must say what the release says; anything else is refused
@@ -439,9 +441,12 @@ sed -i '' 's/^signer dev$/signer stable/' "$work/devseal/seal"
 if out=$(tool/install-local.sh "$work/devseal" 2>&1); then fail "a dev release sealed as stable installed"; fi
 echo "$out" | grep -q "sealed as dev" || fail "wrong refusal: $out"
 rm -f "$work/devseal/seal"
-if out=$(tool/install-local.sh "$work/devseal" 2>&1); then fail "a dev release without a seal installed"; fi
-echo "$out" | grep -q "without a seal" || fail "wrong refusal: $out"
-pass "a dev release needs its own seal"
+if out=$(tool/install-local.sh "$work/devseal" 2>&1); then fail "an unsealed ad-hoc dev release installed"; fi
+echo "$out" | grep -q "without a seal must carry a real signature" || fail "wrong refusal: $out"
+rm -f "$work/sealed/seal"
+if out=$(tool/install-local.sh "$work/sealed" 2>&1); then fail "an unsealed ad-hoc stable release installed"; fi
+echo "$out" | grep -q "without a seal must carry a real signature" || fail "wrong refusal: $out"
+pass "a release without a seal is a kept pre-#95 copy, never an ad-hoc tree"
 
 # --- a rotated dev signature installs; a rotated stable one does not -----
 unset SAI_INSTALL_ALLOW_RESIGN

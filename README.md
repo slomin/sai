@@ -178,7 +178,9 @@ say) after every rebuild. To keep them, make a self-signed identity
 once — Keychain Access → Certificate Assistant → Create a Certificate,
 type *Code Signing*, name it exactly `sai dev` — and
 `tool/release.sh local-install dev` uses it when it is there, ad-hoc
-otherwise; nothing in the tree names it, and it signs nothing stable.
+otherwise; it signs nothing stable, and a certificate by that name that
+cannot be used (a locked keychain, a denied key) stops the build rather
+than falling back.
 
 Build a debug app bundle (what CI does, for both flavors): `cd
 apps/sai_app && flutter build macos --debug --flavor dev` →

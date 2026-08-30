@@ -277,7 +277,13 @@ Future<int> runCli(
             'with --${missing == 'default_model' ? 'model' : missing}',
           );
         }
-        if (key && wasBound && !config.keyBound) {
+        final stable = SaiIdentity.stable.tuiCommand;
+        if (key && container.read(identityProvider).keychainService == null) {
+          out.writeln(
+            'this dev copy holds no credentials; the key is set in the '
+            'stable one: $stable secret set $id',
+          );
+        } else if (key && wasBound && !config.keyBound) {
           out.writeln(
             'the endpoint moved; enter its key again: $program secret set $id',
           );

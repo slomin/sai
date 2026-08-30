@@ -95,7 +95,9 @@ void main() {
     final dev = KeychainSecretStore.file(
       '${tmp.path}/test.keychain-db',
       password: 'test-only',
-      service: '${SaiIdentity.dev.keychainService}.test',
+      // Dev has no Keychain service any more (#95); its bundle id stands
+      // in, so this still proves two services over one file are apart.
+      service: '${SaiIdentity.dev.bundleId}.test',
     );
     expect(dev.read('provider:x'), isNull);
     dev.write('provider:x', 'dev-only');

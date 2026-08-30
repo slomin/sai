@@ -80,7 +80,6 @@ tarball=$(ls "$dist"/"$tui"-v*-macos-*.tar.gz 2>/dev/null | head -n 1)
 [ -n "$tarball" ] || fail "$dist has no $flavor terminal-client tarball ($tui-v…)"
 version=$(basename "$zip" | sed -n "s/^$slug-v\(.*\)-macos-.*\.zip\$/\1/p")
 [ -n "$version" ] || fail "cannot read the version from $(basename "$zip")"
-short=${version%%-*}
 name="$slug-v$version-$(printf %.7s "$commit")"
 
 apps="${SAI_INSTALL_APPS_DIR:-$HOME/Applications}"
@@ -167,7 +166,6 @@ stage_app="$apps/.$slug.app.new.$$"
 stage_bundle="$share/.bundle.new.$$"
 old_app="$apps/.$slug.app.old.$$"
 old_bundle="$share/.bundle.old.$$"
-scratch=$(mktemp -d "${TMPDIR:-/tmp}/sai-install.XXXXXX")
 kept="$keep/$name"
 kept_new="$kept.new.$$"
 swapped=0
@@ -185,7 +183,7 @@ on_exit() {
     if [ "$app_placed" = 1 ]; then rm -rf "$app_dst"; fi
     if [ -e "$old_app" ]; then mv "$old_app" "$app_dst"; fi
   fi
-  rm -rf "$stage_app" "$stage_bundle" "$scratch" "$kept_new"
+  rm -rf "$stage_app" "$stage_bundle" "$kept_new"
   exit "$status"
 }
 trap on_exit EXIT
@@ -220,7 +218,8 @@ echo "install: verified $slug.app and $tui $version at $commit"
 
 # --- prepare the kept copy, so nothing after the swap can fail ---------
 refresh_kept=0
-if [ ! -f "$kept/checksums.txt" ] || ! cmp -s "$kept/checksums.txt" "$dist/checksums.txt"; then
+same_seal() { { [ ! -f "$dist/seal" ] && [ ! -f "$kept/seal" ]; } || cmp -s "$dist/seal" "$kept/seal" 2>/dev/null; }
+if [ ! -f "$kept/checksums.txt" ] || ! cmp -s "$kept/checksums.txt" "$dist/checksums.txt" || ! same_seal; then
   refresh_kept=1
   rm -rf "$kept_new"
   mkdir -p "$kept_new" || fail "cannot create $kept_new to keep the release"

@@ -164,7 +164,7 @@ the `dist/` a release is about to be published from, say — installs
 without rebuilding:
 
 ```sh
-tool/install-local.sh dist/sai-v<version>       # or dist/sai-dev-v<version>
+tool/install-local.sh dist/sai-v<version>/release   # or dist/sai-dev-v<version>/release
 ```
 
 An upgrade is the same command on a newer commit. The artefacts that
@@ -219,9 +219,12 @@ sqlite3 build hook run.
 from `HEAD`, stable, still ad-hoc — copies it aside, and asks the
 dedicated keychain for its one identity. Because that keychain is locked
 and outside the search list, macOS puts up its dialog for the key at
-that moment, and at no other: click *Allow* (or enter the keychain's
-password) for this one run — **never *Always Allow***, which would let
-any later process sign silently. The script signs from the inside out —
+that moment, and at no other — once per component it signs, since each
+is its own `codesign` run: click *Allow* (or enter the keychain's
+password) each time — **never *Always Allow***, which would let any
+later process sign silently. `prepare stable` removes any release signed
+from an earlier tree, and `local-install stable` and `publish` refuse a
+release whose seal does not name the current prepared manifest. The script signs from the inside out —
 the app's frameworks and helpers, the app with its entitlements, every
 dylib in the client's bundle, then the client — verifies (`--deep
 --strict` on the app, `--strict` on each client Mach-O; nothing is ever

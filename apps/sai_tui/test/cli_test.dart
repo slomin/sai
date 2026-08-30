@@ -140,7 +140,8 @@ void main() {
     expect(await run('frobnicate now'), cliUsageError);
     expect(err.toString(), startsWith('sai_tui-dev: '));
     expect(await run('provider add lan --kind fake --key'), cliOk);
-    expect(out.toString(), contains('sai_tui-dev secret set lan'));
+    // The key lives in the stable copy (#95): the hint says which one.
+    expect(out.toString(), contains('sai_tui secret set lan'));
   });
 
   test('help and an unknown command', () async {
@@ -387,7 +388,9 @@ void main() {
     container = testContainer(
       overrides: [identityProvider.overrideWithValue(SaiIdentity.dev)],
     );
-    await run('provider add lan --kind fake --key');
+    expect(await run('provider add lan --kind fake --key'), cliOk);
+    expect(out.toString(), contains('sai_tui secret set lan'));
+    expect(out.toString(), isNot(contains('sai_tui-dev secret set')));
     out.clear();
     expect(await run('provider list'), cliOk);
     expect(out.toString(), contains('· no credentials in dev'));

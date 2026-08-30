@@ -193,7 +193,7 @@ identities 2
 refused "two identities" "must hold exactly one"
 [ "$(cat "$FAKE/security.log")" = "find-identity -v -p codesigning $keychain
 find-identity -v -p codesigning $keychain
-find-identity -v -p codesigning $keychain" ] || fail "unexpected security calls: $(cat "$FAKE/security.log")"
+find-identity -v -p codesigning $keychain" ] || fail "the keychain was asked differently: $(cat "$FAKE/security.log")"
 grep -q "$hash\|Apple Development" "$work/out" && fail "the identity leaked into the output"
 [ ! -e "$release" ] || fail "a refusal produced a release"
 pass "sign fails closed on a missing, unreadable, empty or ambiguous keychain, and says nothing about identities"
@@ -233,6 +233,7 @@ grep -rq "$hash\|Apple Development" "$dist" && fail "the identity leaked into di
 [ "$(cat "$release/flavor")" = stable ] || fail "the release flavor is wrong"
 [ "$(manifest "$prepared")" = "$before" ] || fail "sign changed the prepared tree"
 [ -z "$(ls -A "$dist" | grep '^\.')" ] || fail "staging left behind: $(ls -A "$dist")"
+[ "$(sed -n 's/^manifest //p' "$release/seal")" = "$(sed -n 's/^manifest //p' "$prepared/seal")" ] || fail "the release seal does not name the prepared manifest"
 pass "sign goes inside out — framework, app, dylib, client — from the dedicated keychain, verifies, seals and leaves no trace of the identity"
 
 # --- the signed release is what the installer and publish accept ----------------
@@ -248,6 +249,22 @@ tool/install-local.sh "$release" >"$work/out" 2>&1 || { cat "$work/out"; fail "t
 sed -i '' 's/^signer stable$/signer dev/' "$release/seal"
 if tool/release.sh local-install stable >"$work/out" 2>&1; then fail "local-install stable took a release not sealed by sign"; fi
 grep -q "not sealed by the signing phase" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
-pass "local-install stable takes only a release sealed by the signing phase"
+sed -i '' 's/^signer dev$/signer stable/' "$release/seal"
+# A new prepare of the same commit — one file different — is not what was signed.
+fixture
+echo later > "$prepared/tui/bundle/note"
+seal_prepared "$prepared"
+if tool/release.sh local-install stable --dry-run >"$work/out" 2>&1; then fail "local-install stable took a release signed from an earlier prepare"; fi
+grep -q "signed from an earlier prepare" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
+pass "local-install stable takes only a release sealed by the signing phase from the current prepare"
+
+# --- a cancelled authorization with a previous release keeps it in place, atomically
+reset_fake
+before=$(cat "$release/seal")
+echo 2 > "$FAKE/fail_at"
+refused "a cancelled authorization over a previous release" "User interaction is not allowed"
+[ "$(cat "$release/seal")" = "$before" ] || fail "the previous release was replaced or lost"
+[ -z "$(ls -A "$dist" | grep '^\.')" ] || fail "staging or the old release left behind: $(ls -A "$dist")"
+pass "a cancelled authorization never loses the previous release"
 
 echo "# $passed passed; scratch under $work removed"

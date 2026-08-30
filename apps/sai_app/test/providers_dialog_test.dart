@@ -173,7 +173,16 @@ void main() {
   testWidgets('the dev copy holds no credentials (#95)', (tester) async {
     final container = await pumpApp(tester, identity: SaiIdentity.dev);
     final settings = container.read(settingsProvider.notifier);
-    settings.upsertProvider(lan);
+    // With an endpoint, so the row has a Test button to disable too.
+    settings.upsertProvider(
+      ProviderConfig(
+        id: 'lan',
+        kind: 'fake',
+        endpoint: 'http://127.0.0.1:1/v1',
+        defaultModel: 'qwen',
+        credential: 'provider:lan',
+      ),
+    );
     settings.selectLlm('lan');
     await tester.pump();
     expect(find.textContaining('· no credentials in dev'), findsWidgets);
@@ -200,6 +209,12 @@ void main() {
     expect(
       container.read(credentialStatusProvider('lan')),
       CredentialStatus.absent,
+    );
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Test'))
+          .onPressed,
+      isNull,
     );
     // The fake still works in dev.
     settings.selectLlm('fake');

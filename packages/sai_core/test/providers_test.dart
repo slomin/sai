@@ -1190,6 +1190,27 @@ void main() {
         expect(answer.text, isNotEmpty);
       });
 
+      test('a provider that reads its key says the dev words', () async {
+        final container = dev();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'cloud',
+            kind: 'openai_compatible',
+            endpoint: 'http://127.0.0.1:1/v1',
+            defaultModel: 'm',
+            credential: 'provider:cloud',
+          ),
+        );
+        settings.selectLlm('cloud');
+        final result = await container
+            .read(activeLlmProvider)!
+            .start(LlmRequest(messages: [LlmMessage(LlmRole.user, 'hi')]))
+            .done;
+        expect(result.failure?.kind, LlmFailureKind.credential);
+        expect(result.failure?.message, devSecretsMessage);
+      });
+
       test('stable keeps its Keychain service', () {
         expect(SaiIdentity.stable.keychainService, saiKeychainService);
         expect(

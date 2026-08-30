@@ -1,4 +1,7 @@
 import 'dart:async';
+
+import '../../secrets/secret_store.dart';
+
 import 'dart:io';
 
 import '../failure.dart';
@@ -44,6 +47,7 @@ abstract final class TransportText {
     noKey,
     keyElsewhere,
     keychainUnavailable,
+    devSecretsMessage,
     connectTimeout,
     noResponse,
     stalled,
