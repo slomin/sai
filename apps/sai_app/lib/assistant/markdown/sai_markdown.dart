@@ -10,6 +10,13 @@ import 'package:markdown/markdown.dart' as md;
 import 'markdown_blocks.dart';
 import 'markdown_inline.dart';
 
+/// The streaming cursor (#99): a hair space, then a one-eighth block —
+/// a thin bar that stands clear of the last glyph instead of crowding
+/// it. It is drawn as a span in the mono face (which has the glyph, so
+/// no fallback font can change the line's height), never a widget, so
+/// the test finders keep matching plain text (ADR 0018).
+const caretGlyph = '\u200a▏';
+
 class SaiMarkdown extends StatefulWidget {
   const SaiMarkdown(
     this.source, {
@@ -19,8 +26,9 @@ class SaiMarkdown extends StatefulWidget {
   });
 
   /// The Markdown exactly as the model wrote it. The streaming cursor
-  /// is drawn by the renderer, never appended here: ```▌ would parse
-  /// as a fence whose language is the cursor.
+  /// is drawn by the renderer, never appended here: a fence line with
+  /// the cursor after it would parse as a fence whose language is the
+  /// cursor.
   final String source;
 
   /// The base body style every block derives from.

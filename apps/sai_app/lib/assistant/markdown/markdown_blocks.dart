@@ -50,7 +50,7 @@ List<Widget> markdownBlocks(
   // Nothing drew — the stream is whitespace, or rules alone — but the
   // answer is still coming: the cursor stands on its own.
   if (caret && blocks.isEmpty) {
-    blocks.add(Text('▌', style: styles.body));
+    blocks.add(Text.rich(styles.caret, style: styles.body));
   }
   return blocks;
 }
@@ -94,10 +94,7 @@ Widget _paragraph(
   required bool caret,
 }) => Text.rich(
   TextSpan(
-    children: [
-      ...markdownSpans(inline, styles),
-      if (caret) const TextSpan(text: '▌'),
-    ],
+    children: [...markdownSpans(inline, styles), if (caret) styles.caret],
   ),
   style: style,
 );

@@ -5,6 +5,7 @@ import 'package:flutter/painting.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import '../../theme/sai_tokens.dart';
+import 'sai_markdown.dart';
 
 /// The styles the renderer draws with, derived from the transcript's
 /// base body style. The rule that keeps streaming stable: no inline
@@ -37,6 +38,17 @@ class MarkdownStyles {
   late final TextStyle codeBlock = body.copyWith(
     fontFamily: SaiFonts.mono,
     fontSize: (body.fontSize ?? 14) - 1,
+  );
+
+  /// The streaming cursor, [caretGlyph] in the accent: the body's line
+  /// height, so the bar never grows the line it ends.
+  late final TextSpan caret = TextSpan(
+    text: caretGlyph,
+    style: TextStyle(
+      fontFamily: SaiFonts.mono,
+      height: body.height,
+      color: SaiColors.red,
+    ),
   );
 
   /// Bold and italic, as deltas Flutter merges into the surround.

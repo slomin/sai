@@ -116,19 +116,32 @@ void main() {
       'nothing else', (tester) async {
     await pumpMarkdown(tester, 'first\n\nsecond', caret: true);
     expect(find.text('first'), findsOneWidget);
-    expect(find.text('second▌'), findsOneWidget);
+    expect(find.text('second$caretGlyph'), findsOneWidget);
     final streaming = tester.getSize(find.byType(SaiMarkdown));
     await pumpMarkdown(tester, 'first\n\nsecond', caret: false);
     expect(find.text('second'), findsOneWidget);
-    expect(find.textContaining('▌'), findsNothing);
+    expect(find.textContaining(caretGlyph), findsNothing);
     expect(tester.getSize(find.byType(SaiMarkdown)).height, streaming.height);
+  });
+
+  testWidgets('the caret is a thin red bar set off from the last glyph', (
+    tester,
+  ) async {
+    await pumpMarkdown(tester, 'word', caret: true);
+    final spans = spansOf(tester, 'word$caretGlyph');
+    final caret = spans[caretGlyph]!;
+    expect(caretGlyph, startsWith('\u200a'));
+    expect(caret.fontFamily, SaiFonts.mono);
+    expect(caret.color, SaiColors.red);
+    expect(caret.height, _body.height);
+    expect(spans['word']!.fontFamily, _body.fontFamily);
   });
 
   testWidgets('the caret rides a list from inside its last item', (
     tester,
   ) async {
     await pumpMarkdown(tester, '- alpha\n- beta', caret: true);
-    expect(find.text('beta▌'), findsOneWidget);
+    expect(find.text('beta$caretGlyph'), findsOneWidget);
   });
 
   testWidgets('fenced code gets a card, a label and highlighting', (
@@ -212,7 +225,7 @@ void main() {
   ) async {
     await pumpMarkdown(tester, 'Here:\n\n```\nfoo', caret: true);
     expect(find.text('TEXT'), findsOneWidget);
-    expect(find.text('foo▌'), findsOneWidget);
+    expect(find.text('foo$caretGlyph'), findsOneWidget);
   });
 
   testWidgets('the reference sample matches its golden', (tester) async {
@@ -265,12 +278,12 @@ no language here
     tester,
   ) async {
     await pumpMarkdown(tester, 'text\n\n***', caret: true);
-    expect(find.text('text▌'), findsOneWidget);
+    expect(find.text('text$caretGlyph'), findsOneWidget);
   });
 
   testWidgets('a whitespace-only stream still shows the caret', (tester) async {
     await pumpMarkdown(tester, '\n', caret: true);
-    expect(find.text('▌'), findsOneWidget);
+    expect(find.text(caretGlyph), findsOneWidget);
   });
 
   testWidgets('an absurd fence tag ellipsises instead of overflowing', (

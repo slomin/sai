@@ -9,6 +9,7 @@ import '../theme/sai_tokens.dart';
 import 'chat_composer.dart';
 import 'chat_keys.dart';
 import 'markdown/sai_markdown.dart';
+import 'waiting_dots.dart';
 
 export 'chat_keys.dart';
 
@@ -238,11 +239,17 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
                           _Row(
                             who: 'sai',
                             reasoning: reasoningOn ? state.reasoning : null,
-                            text: state.streaming!.isEmpty
-                                ? (state.reasoning == null ? '…' : 'thinking…')
-                                : state.streaming!,
-                            markdown: state.streaming!.isNotEmpty,
-                            caret: state.streaming!.isNotEmpty,
+                            text: state.streaming!,
+                            leading: state.streaming!.isEmpty
+                                ? WaitingDots(
+                                    key: chatWaitingKey,
+                                    label: state.reasoning == null
+                                        ? 'Waiting for sai'
+                                        : 'sai is thinking',
+                                  )
+                                : null,
+                            markdown: true,
+                            caret: true,
                             note: state.tasksWithheld
                                 ? tasksWithheldWord
                                 : null,
@@ -285,6 +292,7 @@ class _Row extends StatelessWidget {
     required this.text,
     this.markdown = false,
     this.caret = false,
+    this.leading,
     this.reasoning,
     this.note,
     this.error,
@@ -299,6 +307,9 @@ class _Row extends StatelessWidget {
 
   /// Whether the streaming cursor follows the last block.
   final bool caret;
+
+  /// What stands where the answer will: the waiting dots (#99).
+  final Widget? leading;
 
   /// The model's thinking, shown dimmed above the answer when the
   /// setting is on; null hides it.
@@ -338,6 +349,7 @@ class _Row extends StatelessWidget {
                 fontStyle: FontStyle.italic,
               ),
             ),
+          ?leading,
           if (text.isNotEmpty)
             markdown
                 ? SaiMarkdown(text, style: bodyStyle, caret: caret)

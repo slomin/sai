@@ -105,6 +105,13 @@ class ChatComposer extends ConsumerWidget {
                     keyboardType: TextInputType.multiline,
                     textInputAction: TextInputAction.newline,
                     style: text.body.copyWith(color: SaiColors.sheetText),
+                    // A thin, light caret on the dark card (#99); its
+                    // blink is a hard on/off, so nothing fades over a
+                    // glyph.
+                    cursorColor: SaiColors.sheetText,
+                    cursorWidth: 1.5,
+                    cursorRadius: const Radius.circular(1),
+                    cursorOpacityAnimates: false,
                     decoration: InputDecoration(
                       hintText: 'Ask sai…',
                       hintStyle: text.body.copyWith(color: SaiColors.sheetDim),

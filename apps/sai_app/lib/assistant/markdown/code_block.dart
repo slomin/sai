@@ -14,6 +14,7 @@ import '../../theme/sai_theme.dart';
 import '../../theme/sai_tokens.dart';
 import '../../widgets/glyph_button.dart';
 import 'code_syntax.dart';
+import 'markdown_inline.dart';
 
 class CodeBlock extends StatefulWidget {
   const CodeBlock(
@@ -127,7 +128,7 @@ class _CodeBlockState extends State<CodeBlock> {
               TextSpan(
                 children: [
                   ..._spans,
-                  if (widget.caret) const TextSpan(text: '▌'),
+                  if (widget.caret) MarkdownStyles(widget.style).caret,
                 ],
               ),
               style: widget.style,

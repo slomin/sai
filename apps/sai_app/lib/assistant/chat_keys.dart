@@ -11,6 +11,9 @@ const chatFieldKey = Key('chat-field');
 /// The transcript list.
 const chatTranscriptKey = Key('chat-transcript');
 
+/// The waiting dots, between the question and the first delta (#99).
+const chatWaitingKey = Key('chat-waiting');
+
 /// A reasoning block, when shown.
 const chatReasoningKey = Key('chat-reasoning');
 

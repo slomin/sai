@@ -72,4 +72,7 @@ abstract final class SaiDurations {
 
   /// The slot a drag opens between rows (#98).
   static const gap = Duration(milliseconds: 150);
+
+  /// One breath of the waiting dots (#99).
+  static const pulse = Duration(milliseconds: 1200);
 }
