@@ -96,6 +96,25 @@ void main() {
       expect(dot(tester), SaiColors.green);
     });
 
+    testWidgets('a credentialed provider in dev is red: no credentials', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester, identity: SaiIdentity.dev);
+      final settings = container.read(settingsProvider.notifier);
+      settings.upsertProvider(
+        ProviderConfig(
+          id: 'lan',
+          kind: 'fake',
+          defaultModel: 'qwen',
+          credential: 'provider:lan',
+        ),
+      );
+      settings.selectLlm('lan');
+      await tester.pump();
+      expect(dot(tester), SaiColors.red);
+      expect(word(tester), 'NO CREDENTIALS IN DEV');
+    });
+
     testWidgets('a misconfigured provider is red: misconfigured', (
       tester,
     ) async {
