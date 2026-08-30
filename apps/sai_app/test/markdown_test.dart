@@ -257,6 +257,19 @@ no language here
     );
   });
 
+  testWidgets('a streaming turn matches its golden', (tester) async {
+    await pumpMarkdown(
+      tester,
+      '## Half an answer\n\nThe first paragraph is whole, the second is '
+      'still arriving with a `span` in it and the cursor after',
+      caret: true,
+    );
+    await expectLater(
+      find.byType(SaiMarkdown),
+      matchesGoldenFile('goldens/assistant-streaming.png'),
+    );
+  });
+
   testWidgets('a tilde fence holds its partial closing line too', (
     tester,
   ) async {

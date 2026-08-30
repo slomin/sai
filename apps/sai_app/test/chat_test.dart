@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/assistant/assistant_band.dart';
+import 'package:sai_app/assistant/markdown/code_block.dart';
 import 'package:sai_app/assistant/waiting_dots.dart';
 import 'package:sai_app/commands.dart';
 import 'package:sai_app/workspace/task_list_pane.dart';
@@ -469,6 +470,33 @@ void main() {
         // No RenderFlex overflow is the assertion; the field scrolls.
         expect(find.byKey(chatFieldKey), findsOneWidget);
       });
+    });
+
+    testWidgets('a scaled, narrow, streaming transcript neither overflows '
+        'nor jumps (#99)', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(900, 600);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      fake = FakeLlmProvider(
+        script: (_) =>
+            '# Plan\n\nA **long** first paragraph that has to wrap more '
+            'than once at this width and scale, and then some.\n\n'
+            '```dart\nvoid main() { print("a line wide enough to scroll '
+            'sideways in the card"); }\n```\n\nDone.',
+        delta: const Duration(milliseconds: 20),
+      );
+      final container = await ready(tester);
+      await ask(tester, 'go');
+      await until(tester, () => find.byType(CodeBlock).evaluate().isNotEmpty);
+      final card = tester.getSize(find.byType(CodeBlock));
+      await until(tester, () => container.read(chatProvider).turns.length == 2);
+      // No RenderFlex overflow is the assertion — flutter_test fails on
+      // one — and the fence kept its height as the answer finished.
+      expect(tester.getSize(find.byType(CodeBlock)).height, card.height);
+      expect(find.text('Done.'), findsOneWidget);
     });
 
     group('waiting (#99)', () {
