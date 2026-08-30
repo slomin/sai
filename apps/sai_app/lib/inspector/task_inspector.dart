@@ -9,7 +9,9 @@ import '../theme/sai_tokens.dart';
 import '../widgets/eyebrow.dart';
 import '../widgets/sai_dialog.dart';
 import '../workspace/dates.dart';
+import '../workspace/move_sheet.dart';
 import '../workspace/task_commands.dart';
+import '../workspace/task_menu.dart';
 import 'checklist_editor.dart';
 import 'commit_field.dart';
 import 'field_row.dart';
@@ -26,6 +28,7 @@ const inspectorNotesKey = Key('inspector-notes');
 const inspectorPrimaryKey = Key('inspector-primary');
 const inspectorCancelKey = Key('inspector-cancel');
 const inspectorDeleteKey = Key('inspector-delete');
+const inspectorMoveKey = Key('inspector-move');
 
 /// The reference's pane is 400 px beside the list; a narrower main column
 /// gives the list 320 px and the pane the rest, down to 300. Below a
@@ -60,14 +63,9 @@ class TaskInspector extends ConsumerWidget {
     final open = task.status == TaskStatus.open;
 
     Future<void> delete() async {
-      final answer = await confirmAction(
-        context,
-        eyebrow: 'Task',
-        title: 'Delete “${task.title}”?',
-        body: 'It moves to the Trash; the archive keeps its history.',
-        confirm: 'Delete',
-      );
-      if (answer.confirmed) await commands.delete(task.id);
+      if (await confirmDeleteTask(context, task)) {
+        await commands.delete(task.id);
+      }
     }
 
     return Container(
@@ -152,6 +150,15 @@ class TaskInspector extends ConsumerWidget {
                       onManage: () => showTagsDialog(context),
                     ),
                   ),
+                  if (!deleted)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        key: inspectorMoveKey,
+                        onPressed: () => showMoveSheet(context, task.id),
+                        child: const Text('Move / Schedule…'),
+                      ),
+                    ),
                   const SizedBox(height: 24),
                   ChecklistEditor(
                     items: task.checklist,
