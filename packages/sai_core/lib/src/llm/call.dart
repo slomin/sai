@@ -5,18 +5,27 @@ import 'failure.dart';
 
 enum LlmRole { system, user, assistant }
 
+/// What task data a message or request context may quote (#105): none,
+/// the compact Today/Upcoming lists a cloud provider may see, or the
+/// complete catalog only a local provider ever receives. The value never
+/// goes on the wire or into the archive — it exists so [LlmRequest.forCloud]
+/// can drop what a cloud provider must not see (ADR 0010, 0011).
+enum TaskProvenance { none, compact, catalog }
+
 /// One turn of the conversation as sent to the model.
 final class LlmMessage {
-  const LlmMessage(this.role, this.text, {this.taskData = false});
+  const LlmMessage(
+    this.role,
+    this.text, {
+    this.provenance = TaskProvenance.none,
+  });
 
   final LlmRole role;
   final String text;
 
-  /// Whether [text] may carry task data — an earlier answer given with
-  /// the list in view. The recorder drops such messages together with
-  /// [LlmRequest.taskContext] when the policy withholds the list (ADR
-  /// 0010, 0011); the flag never goes on the wire or into the archive.
-  final bool taskData;
+  /// What task data [text] may quote — an earlier answer given with the
+  /// compact lists or the catalog in view. See [TaskProvenance].
+  final TaskProvenance provenance;
 
   /// `text`, not `content`: the archive already says `chat.message.text`.
   Map<String, Object?> toJson() => {'role': role.name, 'text': text};
@@ -35,13 +44,27 @@ final class LlmRequest {
     this.maxTokens,
     this.temperature,
     this.taskContext,
+    TaskProvenance? taskContextProvenance,
     this.reasoning,
-  }) : messages = List.unmodifiable(messages) {
+  }) : messages = List.unmodifiable(messages),
+       taskContextProvenance =
+           taskContextProvenance ??
+           (taskContext == null
+               ? TaskProvenance.none
+               : TaskProvenance.compact) {
     if (messages.isEmpty) {
       throw ArgumentError('a request needs at least one message');
     }
     if (taskContext != null && taskContext!.isEmpty) {
       throw ArgumentError('taskContext, when given, must not be empty');
+    }
+    if ((taskContext == null) !=
+        (this.taskContextProvenance == TaskProvenance.none)) {
+      throw ArgumentError(
+        'taskContextProvenance must be none exactly when there is no '
+        'taskContext, got ${this.taskContextProvenance.name} with'
+        '${taskContext == null ? 'out' : ''} a context',
+      );
     }
     if (model != null && model!.isEmpty) {
       throw ArgumentError('model, when given, must not be empty');
@@ -65,25 +88,58 @@ final class LlmRequest {
   /// Personal data the policy may withhold; see the class note.
   final String? taskContext;
 
+  /// What shape [taskContext] is (#105): [TaskProvenance.none] exactly
+  /// when there is no context — the constructor enforces it. A catalog
+  /// context can never reach a cloud provider, whatever the switch says.
+  final TaskProvenance taskContextProvenance;
+
   /// Whether the model may think before it answers: false asks the
   /// backend not to (`reasoning_effort: none` on an OpenAI-compatible
   /// wire); null leaves it to the backend's default.
   final bool? reasoning;
 
-  /// The same request without its task context.
-  /// The request without the list: no [taskContext], and none of the
-  /// messages flagged [LlmMessage.taskData]. What the recorder sends to
-  /// a provider the policy withholds the list from.
-  LlmRequest withoutTaskContext() => LlmRequest(
-    messages: [
-      for (final m in messages)
-        if (!m.taskData) m,
-    ],
-    model: model,
-    maxTokens: maxTokens,
-    temperature: temperature,
-    reasoning: reasoning,
-  );
+  /// The request as a cloud provider may receive it (#105). Catalog data
+  /// never goes to the cloud: a catalog [taskContext] and catalog-flagged
+  /// history are dropped whatever the arguments say. With
+  /// [sendTaskContext] false the (compact) context is dropped too; with
+  /// [keepCompactHistory] false, compact-flagged history goes with it.
+  /// A dropped answer takes the user question just before it along — a
+  /// pair goes as a whole (ADR 0011), so the governed history never
+  /// carries two user lines in a row. The recorder is the only
+  /// production caller (ADR 0010).
+  LlmRequest forCloud({
+    required bool sendTaskContext,
+    required bool keepCompactHistory,
+  }) {
+    final context =
+        sendTaskContext && taskContextProvenance == TaskProvenance.compact;
+    final kept = <LlmMessage>[];
+    for (final m in messages) {
+      final keep = switch (m.provenance) {
+        TaskProvenance.none => true,
+        TaskProvenance.compact => keepCompactHistory,
+        TaskProvenance.catalog => false,
+      };
+      if (keep) {
+        kept.add(m);
+      } else if (m.role == LlmRole.assistant &&
+          kept.isNotEmpty &&
+          kept.last.role == LlmRole.user) {
+        kept.removeLast();
+      }
+    }
+    return LlmRequest(
+      messages: kept,
+      model: model,
+      maxTokens: maxTokens,
+      temperature: temperature,
+      taskContext: context ? taskContext : null,
+      taskContextProvenance: context
+          ? taskContextProvenance
+          : TaskProvenance.none,
+      reasoning: reasoning,
+    );
+  }
 
   /// The same request with the reasoning switch left to the backend —
   /// for a backend that rejected the switch.
@@ -93,6 +149,7 @@ final class LlmRequest {
     maxTokens: maxTokens,
     temperature: temperature,
     taskContext: taskContext,
+    taskContextProvenance: taskContextProvenance,
   );
 
   /// The messages as they go on the wire: [taskContext], when present, as
@@ -107,7 +164,7 @@ final class LlmRequest {
     }
     return List.unmodifiable([
       ...messages.take(at),
-      LlmMessage(LlmRole.system, context),
+      LlmMessage(LlmRole.system, context, provenance: taskContextProvenance),
       ...messages.skip(at),
     ]);
   }

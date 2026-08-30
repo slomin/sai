@@ -20,7 +20,9 @@ void main() {
   test('differs when the list differs or is withheld', () {
     final request = LlmRequest(messages: messages, taskContext: 'Today: x');
     final sent = contextHash(request.sent);
-    final withheld = contextHash(request.withoutTaskContext().sent);
+    final withheld = contextHash(
+      request.forCloud(sendTaskContext: false, keepCompactHistory: false).sent,
+    );
     expect(sent, isNot(withheld));
     expect(
       contextHash(LlmRequest(messages: messages, taskContext: 'Today: y').sent),

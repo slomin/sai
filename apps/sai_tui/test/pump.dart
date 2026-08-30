@@ -29,6 +29,9 @@ ProviderContainer testContainer({
       // or the LAN box unless it asks for them.
       builtinLlmsProvider.overrideWithValue(builtins),
       defaultLlmIdProvider.overrideWithValue(null),
+      // The status row watches the warmer; a test provider must never
+      // be sent a background inference (#105).
+      warmEnabledProvider.overrideWithValue(false),
       // The product default (#97) unless a test is about the row leaving;
       // null reads the setting through, for the CLI that sets it.
       if (finishedTasks != null)

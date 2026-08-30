@@ -38,6 +38,21 @@ void main() {
     return container;
   }
 
+  test('the status row shows the warm-up and its estimate (#105)', () async {
+    await testNocterm('warming', (tester) async {
+      await pumpTui(
+        tester,
+        overrides: [
+          cacheWarmerProvider.overrideWithBuild(
+            (ref, notifier) =>
+                const WarmState(WarmPhase.warming, fraction: 0.43),
+          ),
+        ],
+      );
+      expect(tester.terminalState, containsText('warming up 43%'));
+    });
+  });
+
   test('an empty archive shows the greeting and the key hints', () async {
     await testNocterm('empty', (tester) async {
       await pumpTui(tester);

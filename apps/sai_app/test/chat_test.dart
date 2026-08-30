@@ -52,6 +52,20 @@ void main() {
     expect(find.textContaining('assistant'), findsOneWidget);
   });
 
+  testWidgets('the header shows the warm-up and its estimate (#105)', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      overrides: [
+        cacheWarmerProvider.overrideWithBuild(
+          (ref, notifier) => const WarmState(WarmPhase.warming, fraction: 0.43),
+        ),
+      ],
+    );
+    expect(find.textContaining('warming up 43%'), findsOneWidget);
+  });
+
   testWidgets('Cmd+J tucks the band away, then opens it and focuses it', (
     tester,
   ) async {

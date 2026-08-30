@@ -213,6 +213,62 @@ void main() {
       ]);
     });
 
+    test('sharing on keeps compact history but never catalog turns', () async {
+      policy = const PrivacyPolicy(shareTasksWithCloud: true);
+      final call = await recorder.start(
+        cloud(),
+        LlmRequest(
+          messages: const [
+            LlmMessage(LlmRole.user, 'due?'),
+            LlmMessage(
+              LlmRole.assistant,
+              'Call mom @today',
+              provenance: TaskProvenance.compact,
+            ),
+            LlmMessage(LlmRole.user, 'and the trash?'),
+            LlmMessage(
+              LlmRole.assistant,
+              'Old secret plan',
+              provenance: TaskProvenance.catalog,
+            ),
+            LlmMessage(LlmRole.user, 'now?'),
+          ],
+          taskContext: 'Today: buy milk',
+        ),
+      );
+      final result = await call.done;
+      expect(result.text, contains('Call mom'));
+      expect(result.text, contains('Today: buy milk'));
+      expect(result.text, isNot(contains('Old secret plan')));
+      // The dropped answer takes its question with it (ADR 0011).
+      expect(result.text, isNot(contains('and the trash?')));
+      expect(jsonEncode(lines()), isNot(contains('Old secret plan')));
+    });
+
+    test('sharing off drops task-bearing history without a context', () async {
+      policy = const PrivacyPolicy();
+      final call = await recorder.start(
+        cloud(),
+        LlmRequest(
+          messages: const [
+            LlmMessage(LlmRole.user, 'due?'),
+            LlmMessage(
+              LlmRole.assistant,
+              'Call mom @today',
+              provenance: TaskProvenance.compact,
+            ),
+            LlmMessage(LlmRole.user, 'now?'),
+          ],
+        ),
+      );
+      final result = await call.done;
+      expect(result.text, 'user:now?');
+      expect(jsonEncode(lines()), isNot(contains('Call mom')));
+      // Nothing was withheld — the request carried no context — but the
+      // history still went without its task-bearing turns.
+      expect(call.taskContextWithheld, isFalse);
+    });
+
     test('the policy is read when the call starts, not before', () async {
       final first = await recorder.start(cloud(), withTasks('a'));
       await first.done;
@@ -438,6 +494,20 @@ void main() {
     expect(lines(), isEmpty);
   });
 
+  test('assembly measures the recorded request to the byte', () async {
+    final request = LlmRequest(
+      messages: const [LlmMessage(LlmRole.user, 'due? — "quoted" ż')],
+      taskContext: 'Today: buy milk',
+    );
+    final call = await recorder.start(FakeLlmProvider(), request);
+    await call.done;
+    final payload = lines()[0]['payload'];
+    expect(
+      utf8.encode(jsonEncode(payload)).length,
+      recordedRequestBytes(request),
+    );
+  });
+
   test('the request line exists before the provider is started', () async {
     final fake = _SpyProvider(() => lines().length);
     final call = await recorder.start(fake, ask('x'));
@@ -456,14 +526,19 @@ void main() {
       LlmRequest(
         messages: const [
           LlmMessage(LlmRole.user, 'due?'),
-          LlmMessage(LlmRole.assistant, 'Call mom @today', taskData: true),
+          LlmMessage(
+            LlmRole.assistant,
+            'Call mom @today',
+            provenance: TaskProvenance.compact,
+          ),
           LlmMessage(LlmRole.user, 'and?'),
         ],
         taskContext: 'Today: Call mom',
       ),
     );
     final result = await call.done;
-    expect(result.text, 'user:due? user:and?');
+    // The answer's question goes with it, keeping the roles alternating.
+    expect(result.text, 'user:and?');
     expect(jsonEncode(lines()), isNot(contains('Call mom')));
     expect(call.taskContextWithheld, isTrue);
   });

@@ -263,6 +263,118 @@ void main() {
         );
       });
     });
+
+    group('catalog shape (#105)', () {
+      test('carries the whole catalog, provenance and all', () {
+        final out = assembleContext(
+          profile: defaultProfile,
+          projection: fixture(),
+          today: today,
+          history: const [],
+          draft: 'what did I finish?',
+          shape: TaskContextShape.catalog,
+        );
+        expect(out.request.taskContext, taskCatalog(fixture(), today: today));
+        expect(out.request.taskContextProvenance, TaskProvenance.catalog);
+        expect(out.request.taskContext, contains('Old thing'));
+        expect(out.dropped, isEmpty);
+      });
+
+      test('cuts turns then memory, never the catalog', () {
+        final big = 'x' * 400;
+        final catalog = taskCatalog(fixture(), today: today);
+        final need =
+            estimateTokens('p') +
+            estimateTokens('now') +
+            estimateTokens(catalog);
+        final out = assembleContext(
+          profile: 'p',
+          memory: big,
+          projection: fixture(),
+          today: today,
+          history: [
+            LlmMessage(LlmRole.user, big),
+            LlmMessage(LlmRole.assistant, big),
+          ],
+          draft: 'now',
+          budget: ContextBudget(maxTokens: need + 110, replyReserve: 100),
+          shape: TaskContextShape.catalog,
+        );
+        expect(out.dropped, ['turns:2', 'memory']);
+        expect(out.request.taskContext, catalog);
+      });
+
+      test('past that it refuses rather than shrink the catalog', () {
+        expect(
+          () => assembleContext(
+            profile: 'p',
+            projection: fixture(),
+            today: today,
+            history: const [],
+            draft: 'now',
+            budget: const ContextBudget(maxTokens: 120, replyReserve: 100),
+            shape: TaskContextShape.catalog,
+          ),
+          throwsA(isA<ContextBudgetError>()),
+        );
+      });
+    });
+
+    group('the exact-size preflight (#105)', () {
+      // A window so large only the byte ceiling is in play. JSON doubles
+      // a quote character, so the estimate (raw bytes / 4) stays far
+      // under the token budget while the encoded payload crosses the cap.
+      const roomy = ContextBudget(maxTokens: 1000000, replyReserve: 4096);
+      final heavy = '"' * 400000;
+
+      test('escape-heavy history is cut by encoded size', () {
+        final out = assembleContext(
+          profile: 'p',
+          projection: TaskProjection.empty,
+          today: today,
+          history: [
+            LlmMessage(LlmRole.user, heavy),
+            LlmMessage(LlmRole.assistant, heavy),
+            const LlmMessage(LlmRole.user, 'recent'),
+            const LlmMessage(LlmRole.assistant, 'yes'),
+          ],
+          draft: 'now',
+          budget: roomy,
+        );
+        expect(out.dropped, ['turns:2']);
+        expect(
+          recordedRequestBytes(out.request),
+          lessThanOrEqualTo(maxRecordedTextBytes),
+        );
+      });
+
+      test('past every cut it refuses with the exact size', () {
+        expect(
+          () => assembleContext(
+            profile: '"' * 600000,
+            projection: TaskProjection.empty,
+            today: today,
+            history: const [],
+            draft: 'now',
+            budget: roomy,
+          ),
+          throwsA(
+            isA<ContextSizeError>()
+                .having(
+                  (e) => e.bytes,
+                  'bytes',
+                  greaterThan(maxRecordedTextBytes),
+                )
+                .having((e) => e.limit, 'limit', maxRecordedTextBytes)
+                .having(
+                  (e) => e.toString(),
+                  'message',
+                  contains('once recorded'),
+                ),
+          ),
+        );
+      });
+    });
   });
 
   test('estimateTokens rounds four bytes up to a token', () {

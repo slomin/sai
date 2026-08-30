@@ -25,8 +25,10 @@ final bandSelectionTheme = TextSelectionThemeData(
 
 /// What the empty band says.
 const chatEmptyHint =
-    'Ask about your list — what is due, what is coming up, how the day '
-    'looks. The assistant reads Today and Upcoming; it cannot change them.';
+    'Ask about your list — what is due, what is coming up, what you '
+    'finished. A local model sees every task, Logbook and Trash included; '
+    'a cloud one reads at most Today and Upcoming. The assistant cannot '
+    'change your tasks.';
 
 /// How tall the open band's body is for a main column of [height]: about
 /// two fifths, within bounds, so a short window keeps its list.
@@ -60,6 +62,11 @@ class AssistantBand extends ConsumerWidget {
     final commands = AppCommands.of(context);
     final status = ref.watch(llmStatusProvider);
     final connection = ref.watch(connectionProvider);
+    // Watching also keeps the warmer alive for the app's life (#105).
+    final warm = ref.watch(cacheWarmerProvider);
+    final shown = warm.phase == WarmPhase.warming
+        ? '$status · ${warmingWord(warm.fraction)}'
+        : status;
     return Container(
       decoration: const BoxDecoration(
         color: SaiColors.sheetBg,
@@ -70,7 +77,7 @@ class AssistantBand extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _Header(
-            status: status,
+            status: shown,
             connection: connection,
             open: open,
             onTap: commands.toggleChat,

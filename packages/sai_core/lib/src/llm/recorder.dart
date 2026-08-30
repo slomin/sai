@@ -16,6 +16,30 @@ import 'provider.dart';
 /// this, measured after encoding, so escapes cannot push a line over.
 const maxRecordedTextBytes = 512 << 10;
 
+/// The `provider.request` payload as recorded: the [request]'s messages
+/// with `context_hash` [hash] (ADR 0007, 0011). Public so assembly can
+/// measure a turn with the recorder's own encoder before anything is
+/// written (#105).
+Map<String, Object?> recordedRequestPayload(LlmRequest request, BlobRef hash) =>
+    {
+      'messages': [for (final m in request.messages) m.toJson()],
+      if (request.maxTokens != null) 'max_tokens': request.maxTokens,
+      if (request.temperature != null) 'temperature': request.temperature,
+      if (request.reasoning != null) 'reasoning': request.reasoning,
+      'context_hash': hash.toString(),
+    };
+
+/// The exact bytes [request]'s `provider.request` payload takes once
+/// recorded — assembled, hashed and JSON-encoded exactly as
+/// [LlmRecorder.start] measures it. For a local provider this is the
+/// recorded size to the byte; for a cloud one it is an upper bound (the
+/// policy can only shrink the request).
+int recordedRequestBytes(LlmRequest request) {
+  final sent = request.assembled();
+  final payload = recordedRequestPayload(sent, contextHash(sent.messages));
+  return utf8.encode(jsonEncode(payload)).length;
+}
+
 /// The most of a failure message that is recorded.
 const maxRecordedMessageBytes = 4 << 10;
 
@@ -59,12 +83,18 @@ final class LlmRecorder {
   /// request is too large to record: what cannot be recorded is not sent.
   Future<RecordedCall> start(LlmProvider provider, LlmRequest request) async {
     final decision = policy().decide(provider.privacy, request);
-    final governed = decision != null && decision.withheld
-        ? request.withoutTaskContext()
-        : request;
+    // Local goes untouched; a cloud request is governed even when there
+    // is nothing to withhold — task-bearing history follows the switch,
+    // and catalog turns never go to the cloud at all (#105).
+    final governed = decision == null
+        ? request
+        : request.forCloud(
+            sendTaskContext: !decision.withheld,
+            keepCompactHistory: decision.shareTasks,
+          );
     final sent = governed.assembled();
     final hash = contextHash(sent.messages);
-    final payload = _requestPayload(sent, hash);
+    final payload = recordedRequestPayload(sent, hash);
     if (utf8.encode(jsonEncode(payload)).length > maxRecordedTextBytes) {
       throw ArgumentError(
         'request exceeds $maxRecordedTextBytes bytes and would not be '
@@ -256,19 +286,6 @@ final class LlmRecorder {
     }
     return endpointOrigin(uri);
   }
-
-  /// The request as sent plus `context_hash`, the blobref of its
-  /// messages (ADR 0011).
-  static Map<String, Object?> _requestPayload(
-    LlmRequest request,
-    BlobRef hash,
-  ) => {
-    'messages': [for (final m in request.messages) m.toJson()],
-    if (request.maxTokens != null) 'max_tokens': request.maxTokens,
-    if (request.temperature != null) 'temperature': request.temperature,
-    if (request.reasoning != null) 'reasoning': request.reasoning,
-    'context_hash': hash.toString(),
-  };
 
   /// [base] plus `text`, cut on a rune boundary until the whole payload
   /// encodes within [maxRecordedTextBytes]; a cut adds `truncated` with

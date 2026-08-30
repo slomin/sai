@@ -63,7 +63,8 @@ class ChatPane extends StatelessComponent {
         Expanded(
           child: rows.isEmpty
               ? Text(
-                  'Ask about your list — Today and Upcoming are what sai sees.',
+                  'Ask about your list — a local model sees all of it, '
+                  'a cloud one Today and Upcoming.',
                   style: TextStyle(color: Colors.gray),
                 )
               : ListView(controller: scroll, lazy: true, children: rows),

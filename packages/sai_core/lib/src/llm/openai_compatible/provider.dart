@@ -298,7 +298,14 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     late final StreamSubscription<SseEvent> sub;
     sub = response
         .transform(sseEvents())
-        .transform(_deadlines(deadlines.firstToken, deadlines.interToken))
+        .transform(
+          _deadlines(
+            // Scaled to the prompt: ingestion of a whole-catalog turn
+            // legitimately takes minutes (#105).
+            deadlines.firstTokenFor(utf8.encode(body).length),
+            deadlines.interToken,
+          ),
+        )
         .listen(
           (event) {
             if (event.comment) return;

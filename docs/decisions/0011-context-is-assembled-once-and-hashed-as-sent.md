@@ -103,3 +103,75 @@ put the privacy check in the recorder and asked #34 to carry the list on
   twice); putting the list in a message from the caller (ADR 0010
   could not withhold it); persisting the transcript outside the archive
   (a second store for what the log already holds).
+
+## Amendment (2026-08-30, #105)
+
+Two context shapes now exist, and the follow-ups above landed:
+
+- **Compact and catalog.** The compact shape is what this ADR described:
+  Today and Upcoming, byte-identical to before, the most a cloud
+  provider may ever see. The catalog shape (`taskCatalog`,
+  `src/context/catalog.dart`) is the complete collection — every
+  projected task exactly once, open, finished and trashed, with notes,
+  checklist state, tag titles, placement titles and lifecycle stamps,
+  grouped Open/Logbook/Trash and delimited as untrusted data (structure
+  at column 0, user content never) — and goes only to a provider tagged
+  `local`. The chat maps the active provider's privacy tag to the
+  shape; assembly still knows nothing of providers.
+- **Provenance is three-valued.** `LlmMessage.taskData` became
+  `LlmMessage.provenance` (`none | compact | catalog`), still never on
+  the wire or in a hash. The recorder governs every cloud request
+  through `LlmRequest.forCloud`: catalog-flagged history and a catalog
+  context are always dropped — the sharing switch covers the compact
+  lists only — while compact-flagged history and context follow the
+  switch, now also when the request happens to carry no context of its
+  own. A dropped answer takes its user question with it, so the "pairs
+  go as a whole" rule above holds on the governed request too — the
+  wire never carries two user lines in a row.
+- **The budget follows the probed window.** The `Connection` notifier's
+  periodic probe files each endpoint's reported context window in a
+  retained per-provider map — retained no further than its own truth:
+  a healthy probe that reports no window clears the entry, and editing
+  or removing a provider's configuration clears it too, so an id
+  re-pointed at another backend falls back to the conservative default
+  instead of riding the old number (only a failed probe leaves the last
+  report standing); `chatBudgetProvider` gives a turn the
+  active local provider's window with the standing 4 096-token reserve,
+  or the conservative 8 000-token default (no report yet, an
+  unprobeable provider, any cloud provider). A send reads it
+  synchronously and never triggers a probe. The TUI holds a listener on
+  the connection for the life of the process so the probe runs there
+  too.
+- **The recordable size is checked in assembly.** The recorder's
+  512 KiB request cap is now also the second ceiling of the cut loop,
+  measured with the recorder's own encoder (`recordedRequestBytes`), so
+  an oversized turn refuses (`ContextSizeError`) before the user's
+  `chat.message` is written — previously the cap fired after the
+  append, leaving an orphaned user line. The two ceilings are
+  deliberately in different units: bytes are exact on the encoded
+  payload, the window goes through the token estimator. For the LAN
+  model's 262 144-token window the byte cap binds first.
+- **The catalog is never cut.** Its cut order is oldest turns, then
+  memory, then refusal; the compact order (turns, Upcoming days,
+  memory) and the `dropped` vocabulary are unchanged. A window at or
+  under the reply reserve refuses every send, truthfully — no clamping.
+- **Ingestion is expected to take minutes, and is paid in advance.**
+  The first-token deadline grows with the encoded request (one second
+  per 64 bytes over the flat floor — a whole-catalog turn measured
+  3 m 45 s on a 2-bit 27B laptop), so a big first turn is never cut
+  down mid-ingestion. The cache warmer (`cacheWarmerProvider`) sends
+  the shared prefix of every turn — profile and catalog, one reply
+  token, `assembleWarmup` — through the recorder whenever the active
+  local endpoint is ready and the prefix changed (debounced, never
+  while a turn runs, cancelled when one starts; a finished catalog turn
+  counts as the warm), so the endpoint's prompt cache holds the prefix
+  before the person asks and the real turn pays only for its tail. A
+  warm is a recorded call like any other: it carries the catalog, so it
+  goes through ADR 0010's one gate and into the log. The clients show
+  `warming up`, with a percentage estimated from the machine's measured
+  ingestion rate; the CLI never warms. A failed warm is retried only
+  when something changes, and never reaches a cloud provider by
+  construction (the warmer only runs for a `local` endpoint, and the
+  policy would withhold a catalog anyway).
+- Accepted limit: two identical titles in identically-titled containers
+  render indistinguishably — ids stay out of the prompt.

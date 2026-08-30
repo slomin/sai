@@ -37,6 +37,7 @@ Future<void> runSaiTui(
     container.dispose();
     return;
   }
+  keepConnectionAlive(container);
   await runApp(
     RiverpodScope(
       container: container,
@@ -49,6 +50,13 @@ Future<void> runSaiTui(
       ),
     ),
   );
+}
+
+/// Keeps the connection probe running for the process (#105): nothing
+/// the TUI renders watches [connectionProvider], and the chat budget
+/// follows the context window that probe reports.
+void keepConnectionAlive(ProviderContainer container) {
+  container.listen(connectionProvider, (_, _) {});
 }
 
 /// One line from the terminal with echo off, so the key never shows or

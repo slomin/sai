@@ -8,9 +8,11 @@ import 'app_info.dart';
 import 'identity.dart';
 import 'archive/archive.dart';
 import 'chat/chat.dart';
+import 'context/assemble.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
 import 'archive/verify_state.dart';
+import 'llm/call.dart';
 import 'llm/connection.dart';
 import 'llm/failure.dart';
 import 'llm/builtins.dart';
@@ -535,6 +537,283 @@ final endpointInfoProvider = FutureProvider.autoDispose
       return const EndpointInfo();
     });
 
+/// The context window each provider's endpoint last reported, by id
+/// (#105). Retained across selection changes, but never past its own
+/// truth: a healthy probe that reports no window clears the entry (the
+/// endpoint does not say), and editing or removing a provider's config
+/// clears it too — a re-pointed id must fall back to the conservative
+/// default, not ride the old backend's number. Only a failed probe
+/// leaves the last report standing. Fed by [Connection]'s probe and the
+/// settings mutators — a send only reads, it never asks the network.
+final contextWindowsProvider =
+    NotifierProvider<ContextWindows, Map<String, int>>(ContextWindows.new);
+
+class ContextWindows extends Notifier<Map<String, int>> {
+  @override
+  Map<String, int> build() => const {};
+
+  /// Records what [providerId]'s endpoint reported; null or nonsense
+  /// keeps what stands.
+  void report(String providerId, int? contextWindow) {
+    if (contextWindow == null || contextWindow < 1) return;
+    if (state[providerId] == contextWindow) return;
+    state = Map.unmodifiable({...state, providerId: contextWindow});
+  }
+
+  /// Forgets [providerId]'s report — its endpoint said it has none, or
+  /// its configuration changed under it.
+  void clear(String providerId) {
+    if (!state.containsKey(providerId)) return;
+    state = Map.unmodifiable({...state}..remove(providerId));
+  }
+}
+
+/// Whether the cache warmer runs at all. Test harnesses switch it off
+/// so a probeable provider in a widget test never fires an inference.
+final warmEnabledProvider = Provider<bool>((ref) => true);
+
+/// How long the catalog must sit unchanged before a warm is sent; null
+/// disables scheduling.
+final warmDebounceProvider = Provider<Duration?>(
+  (ref) => const Duration(seconds: 5),
+);
+
+/// How often the warming fraction is re-estimated; null, no ticking.
+final warmTickEveryProvider = Provider<Duration?>(
+  (ref) => const Duration(seconds: 1),
+);
+
+/// Pre-warms a local endpoint's prompt cache (#105): whenever the
+/// active provider is a reachable local endpoint and the catalog prefix
+/// has changed, [assembleWarmup]'s one-token request goes through the
+/// recorder in the background, so the minutes of prompt ingestion a
+/// large collection costs on a laptop happen before the person asks —
+/// the real turn then reuses the server's cached prefix and starts
+/// fast. Held for the session by the clients' indicator widgets; the
+/// CLI never activates it.
+final cacheWarmerProvider = NotifierProvider<CacheWarmer, WarmState>(
+  CacheWarmer.new,
+);
+
+class CacheWarmer extends Notifier<WarmState> {
+  Timer? _debounce;
+  Timer? _tick;
+  RecordedCall? _call;
+  var _epoch = 0;
+
+  /// The prefix each provider id last warmed (catalog bytes and the
+  /// reasoning flag), so an unchanged prefix is never re-sent.
+  final _warmed = <String, (String, bool?)>{};
+
+  /// The prefix each id last failed on — retried only once something
+  /// changes, so a probe-ok-but-chat-failing endpoint cannot loop.
+  final _failed = <String, (String, bool?)>{};
+
+  /// Measured ingestion per id, in recorded request bytes per second,
+  /// behind the indicator's percentage.
+  final _rates = <String, double>{};
+
+  LlmProvider? _lastProvider;
+
+  /// The key of the warm now in flight, or null. A rebuild that wants
+  /// the same key keeps the call running — the warm's own archive lines
+  /// make the TUI re-read the log every two seconds, and cancelling on
+  /// every content-identical projection turned one warm into a stutter
+  /// of one-second bursts (measured before this guard existed).
+  (String, bool?)? _inFlight;
+
+  /// The last fraction shown, so the keep path can return it.
+  double? _lastFraction;
+
+  /// Abandons any scheduled or running warm and invalidates its
+  /// continuations.
+  void _stop() {
+    _epoch++;
+    _debounce?.cancel();
+    _debounce = null;
+    _tick?.cancel();
+    _tick = null;
+    _call?.cancel();
+    _call = null;
+    _inFlight = null;
+  }
+
+  @override
+  WarmState build() {
+    // Rescheduled below when still wanted; a pending timer must not
+    // fire with stale inputs. No ref.onDispose here: a build-scoped
+    // dispose hook fires on every rebuild, which is exactly the
+    // cancel-everything the keep path below exists to avoid — the
+    // continuations guard on [Ref.mounted] instead.
+    _debounce?.cancel();
+    _debounce = null;
+    WarmState stopped() {
+      _stop();
+      return const WarmState(WarmPhase.idle);
+    }
+
+    if (!ref.watch(warmEnabledProvider)) return stopped();
+    final provider = ref.watch(activeLlmProvider);
+    if (provider == null ||
+        provider.privacy != LlmPrivacy.local ||
+        provider is! LlmEndpointProbe) {
+      return stopped();
+    }
+    if (!identical(provider, _lastProvider)) {
+      // A rebuilt provider is a changed configuration: its endpoint's
+      // cache is not ours to assume.
+      _warmed.remove(provider.id);
+      _failed.remove(provider.id);
+      _lastProvider = provider;
+      _stop();
+    }
+    final projection = ref.watch(tasksProvider).value;
+    if (projection == null) return stopped();
+    final connection = ref.watch(connectionProvider);
+    if (connection.level == ConnectionLevel.down) {
+      // A down endpoint may have restarted; what it held is gone.
+      _warmed.remove(provider.id);
+      return stopped();
+    }
+    if (connection.level != ConnectionLevel.ready) return stopped();
+    final reasoning = ref.watch(reasoningProvider) ? null : false;
+    final request = assembleWarmup(
+      profile: defaultProfile,
+      projection: projection,
+      today: ref.watch(todayProvider),
+      reasoning: reasoning,
+    );
+    final key = (request.taskContext!, reasoning);
+    // A finished local catalog turn ingested this very prefix; note it
+    // rather than re-sending 35 KB of request line after every answer.
+    ref.listen(chatProvider, (previous, next) {
+      if (previous == null || !previous.busy || next.busy) return;
+      final last = next.turns.isEmpty ? null : next.turns.last;
+      if (last != null &&
+          last.role == ChatRole.assistant &&
+          !last.failed &&
+          last.provenance == TaskProvenance.catalog &&
+          ref.mounted) {
+        _warmed[provider.id] = key;
+        state = const WarmState(WarmPhase.warm);
+      }
+    });
+    if (ref.watch(chatProvider.select((s) => s.busy))) {
+      // The slot belongs to the person's turn; the server keeps what a
+      // cancelled warm already ingested.
+      return stopped();
+    }
+    if (_inFlight == key) {
+      // The running warm is still the right one — let it finish.
+      return WarmState(WarmPhase.warming, fraction: _lastFraction);
+    }
+    if (_inFlight != null) _stop();
+    if (_warmed[provider.id] == key) return const WarmState(WarmPhase.warm);
+    if (_failed[provider.id] == key) return const WarmState(WarmPhase.idle);
+    final debounce = ref.watch(warmDebounceProvider);
+    if (debounce == null) return const WarmState(WarmPhase.idle);
+    final epoch = _epoch;
+    _debounce = Timer(debounce, () => _warm(epoch, provider, request, key));
+    return const WarmState(WarmPhase.idle);
+  }
+
+  Future<void> _warm(
+    int epoch,
+    LlmProvider provider,
+    LlmRequest request,
+    (String, bool?) key,
+  ) async {
+    if (epoch != _epoch || !ref.mounted) return;
+    final container = ref.container;
+    final bytes = recordedRequestBytes(request);
+    final known = _rates[provider.id];
+    final started = DateTime.now();
+    _inFlight = key;
+    _lastFraction = known == null ? null : 0;
+    state = WarmState(WarmPhase.warming, fraction: _lastFraction);
+    if (container.read(warmTickEveryProvider) case final every?) {
+      _tick = Timer.periodic(every, (_) {
+        if (!ref.mounted) {
+          _tick?.cancel();
+          return;
+        }
+        if (epoch != _epoch) return;
+        final rate = _rates[provider.id];
+        if (rate == null) return;
+        final elapsed =
+            DateTime.now().difference(started).inMilliseconds / 1000;
+        _lastFraction = (elapsed * rate / bytes).clamp(0.0, 0.99);
+        state = WarmState(WarmPhase.warming, fraction: _lastFraction);
+      });
+    }
+    try {
+      final recorder = await container.read(llmRecorderProvider.future);
+      if (epoch != _epoch || !ref.mounted) return;
+      final call = await recorder.start(provider, request);
+      if (epoch != _epoch || !ref.mounted) {
+        call.cancel();
+        return;
+      }
+      _call = call;
+      final result = await call.done;
+      if (epoch != _epoch || !ref.mounted) return;
+      _tick?.cancel();
+      _call = null;
+      _inFlight = null;
+      switch (result.finish) {
+        case LlmFinish.failed:
+          _failed[provider.id] = key;
+          // The light learns of transport trouble as it does from a
+          // failed turn.
+          container
+              .read(connectionProvider.notifier)
+              .callFailed(result.failure!);
+          state = const WarmState(WarmPhase.idle);
+        case LlmFinish.cancelled:
+          state = const WarmState(WarmPhase.idle);
+        case LlmFinish.stop || LlmFinish.length:
+          final seconds =
+              DateTime.now().difference(started).inMilliseconds / 1000;
+          if (seconds > 0.001) {
+            final observed = bytes / seconds;
+            final old = _rates[provider.id];
+            _rates[provider.id] = old == null ? observed : (old + observed) / 2;
+          }
+          _warmed[provider.id] = key;
+          state = const WarmState(WarmPhase.warm);
+      }
+    } on Object {
+      // An unrecordable or refused warm is only a lost optimization.
+      _failed[provider.id] = key;
+      if (epoch == _epoch && ref.mounted) {
+        _tick?.cancel();
+        _inFlight = null;
+        state = const WarmState(WarmPhase.idle);
+      }
+    }
+  }
+}
+
+/// The budget the next chat turn is assembled for (#105): the active
+/// local provider's last reported context window with the standing reply
+/// reserve, else the conservative [defaultContextBudget]. Reading it
+/// never awaits a probe — until the first probe answers, the default
+/// applies. Cloud providers stay on the default: the compact context
+/// has no use for a large window.
+final chatBudgetProvider = Provider<ContextBudget>((ref) {
+  final active = ref.watch(activeLlmProvider);
+  if (active == null || active.privacy != LlmPrivacy.local) {
+    return defaultContextBudget;
+  }
+  final window = ref.watch(contextWindowsProvider.select((w) => w[active.id]));
+  return window == null
+      ? defaultContextBudget
+      : ContextBudget(
+          maxTokens: window,
+          replyReserve: defaultContextBudget.replyReserve,
+        );
+});
+
 /// How a Things snapshot is read (#40): off the main isolate in the
 /// clients, replaced by a direct read in a widget test.
 final thingsSnapshotReaderProvider =
@@ -594,15 +873,22 @@ class SettingsNotifier extends Notifier<Settings> {
   /// to a newer sai and must not be overwritten.
   void selectLlm(String? id) => _commit(state.withLlm(id));
 
-  /// Adds [config], or replaces the provider with its id in place.
-  void upsertProvider(ProviderConfig config) =>
-      _commit(state.withProvider(config));
+  /// Adds [config], or replaces the provider with its id in place. The
+  /// id's reported context window is forgotten either way: a changed
+  /// endpoint or model makes the old number another backend's (#105).
+  void upsertProvider(ProviderConfig config) {
+    ref.read(contextWindowsProvider.notifier).clear(config.id);
+    _commit(state.withProvider(config));
+  }
 
   /// Removes the provider [id], clearing its selection if it was active.
   /// The credential, if any, stays in the secret store — removing a
   /// configuration is not revoking a key; [CredentialsNotifier.clear]
   /// is.
-  void removeProvider(String id) => _commit(state.withoutProvider(id));
+  void removeProvider(String id) {
+    ref.read(contextWindowsProvider.notifier).clear(id);
+    _commit(state.withoutProvider(id));
+  }
 
   /// Sets the cloud-sharing switch (#27).
   void setShareTasksWithCloud(bool share) =>
@@ -989,6 +1275,10 @@ class Connection extends Notifier<ConnectionStatus> {
   Timer? _timer;
   LlmEndpointProbe? _probe;
 
+  /// The selected provider's id while [_probe] is set — where a probe
+  /// answer's context window is filed (#105).
+  String? _id;
+
   /// Which selection a probe answer belongs to; an older one is dropped.
   var _epoch = 0;
 
@@ -1001,6 +1291,7 @@ class Connection extends Notifier<ConnectionStatus> {
     _timer?.cancel();
     _timer = null;
     _probe = null;
+    _id = null;
     final epoch = ++_epoch;
     ref.onDispose(() {
       _timer?.cancel();
@@ -1035,6 +1326,7 @@ class Connection extends Notifier<ConnectionStatus> {
     }
     if (active case final LlmEndpointProbe probe) {
       _probe = probe;
+      _id = id;
       scheduleMicrotask(() => _ask(epoch));
       if (ref.watch(connectionProbeEveryProvider) case final every?) {
         _timer = Timer.periodic(every, (_) => _ask(epoch));
@@ -1081,6 +1373,24 @@ class Connection extends Notifier<ConnectionStatus> {
       );
     }
     if (epoch != _epoch || request != _request || !ref.mounted) return;
+    // The probe's other answer: what window the endpoint reports, kept
+    // for the chat budget (#105). A healthy endpoint's word is final —
+    // silence means it has no window to report, so a stale one from a
+    // previous backend behind the same id is cleared. A failed probe
+    // says nothing either way.
+    if (_id case final id?) {
+      final windows = ref.read(contextWindowsProvider.notifier);
+      switch (info.health) {
+        case EndpointHealth.ok || EndpointHealth.loading:
+          if (info.contextWindow case final window?) {
+            windows.report(id, window);
+          } else {
+            windows.clear(id);
+          }
+        case EndpointHealth.unavailable || EndpointHealth.unknown:
+          break;
+      }
+    }
     state = switch (info.health) {
       EndpointHealth.ok => const ConnectionStatus.ready('ready'),
       EndpointHealth.loading => const ConnectionStatus.attention('loading'),

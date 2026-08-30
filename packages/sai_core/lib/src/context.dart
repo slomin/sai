@@ -4,4 +4,5 @@
 library;
 
 export 'context/assemble.dart';
+export 'context/catalog.dart';
 export 'context/hash.dart';

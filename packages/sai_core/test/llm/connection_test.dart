@@ -270,4 +270,113 @@ void main() {
       );
     });
   });
+
+  group('the probed context window (#105)', () {
+    test('a probe answer is retained, across selection changes too', () async {
+      final probed = _Probed(
+        const EndpointInfo(health: EndpointHealth.ok, contextWindow: 262144),
+      );
+      final c = make(builtins: [FakeLlmProvider.new, () => probed]);
+      c.read(settingsProvider.notifier).selectLlm('probed');
+      expect(c.read(connectionProvider).text, 'probing…');
+      await settle();
+      expect(c.read(contextWindowsProvider), {'probed': 262144});
+      // Selecting away does not forget what the endpoint said.
+      c.read(settingsProvider.notifier).selectLlm('fake');
+      expect(c.read(connectionProvider).text, 'ready');
+      await settle();
+      expect(c.read(contextWindowsProvider), {'probed': 262144});
+    });
+
+    test('a failed probe keeps the last report; a healthy one rules', () async {
+      final probed = _Probed(
+        const EndpointInfo(health: EndpointHealth.ok, contextWindow: 8192),
+      );
+      final c = make(builtins: [() => probed]);
+      c.read(settingsProvider.notifier).selectLlm('probed');
+      c.read(connectionProvider);
+      await settle();
+      expect(c.read(contextWindowsProvider), {'probed': 8192});
+      // Down: transient — what the endpoint last said stands.
+      probed.answer = const EndpointInfo(
+        health: EndpointHealth.unavailable,
+        failure: LlmFailure(LlmFailureKind.unreachable, 'refused'),
+      );
+      c.read(connectionProvider.notifier).refresh();
+      await settle();
+      expect(c.read(contextWindowsProvider), {'probed': 8192});
+      // Healthy without a window: this endpoint does not say — the old
+      // report would be another backend's number, so it goes.
+      probed.answer = const EndpointInfo(health: EndpointHealth.ok);
+      c.read(connectionProvider.notifier).refresh();
+      await settle();
+      expect(c.read(contextWindowsProvider), isEmpty);
+      probed.answer = const EndpointInfo(
+        health: EndpointHealth.ok,
+        contextWindow: 4096,
+      );
+      c.read(connectionProvider.notifier).refresh();
+      await settle();
+      expect(c.read(contextWindowsProvider), {'probed': 4096});
+    });
+
+    test('editing or removing a provider config clears its report', () async {
+      final c = make();
+      c.read(contextWindowsProvider.notifier).report('mine', 262144);
+      c.read(contextWindowsProvider.notifier).report('other', 8192);
+      c
+          .read(settingsProvider.notifier)
+          .upsertProvider(
+            ProviderConfig(
+              id: 'mine',
+              kind: 'openai_compatible',
+              endpoint: 'http://10.0.0.9:8080/v1',
+              defaultModel: 'm',
+            ),
+          );
+      // Re-pointed under the same id: the old backend's window would be
+      // the wrong ceiling for the new one.
+      expect(c.read(contextWindowsProvider), {'other': 8192});
+      c.read(settingsProvider.notifier).removeProvider('other');
+      expect(c.read(contextWindowsProvider), isEmpty);
+    });
+  });
+
+  group('chatBudgetProvider (#105)', () {
+    test('defaults without a provider, a window, or for cloud', () {
+      final c = make(
+        builtins: [
+          FakeLlmProvider.new,
+          () => FakeLlmProvider(id: 'cloudy', privacy: LlmPrivacy.cloud),
+        ],
+      );
+      expect(c.read(chatBudgetProvider), same(defaultContextBudget));
+      c.read(settingsProvider.notifier).selectLlm('fake');
+      expect(c.read(chatBudgetProvider), same(defaultContextBudget));
+      // A window on record helps a cloud selection not at all: the
+      // compact context has no use for it.
+      c.read(contextWindowsProvider.notifier).report('cloudy', 100000);
+      c.read(settingsProvider.notifier).selectLlm('cloudy');
+      expect(c.read(chatBudgetProvider), same(defaultContextBudget));
+    });
+
+    test('a local provider with a reported window gets it, reserve kept', () {
+      final c = make();
+      c.read(settingsProvider.notifier).selectLlm('fake');
+      c.read(contextWindowsProvider.notifier).report('fake', 262144);
+      final budget = c.read(chatBudgetProvider);
+      expect(budget.maxTokens, 262144);
+      expect(budget.replyReserve, defaultContextBudget.replyReserve);
+    });
+
+    test('reading the budget never probes', () {
+      final probed = _Probed(
+        const EndpointInfo(health: EndpointHealth.ok, contextWindow: 262144),
+      );
+      final c = make(builtins: [() => probed]);
+      c.read(settingsProvider.notifier).selectLlm('probed');
+      expect(c.read(chatBudgetProvider), same(defaultContextBudget));
+      expect(probed.probes, 0);
+    });
+  });
 }

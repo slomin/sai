@@ -26,6 +26,8 @@ const quick = OpenAiDeadlines(
   firstResponse: Duration(milliseconds: 400),
   firstToken: Duration(milliseconds: 1200),
   interToken: Duration(milliseconds: 400),
+  // No size scaling here: these tests time the flat stages.
+  ingestBytesPerSecond: 1 << 30,
 );
 
 void main() {
@@ -377,6 +379,36 @@ void main() {
         await r.close();
       };
       final result = await make().start(ask('x')).done;
+      expect(result.finish, LlmFinish.stop, reason: '${result.failure}');
+      expect(result.text, 'late');
+    });
+
+    test('the first-token deadline grows with the prompt (#105)', () async {
+      // A big prompt: the flat deadline alone (200 ms) would give up
+      // during ingestion; scaled at 1 KiB/s, a ~5 KiB body buys ~5 s.
+      const scaled = OpenAiDeadlines(
+        connect: Duration(seconds: 2),
+        firstResponse: Duration(milliseconds: 400),
+        firstToken: Duration(milliseconds: 200),
+        interToken: Duration(milliseconds: 400),
+        ingestBytesPerSecond: 1024,
+      );
+      expect(
+        scaled.firstTokenFor(5 * 1024),
+        const Duration(milliseconds: 200) + const Duration(seconds: 5),
+      );
+      stub.routes['POST /v1/chat/completions'] = (req) async {
+        final r = StubServer.sse(req);
+        r.write(': processing\n\n');
+        await r.flush();
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        StubServer.event(r, StubServer.chunk('late'));
+        StubServer.event(r, '[DONE]', json: false);
+        await r.close();
+      };
+      final result = await make(deadlines: scaled)
+          .start(ask('the catalog ${'x' * (5 * 1024)}'))
+          .done;
       expect(result.finish, LlmFinish.stop, reason: '${result.failure}');
       expect(result.text, 'late');
     });

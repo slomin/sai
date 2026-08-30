@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../llm/call.dart';
+import '../llm/recorder.dart';
 import '../tasks/capture.dart';
 import '../tasks/date.dart';
 import '../tasks/lists.dart';
@@ -8,6 +9,13 @@ import '../tasks/model.dart';
 import '../tasks/projection.dart';
 import '../tasks/sidebar.dart';
 import '../tasks/views.dart';
+import 'catalog.dart';
+
+/// Which task context a turn carries (#105): compact — Today and
+/// Upcoming, what a cloud provider may see; catalog — the complete
+/// collection, local providers only. The caller maps the provider's
+/// privacy tag to a shape; assembly itself knows nothing of providers.
+enum TaskContextShape { compact, catalog }
 
 /// The assistant's standing instructions until the profile (#31) exists.
 /// Provider-independent: the same text goes to every model.
@@ -138,6 +146,58 @@ final class ContextBudgetError implements Exception {
       'the budget allows ${budget.available}';
 }
 
+/// Thrown when what remains after every permitted cut still encodes past
+/// the archive's recordable size (#105): what cannot be recorded is not
+/// sent — and, measured here in assembly, nothing was written first.
+final class ContextSizeError implements Exception {
+  const ContextSizeError(this.bytes, this.limit);
+
+  /// The exact encoded size of the irreducible request payload.
+  final int bytes;
+
+  /// [maxRecordedTextBytes].
+  final int limit;
+
+  @override
+  String toString() =>
+      'the request would take $bytes bytes once recorded; '
+      'the archive allows $limit';
+}
+
+/// The one-word user line a warm-up carries: chat templates refuse a
+/// prompt with no user message (Qwen's jinja: "No user query found"),
+/// and the divergence it causes sits after the shared prefix, so the
+/// cached profile and catalog still serve the real turn.
+const warmupPrompt = 'ready?';
+
+/// The shared prefix of every catalog turn as a request of its own
+/// (#105): the profile and the whole catalog, the [warmupPrompt] line
+/// the template demands, one reply token. Sent ahead by the cache
+/// warmer, it lets a local endpoint ingest and cache the expensive
+/// prefix in the background, so the next real turn pays only for its
+/// own tail. Byte-identical to a turn's leading messages by
+/// construction — same profile, same renderer, same splice — and
+/// [reasoning] mirrors the chat's switch so the served template cannot
+/// differ.
+LlmRequest assembleWarmup({
+  required String profile,
+  required TaskProjection projection,
+  required CalendarDate today,
+  bool? reasoning,
+}) {
+  if (profile.isEmpty) throw ArgumentError('profile must not be empty');
+  return LlmRequest(
+    messages: [
+      LlmMessage(LlmRole.system, profile),
+      const LlmMessage(LlmRole.user, warmupPrompt),
+    ],
+    maxTokens: 1,
+    taskContext: taskCatalog(projection, today: today),
+    taskContextProvenance: TaskProvenance.catalog,
+    reasoning: reasoning,
+  );
+}
+
 /// Builds the one request a chat turn sends (ADR 0011). Pure and
 /// deterministic: the same inputs give the same request and hash.
 ///
@@ -147,9 +207,10 @@ final class ContextBudgetError implements Exception {
 /// the recorder can withhold them from a cloud provider (ADR 0010).
 ///
 /// When the estimate exceeds [budget], cuts go in a fixed order until it
-/// fits: the oldest [history] messages, then Upcoming days from the
-/// farthest back, then memory. Today and the profile are never cut;
-/// past that, [ContextBudgetError].
+/// fits — for the compact [shape]: the oldest [history] messages, then
+/// Upcoming days from the farthest back, then memory; for the catalog
+/// shape: turns, then memory — the catalog itself is never cut (#105).
+/// Today and the profile are never cut; past that, [ContextBudgetError].
 AssembledContext assembleContext({
   required String profile,
   String? memory,
@@ -159,6 +220,7 @@ AssembledContext assembleContext({
   required String draft,
   ContextBudget budget = defaultContextBudget,
   bool? reasoning,
+  TaskContextShape shape = TaskContextShape.compact,
 }) {
   final message = draft.trim();
   if (message.isEmpty) throw ArgumentError('draft must not be blank');
@@ -166,19 +228,27 @@ AssembledContext assembleContext({
   if (memory != null && memory.isEmpty) {
     throw ArgumentError('memory must be null or non-empty');
   }
-  final upcomingDays = taskView(
-    projection,
-    const ListSection(TaskList.upcoming),
-    today: today,
-  ).sections;
+  // Rendered once and never shrunk; null on the compact path, where the
+  // context is re-rendered per cut instead.
+  final catalog = shape == TaskContextShape.catalog
+      ? taskCatalog(projection, today: today)
+      : null;
+  final upcomingDays = shape == TaskContextShape.compact
+      ? taskView(
+          projection,
+          const ListSection(TaskList.upcoming),
+          today: today,
+        ).sections
+      : const <TaskViewSection>[];
 
   var keptHistory = history;
   var keptDays = upcomingDays.length;
   var keptMemory = memory;
   final dropped = <String>[];
 
-  (LlmRequest, int) build() {
-    final tasks = taskContextFor(projection, today, upcomingDays: keptDays);
+  (LlmRequest, int, int) build() {
+    final tasks =
+        catalog ?? taskContextFor(projection, today, upcomingDays: keptDays);
     final notes = keptMemory;
     final request = LlmRequest(
       messages: [
@@ -189,33 +259,44 @@ AssembledContext assembleContext({
       ],
       maxTokens: budget.replyReserve,
       taskContext: tasks,
+      taskContextProvenance: catalog != null
+          ? TaskProvenance.catalog
+          : TaskProvenance.compact,
       reasoning: reasoning,
     );
     final estimate = request.sent.fold(0, (n, m) => n + estimateTokens(m.text));
-    return (request, estimate);
+    return (request, estimate, recordedRequestBytes(request));
   }
 
-  var (request, estimate) = build();
+  // Two ceilings, deliberately in different units (#105): the token
+  // estimate against the model's window, and the payload's exact encoded
+  // size against what the archive records — measured here, before the
+  // user's line is written, so an oversized turn refuses atomically.
+  var (request, estimate, bytes) = build();
+  bool over() => estimate > budget.available || bytes > maxRecordedTextBytes;
   var droppedTurns = 0;
-  while (estimate > budget.available && keptHistory.isNotEmpty) {
+  while (over() && keptHistory.isNotEmpty) {
     final cut = keptHistory.length >= 2 ? 2 : 1;
     keptHistory = keptHistory.sublist(cut);
     droppedTurns += cut;
-    (request, estimate) = build();
+    (request, estimate, bytes) = build();
   }
   if (droppedTurns > 0) dropped.add('turns:$droppedTurns');
-  while (estimate > budget.available && keptDays > 0) {
+  while (over() && keptDays > 0) {
     keptDays--;
     dropped.add('upcoming:${upcomingDays[keptDays].title}');
-    (request, estimate) = build();
+    (request, estimate, bytes) = build();
   }
-  if (estimate > budget.available && keptMemory != null) {
+  if (over() && keptMemory != null) {
     keptMemory = null;
     dropped.add('memory');
-    (request, estimate) = build();
+    (request, estimate, bytes) = build();
   }
   if (estimate > budget.available) {
     throw ContextBudgetError(estimate, budget);
+  }
+  if (bytes > maxRecordedTextBytes) {
+    throw ContextSizeError(bytes, maxRecordedTextBytes);
   }
   return AssembledContext(
     request: request,

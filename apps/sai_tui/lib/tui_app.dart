@@ -318,13 +318,20 @@ class _TuiAppState extends State<TuiApp> {
                   Text(_notice, style: TextStyle(color: Colors.yellow)),
                 // One row, whatever the provider is called: a wrapped
                 // status would take its extra rows from the list above.
-                RiverpodConsumer<String>(
-                  provider: llmStatusProvider,
-                  builder: (context, status) => Text(
-                    status,
-                    style: TextStyle(color: Colors.gray),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                // Watching the warmer also keeps it alive for the
+                // interactive client's life (#105); the CLI never does.
+                RiverpodConsumer<WarmState>(
+                  provider: cacheWarmerProvider,
+                  builder: (context, warm) => RiverpodConsumer<String>(
+                    provider: llmStatusProvider,
+                    builder: (context, status) => Text(
+                      warm.phase == WarmPhase.warming
+                          ? '$status · ${warmingWord(warm.fraction)}'
+                          : status,
+                      style: TextStyle(color: Colors.gray),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ),
                 Text(

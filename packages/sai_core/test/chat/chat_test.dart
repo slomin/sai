@@ -102,13 +102,15 @@ void main() {
       ]);
       expect(log[0]['actor'], 'user');
       expect(log[0]['payload'], {'text': 'what is due today?'});
+      // The fake is local, so the model saw the whole catalog (#105).
+      expect(answer.provenance, TaskProvenance.catalog);
       final request = log[1]['payload']! as Map<String, Object?>;
       final sentMessages = request['messages']! as List;
       expect(sentMessages[1], {
         'role': 'system',
-        'text': taskContextFor(
+        'text': taskCatalog(
           container.read(tasksProvider).value!,
-          const CalendarDate(2026, 8, 25),
+          today: const CalendarDate(2026, 8, 25),
         ),
       });
       expect(request['context_hash'], startsWith('sha256-'));
@@ -131,7 +133,21 @@ void main() {
   );
 
   test('what the budget cut is on the answer for the client', () async {
-    final container = await make();
+    // On the compact path — a cloud provider with sharing on — so the
+    // Upcoming cut still exists to be shown.
+    final cloudy = FakeLlmProvider(
+      id: 'cloudy',
+      privacy: LlmPrivacy.cloud,
+      script: echo,
+    );
+    var budget = defaultContextBudget;
+    final container = await make(
+      extraLlms: [cloudy],
+      overrides: [chatBudgetProvider.overrideWith((ref) => budget)],
+    );
+    final settings = container.read(settingsProvider.notifier);
+    settings.selectLlm('cloudy');
+    settings.setShareTasksWithCloud(true);
     // A window that fits the profile, the draft and Today, but not the
     // Upcoming day.
     final chat = container.read(chatProvider.notifier);
@@ -146,7 +162,7 @@ void main() {
             upcomingDays: 0,
           ),
         );
-    chat.budget = ContextBudget(maxTokens: fits + 100, replyReserve: 100);
+    budget = ContextBudget(maxTokens: fits + 100, replyReserve: 100);
     await chat.send('go');
     final answer = container.read(chatProvider).turns.last;
     expect(answer.dropped, ['upcoming:2026-08-26']);
@@ -155,6 +171,29 @@ void main() {
       'context cut: upcoming:2026-08-26',
     );
     expect(answer.text, isNot(contains('Ring dentist')));
+  });
+
+  test('an oversized catalog turn writes no event at all', () async {
+    final container = await make(
+      overrides: [
+        chatBudgetProvider.overrideWith(
+          (ref) => const ContextBudget(maxTokens: 1000000, replyReserve: 4096),
+        ),
+      ],
+    );
+    final store = container.read(tasksProvider.notifier).store;
+    // Escape-heavy notes: the token estimate fits the roomy window, but
+    // the JSON-encoded request crosses the recordable cap — and there is
+    // nothing left to cut, so the send refuses before the user's
+    // chat.message is written (#105).
+    await store.createTask(title: 'Huge', notes: '"' * 400000);
+    final chat = container.read(chatProvider.notifier);
+    final before = lines().length;
+    final accepted = await chat.send('what do I have?');
+    expect(accepted, isFalse);
+    expect(container.read(chatProvider).error, contains('once recorded'));
+    expect(container.read(chatProvider).turns, isEmpty);
+    expect(lines().length, before, reason: 'no orphan chat.message');
   });
 
   test('the conversation carries forward', () async {
@@ -417,7 +456,10 @@ void main() {
       settings.selectLlm('homely');
       final chat = container.read(chatProvider.notifier);
       await chat.send('due?');
-      expect(container.read(chatProvider).turns.last.sawTasks, isTrue);
+      expect(
+        container.read(chatProvider).turns.last.provenance,
+        isNot(TaskProvenance.none),
+      );
       expect(
         container.read(chatProvider).turns.last.text,
         contains('Call mom'),
@@ -426,7 +468,9 @@ void main() {
       await chat.send('and then?');
       final answer = container.read(chatProvider).turns.last;
       expect(answer.tasksWithheld, isTrue);
-      expect(answer.text, contains('user:due?'));
+      // The catalog answer's question goes with it — the withheld
+      // request keeps its roles alternating.
+      expect(answer.text, isNot(contains('user:due?')));
       expect(answer.text, contains('user:and then?'));
       expect(answer.text, isNot(contains('Call mom')));
       expect(
@@ -436,13 +480,15 @@ void main() {
             'the first request, its response and its chat line — '
             'nothing of the second call',
       );
-      // Sharing on: the earlier answer comes back into the history.
+      // Sharing on covers the compact lists only: the first answer saw
+      // the catalog, so it stays out of the history even now (#105) —
+      // the withheld second answer, which saw nothing, may return.
       settings.setShareTasksWithCloud(true);
       await chat.send('again?');
-      expect(
-        container.read(chatProvider).turns.last.text,
-        contains('assistant:system:'),
-      );
+      final again = container.read(chatProvider).turns.last.text;
+      expect(again, isNot(contains('user:due?')));
+      expect(again, contains('user:and then?'));
+      expect(again, isNot(contains('TASK CATALOG')));
     });
 
     test('sharing on sends it', () async {

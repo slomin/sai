@@ -73,6 +73,7 @@ final class OpenAiDeadlines {
     this.firstResponse = const Duration(seconds: 30),
     this.firstToken = const Duration(minutes: 5),
     this.interToken = const Duration(seconds: 30),
+    this.ingestBytesPerSecond = 64,
   });
 
   /// TCP connect and TLS handshake.
@@ -84,10 +85,27 @@ final class OpenAiDeadlines {
   /// From the response headers to the first data event: prompt
   /// evaluation, which on a large context takes minutes on a laptop. An
   /// SSE comment (`: ping`) resets the clock without ending the wait.
+  /// The floor — [firstTokenFor] grows it with the request.
   final Duration firstToken;
 
   /// Between two later events on the stream.
   final Duration interToken;
+
+  /// The slowest prompt ingestion still treated as work in progress,
+  /// in encoded request bytes per second. A 2-bit 27B on an M-series
+  /// laptop measured ~154 B/s over a 34 KB catalog prompt (#105); 64
+  /// waits for a machine well over twice as slow before calling it
+  /// hung.
+  final int ingestBytesPerSecond;
+
+  /// The first-token deadline for a request whose encoded body is
+  /// [bodyBytes] long: the flat [firstToken] plus one second per
+  /// [ingestBytesPerSecond] bytes. Prompt evaluation scales with the
+  /// prompt, and a first turn carrying the whole catalog must never be
+  /// cut down mid-ingestion (#105) — a generous wait only delays the
+  /// report of a genuinely hung server, which Esc can end at any time.
+  Duration firstTokenFor(int bodyBytes) =>
+      firstToken + Duration(seconds: bodyBytes ~/ ingestBytesPerSecond);
 }
 
 /// The failure for a transport exception raised before the response

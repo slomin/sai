@@ -427,6 +427,23 @@ seconds); the app still reads the log at open — its poll is a follow-up.
 Date-derived providers do roll over at local midnight, independently of
 archive writes.
 
+## What the assistant sees (#105)
+
+Chat serializes the projection in one of two shapes (ADR 0011,
+amended). The **compact context** — Today and Upcoming in the capture
+form the clients render — is the most a cloud provider ever receives.
+The **catalog context** (`taskCatalog`) goes only to a local model: the
+complete collection, every projected task exactly once, grouped Open
+(structural order), Logbook (latest finish first) and Trash (latest
+deletion first), each task with its notes, checklist state, tag titles,
+`Area ▸ Project ▸ Heading` placement titles — qualified `(deleted)` or
+`(archived)` where the container is — and lifecycle timestamps to the
+second. No ids and no import identifiers appear; two identical titles
+in identically-titled containers are an accepted ambiguity. The catalog
+is delimited as untrusted data: markers and group headers sit at column
+0, and user content never does — single-line fields lose their
+newlines, notes are indented line by line.
+
 ## Repeating tasks are deferred
 
 v0.1 models **no repetition rule**. Things materialises each repeating

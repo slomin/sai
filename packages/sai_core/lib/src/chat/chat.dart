@@ -9,6 +9,7 @@ import '../context/assemble.dart';
 import '../llm/call.dart';
 import '../llm/failure.dart';
 import '../llm/privacy.dart';
+import '../llm/provider.dart';
 import '../llm/recorder.dart';
 import '../llm/status.dart';
 import '../providers.dart';
@@ -28,6 +29,7 @@ final class ChatTurn {
     this.finish,
     this.failure,
     this.tasksWithheld = false,
+    this.provenance = TaskProvenance.none,
     this.dropped = const [],
   });
 
@@ -49,15 +51,17 @@ final class ChatTurn {
   /// Whether the assistant answered this turn without the list.
   final bool tasksWithheld;
 
+  /// What task data an assistant turn's call carried (#105): its words
+  /// may quote what it saw, so this is what a later request's history
+  /// inherits — and what the recorder drops from a cloud call. None for
+  /// user turns and for answers given with the context withheld.
+  final TaskProvenance provenance;
+
   /// What the budget left out of this turn's request
   /// ([AssembledContext.dropped]); empty when nothing was cut.
   final List<String> dropped;
 
   bool get failed => failure != null;
-
-  /// An assistant turn whose call carried the list: its words may quote
-  /// task titles, so it is history a withholding provider must not see.
-  bool get sawTasks => role == ChatRole.assistant && !tasksWithheld;
 
   @override
   String toString() => 'ChatTurn(${role.name}, ${text.length} chars)';
@@ -157,10 +161,6 @@ class ChatNotifier extends Notifier<ChatState> {
   /// the turn then ends before anything is sent.
   var _cancelRequested = false;
 
-  /// The window a turn is assembled for. A constant until the budget
-  /// follows the endpoint's context window (ADR 0011); tests set it.
-  ContextBudget budget = defaultContextBudget;
-
   /// Writes [next] unless the notifier is gone — a call that outlives
   /// its container must not throw from a stream callback.
   void _set(ChatState next) {
@@ -189,11 +189,21 @@ class ChatNotifier extends Notifier<ChatState> {
         today: container.read(todayProvider),
         history: _history(),
         draft: message,
-        budget: budget,
+        // The active local provider's probed window, or the conservative
+        // default; a synchronous read — a send never awaits a probe.
+        budget: container.read(chatBudgetProvider),
         // Off asks the backend not to think; on leaves it to the model.
         reasoning: container.read(reasoningProvider) ? null : false,
+        // A local model sees the whole collection; a cloud one at most
+        // the compact lists (#105).
+        shape: provider.privacy == LlmPrivacy.local
+            ? TaskContextShape.catalog
+            : TaskContextShape.compact,
       );
     } on ContextBudgetError catch (error) {
+      return _refuse(error.toString());
+    } on ContextSizeError catch (error) {
+      // Refused before anything was written: no orphan chat.message.
       return _refuse(error.toString());
     }
 
@@ -279,6 +289,9 @@ class ChatNotifier extends Notifier<ChatState> {
         finish: result.finish,
         failure: result.failure,
         tasksWithheld: call.taskContextWithheld,
+        provenance: call.taskContextWithheld
+            ? TaskProvenance.none
+            : assembled.request.taskContextProvenance,
         dropped: assembled.dropped,
       );
     } else {
@@ -305,6 +318,9 @@ class ChatNotifier extends Notifier<ChatState> {
         event: event,
         finish: result.finish,
         tasksWithheld: call.taskContextWithheld,
+        provenance: call.taskContextWithheld
+            ? TaskProvenance.none
+            : assembled.request.taskContextProvenance,
         dropped: assembled.dropped,
       );
     }
@@ -325,8 +341,8 @@ class ChatNotifier extends Notifier<ChatState> {
   /// in pairs, so a template that insists on alternation is never given
   /// two user lines in a row. A pair goes as a whole — an answer that
   /// never came (cancelled before its first token, failed) takes its
-  /// question with it — and an answer given with the list in view is
-  /// flagged as task data for the recorder to withhold (ADR 0011).
+  /// question with it — and an answer given with task data in view
+  /// carries its provenance for the recorder to govern (ADR 0011, #105).
   List<LlmMessage> _history() {
     final turns = state.turns;
     final out = <LlmMessage>[];
@@ -341,7 +357,11 @@ class ChatNotifier extends Notifier<ChatState> {
       out
         ..add(LlmMessage(LlmRole.user, question.text))
         ..add(
-          LlmMessage(LlmRole.assistant, answer.text, taskData: answer.sawTasks),
+          LlmMessage(
+            LlmRole.assistant,
+            answer.text,
+            provenance: answer.provenance,
+          ),
         );
     }
     return out;
