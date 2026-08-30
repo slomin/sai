@@ -11,6 +11,7 @@ import 'package:test/test.dart';
 ProviderContainer testContainer({
   List<Override> overrides = const [],
   List<LlmProvider Function()> builtins = const [FakeLlmProvider.new],
+  FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
 }) {
   // Archive and settings both go under one temp dir, whatever the
   // developer's environment says.
@@ -28,6 +29,10 @@ ProviderContainer testContainer({
       // or the LAN box unless it asks for them.
       builtinLlmsProvider.overrideWithValue(builtins),
       defaultLlmIdProvider.overrideWithValue(null),
+      // The product default (#97) unless a test is about the row leaving;
+      // null reads the setting through, for the CLI that sets it.
+      if (finishedTasks != null)
+        finishedTaskVisibilityProvider.overrideWithValue(finishedTasks),
       ...overrides,
     ],
   );

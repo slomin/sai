@@ -18,7 +18,7 @@ void main() {
   final prompts = <String>[];
 
   setUp(() {
-    container = testContainer();
+    container = testContainer(finishedTasks: null);
     secrets = container.read(secretStoreProvider) as InMemorySecretStore;
     out = StringBuffer();
     err = StringBuffer();

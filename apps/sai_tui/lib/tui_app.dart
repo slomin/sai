@@ -151,7 +151,11 @@ class _TuiAppState extends State<TuiApp> {
     final container = context.container;
     final projection = container.read(tasksProvider).value;
     if (projection == null) return null;
-    return captureSections(projection, container.read(todayProvider));
+    return captureSections(
+      projection,
+      container.read(todayProvider),
+      visibility: container.read(finishedTaskVisibilityProvider),
+    );
   }
 
   void _move(int by) {
@@ -182,14 +186,20 @@ class _TuiAppState extends State<TuiApp> {
       return;
     }
     final task = rows[index];
+    final store = context.container.read(tasksProvider.notifier).store;
+    // A row kept in its list after finishing (#97) reopens on the same
+    // key, as the check does in the app.
+    final reopen = task.status != TaskStatus.open;
     try {
-      await context.container
-          .read(tasksProvider.notifier)
-          .store
-          .completeTask(task.id);
-      _setNotice('done: ${task.title}');
+      if (reopen) {
+        await store.reopenTask(task.id);
+        _setNotice('reopened: ${task.title}');
+      } else {
+        await store.completeTask(task.id);
+        _setNotice('done: ${task.title}');
+      }
     } on Object catch (error) {
-      _setNotice('complete failed: $error');
+      _setNotice('${reopen ? 'reopen' : 'complete'} failed: $error');
     }
   }
 
@@ -330,7 +340,11 @@ class _TuiAppState extends State<TuiApp> {
   }
 
   Component _lists(TaskProjection projection, CalendarDate today) {
-    final sections = captureSections(projection, today);
+    final sections = captureSections(
+      projection,
+      today,
+      visibility: context.read(finishedTaskVisibilityProvider),
+    );
     if (sections.every((section) => section.tasks.isEmpty)) {
       return Center(child: Text(context.read(shellGreetingProvider)));
     }
