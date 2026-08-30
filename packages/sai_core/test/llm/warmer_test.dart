@@ -173,6 +173,27 @@ void main() {
     },
   );
 
+  test('a re-read of the same archive keeps the warm running', () async {
+    // The warm's own lines make the TUI poll and reload every two
+    // seconds; a content-identical projection must not cancel it, or
+    // one warm becomes a stutter of one-second bursts (measured).
+    final warmy = _Warmy(delta: const Duration(milliseconds: 150));
+    final c = await make(warmy);
+    final store = c.read(tasksProvider.notifier).store;
+    await store.createTask(title: 'One');
+    c.read(settingsProvider.notifier).selectLlm('warmy');
+    final sub = c.listen(cacheWarmerProvider, (_, _) {});
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(c.read(cacheWarmerProvider).phase, WarmPhase.warming);
+    await c.read(tasksProvider.notifier).reload();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(c.read(cacheWarmerProvider).phase, WarmPhase.warming);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(c.read(cacheWarmerProvider).phase, WarmPhase.warm);
+    expect(requests(tmp), hasLength(1), reason: 'one warm, not a stutter');
+    sub.close();
+  });
+
   test('the fake, unprobeable, never warms; disabled never warms', () async {
     final plain = FakeLlmProvider();
     final c = ProviderContainer.test(

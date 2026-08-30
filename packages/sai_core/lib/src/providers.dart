@@ -615,30 +615,49 @@ class CacheWarmer extends Notifier<WarmState> {
 
   LlmProvider? _lastProvider;
 
-  @override
-  WarmState build() {
+  /// The key of the warm now in flight, or null. A rebuild that wants
+  /// the same key keeps the call running — the warm's own archive lines
+  /// make the TUI re-read the log every two seconds, and cancelling on
+  /// every content-identical projection turned one warm into a stutter
+  /// of one-second bursts (measured before this guard existed).
+  (String, bool?)? _inFlight;
+
+  /// The last fraction shown, so the keep path can return it.
+  double? _lastFraction;
+
+  /// Abandons any scheduled or running warm and invalidates its
+  /// continuations.
+  void _stop() {
+    _epoch++;
     _debounce?.cancel();
     _debounce = null;
     _tick?.cancel();
     _tick = null;
-    // A rebuild means an input moved: a running warm's prefix is stale
-    // (or the slot is wanted for a real turn) — the server keeps what
-    // it already ingested either way.
     _call?.cancel();
     _call = null;
-    final epoch = ++_epoch;
-    ref.onDispose(() {
-      _epoch++;
-      _debounce?.cancel();
-      _tick?.cancel();
-      _call?.cancel();
-    });
-    if (!ref.watch(warmEnabledProvider)) return const WarmState(WarmPhase.idle);
+    _inFlight = null;
+  }
+
+  @override
+  WarmState build() {
+    // Rescheduled below when still wanted; a pending timer must not
+    // fire with stale inputs. No ref.onDispose here: a build-scoped
+    // dispose hook fires on every rebuild, which is exactly the
+    // cancel-everything the keep path below exists to avoid — the
+    // continuations guard on [Ref.mounted] instead.
+    _debounce?.cancel();
+    _debounce = null;
+    WarmState stopped() {
+      _stop();
+      return const WarmState(WarmPhase.idle);
+    }
+
+    if (!ref.watch(warmEnabledProvider)) return stopped();
     final provider = ref.watch(activeLlmProvider);
     if (provider == null ||
         provider.privacy != LlmPrivacy.local ||
         provider is! LlmEndpointProbe) {
-      return const WarmState(WarmPhase.idle);
+      return stopped();
     }
     if (!identical(provider, _lastProvider)) {
       // A rebuilt provider is a changed configuration: its endpoint's
@@ -646,18 +665,17 @@ class CacheWarmer extends Notifier<WarmState> {
       _warmed.remove(provider.id);
       _failed.remove(provider.id);
       _lastProvider = provider;
+      _stop();
     }
     final projection = ref.watch(tasksProvider).value;
-    if (projection == null) return const WarmState(WarmPhase.idle);
+    if (projection == null) return stopped();
     final connection = ref.watch(connectionProvider);
     if (connection.level == ConnectionLevel.down) {
       // A down endpoint may have restarted; what it held is gone.
       _warmed.remove(provider.id);
-      return const WarmState(WarmPhase.idle);
+      return stopped();
     }
-    if (connection.level != ConnectionLevel.ready) {
-      return const WarmState(WarmPhase.idle);
-    }
+    if (connection.level != ConnectionLevel.ready) return stopped();
     final reasoning = ref.watch(reasoningProvider) ? null : false;
     final request = assembleWarmup(
       profile: defaultProfile,
@@ -674,18 +692,27 @@ class CacheWarmer extends Notifier<WarmState> {
       if (last != null &&
           last.role == ChatRole.assistant &&
           !last.failed &&
-          last.provenance == TaskProvenance.catalog) {
+          last.provenance == TaskProvenance.catalog &&
+          ref.mounted) {
         _warmed[provider.id] = key;
-        if (epoch == _epoch) state = const WarmState(WarmPhase.warm);
+        state = const WarmState(WarmPhase.warm);
       }
     });
     if (ref.watch(chatProvider.select((s) => s.busy))) {
-      return const WarmState(WarmPhase.idle);
+      // The slot belongs to the person's turn; the server keeps what a
+      // cancelled warm already ingested.
+      return stopped();
     }
+    if (_inFlight == key) {
+      // The running warm is still the right one — let it finish.
+      return WarmState(WarmPhase.warming, fraction: _lastFraction);
+    }
+    if (_inFlight != null) _stop();
     if (_warmed[provider.id] == key) return const WarmState(WarmPhase.warm);
     if (_failed[provider.id] == key) return const WarmState(WarmPhase.idle);
     final debounce = ref.watch(warmDebounceProvider);
     if (debounce == null) return const WarmState(WarmPhase.idle);
+    final epoch = _epoch;
     _debounce = Timer(debounce, () => _warm(epoch, provider, request, key));
     return const WarmState(WarmPhase.idle);
   }
@@ -696,38 +723,43 @@ class CacheWarmer extends Notifier<WarmState> {
     LlmRequest request,
     (String, bool?) key,
   ) async {
-    if (epoch != _epoch) return;
+    if (epoch != _epoch || !ref.mounted) return;
     final container = ref.container;
     final bytes = recordedRequestBytes(request);
     final known = _rates[provider.id];
     final started = DateTime.now();
-    state = WarmState(WarmPhase.warming, fraction: known == null ? null : 0);
+    _inFlight = key;
+    _lastFraction = known == null ? null : 0;
+    state = WarmState(WarmPhase.warming, fraction: _lastFraction);
     if (container.read(warmTickEveryProvider) case final every?) {
       _tick = Timer.periodic(every, (_) {
+        if (!ref.mounted) {
+          _tick?.cancel();
+          return;
+        }
         if (epoch != _epoch) return;
         final rate = _rates[provider.id];
         if (rate == null) return;
         final elapsed =
             DateTime.now().difference(started).inMilliseconds / 1000;
-        state = WarmState(
-          WarmPhase.warming,
-          fraction: (elapsed * rate / bytes).clamp(0.0, 0.99),
-        );
+        _lastFraction = (elapsed * rate / bytes).clamp(0.0, 0.99);
+        state = WarmState(WarmPhase.warming, fraction: _lastFraction);
       });
     }
     try {
       final recorder = await container.read(llmRecorderProvider.future);
-      if (epoch != _epoch) return;
+      if (epoch != _epoch || !ref.mounted) return;
       final call = await recorder.start(provider, request);
-      if (epoch != _epoch) {
+      if (epoch != _epoch || !ref.mounted) {
         call.cancel();
         return;
       }
       _call = call;
       final result = await call.done;
-      if (epoch != _epoch) return;
+      if (epoch != _epoch || !ref.mounted) return;
       _tick?.cancel();
       _call = null;
+      _inFlight = null;
       switch (result.finish) {
         case LlmFinish.failed:
           _failed[provider.id] = key;
@@ -753,7 +785,11 @@ class CacheWarmer extends Notifier<WarmState> {
     } on Object {
       // An unrecordable or refused warm is only a lost optimization.
       _failed[provider.id] = key;
-      if (epoch == _epoch) state = const WarmState(WarmPhase.idle);
+      if (epoch == _epoch && ref.mounted) {
+        _tick?.cancel();
+        _inFlight = null;
+        state = const WarmState(WarmPhase.idle);
+      }
     }
   }
 }
