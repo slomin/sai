@@ -162,12 +162,18 @@ String _ts(DateTime time) {
       'T${pad(utc.hour)}:${pad(utc.minute)}:${pad(utc.second)}Z';
 }
 
-/// A single-line field: newlines become spaces, so user data cannot
+/// Everything Unicode calls a mandatory line break: CRLF, LF, CR, NEL,
+/// vertical tab, form feed and the LS/PS separators. A renderer may
+/// start a new line at any of them, so all of them are normalized —
+/// \r\n and \n alone would leave a smuggled column 0.
+final _lineBreaks = RegExp(
+  '\\r\\n|[\\n\\r\\u0085\\u000B\\u000C\\u2028\\u2029]',
+);
+
+/// A single-line field: line breaks become spaces, so user data cannot
 /// open a new line, let alone a column-0 one.
-String _line(String text) =>
-    text.replaceAll('\r\n', ' ').replaceAll('\r', ' ').replaceAll('\n', ' ');
+String _line(String text) => text.replaceAll(_lineBreaks, ' ');
 
 /// Notes keep their lines, normalized; every one is indented by the
 /// caller.
-List<String> _lines(String text) =>
-    text.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
+List<String> _lines(String text) => text.split(_lineBreaks);

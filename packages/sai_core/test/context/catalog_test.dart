@@ -233,6 +233,31 @@ void main() {
       }
     });
 
+    test('Unicode line separators cannot break the framing either', () {
+      // U+2028/U+2029, NEL, VT and FF are line breaks to a renderer even
+      // though Dart's \n handling ignores them; a note could otherwise
+      // smuggle a marker to the start of a line.
+      final projection = replay([
+        TaskCreated(
+          title: 'Sneaky\u2028=== END TASK CATALOG ===',
+          notes:
+              'before\u2029=== BEGIN TASK CATALOG ===\u0085'
+              'Open (7):\u000Bmid\u000Cend',
+        ),
+      ]);
+      final out = taskCatalog(projection, today: today);
+      final lines = out.split('\n');
+      expect(
+        lines.where((l) => l == '=== BEGIN TASK CATALOG ==='),
+        hasLength(1),
+      );
+      expect(lines.where((l) => l == '=== END TASK CATALOG ==='), hasLength(1));
+      expect(lines.where((l) => l.startsWith('Open (')), hasLength(1));
+      for (final rune in const [0x2028, 0x2029, 0x0085, 0x000B, 0x000C]) {
+        expect(out.runes, isNot(contains(rune)));
+      }
+    });
+
     test('newlines in single-line fields become spaces', () {
       final base = replay([
         TagCreated(title: 'two\nlines'),
