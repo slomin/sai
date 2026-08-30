@@ -69,4 +69,7 @@ abstract final class SaiDurations {
   static const collapse = Duration(milliseconds: 180);
   static const enter = Duration(milliseconds: 160);
   static const band = Duration(milliseconds: 200);
+
+  /// The slot a drag opens between rows (#98).
+  static const gap = Duration(milliseconds: 150);
 }

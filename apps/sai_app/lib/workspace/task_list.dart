@@ -3,8 +3,9 @@ import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import '../commands.dart';
 import '../organise/heading_menu.dart';
-import '../theme/sai_tokens.dart';
+import '../reorder/reorder.dart';
 import '../widgets/empty_state.dart';
 import 'dates.dart';
 import 'empty_states.dart';
@@ -79,6 +80,10 @@ const _rowExtent = 56.0;
 class _TaskListBodyState extends ConsumerState<TaskListBody> {
   final _scroll = ScrollController();
   final _ghosts = <TaskId, _Ghost>{};
+
+  /// One drag mechanic per section shown (#98), kept across rebuilds so
+  /// a live drag survives the store's emissions.
+  final _groups = <_SectionKey, ReorderController<TaskId>>{};
   var _known = <TaskId>{};
   var _entering = <TaskId>{};
   SidebarSection? _knownSection;
@@ -92,8 +97,15 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         ? ids.difference(_known)
         : const {};
     _known = ids;
-    // A ghost belongs to the view it left; another section starts clean.
-    if (widget.view.section != _knownSection) _ghosts.clear();
+    // A ghost belongs to the view it left; another section starts clean,
+    // and so do the drag groups.
+    if (widget.view.section != _knownSection) {
+      _ghosts.clear();
+      for (final group in _groups.values) {
+        group.dispose();
+      }
+      _groups.clear();
+    }
     _knownSection = widget.view.section;
     // A ghost whose task is back in the view (undo) gives way to the row.
     _ghosts.removeWhere((id, _) => ids.contains(id));
@@ -114,8 +126,35 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
   @override
   void dispose() {
     _scroll.dispose();
+    for (final group in _groups.values) {
+      group.dispose();
+    }
     super.dispose();
   }
+
+  /// The drag group of the section keyed [key]: a drop is a reorder in
+  /// Today's own order or a structural move, the anchor the nearest open
+  /// live row above the slot; a task from another section is refused —
+  /// the sheet is how a task changes group.
+  ReorderController<TaskId> _group(_SectionKey key) =>
+      _groups.putIfAbsent(key, () {
+        return ReorderController<TaskId>(
+          group: key,
+          refusal:
+              'a task is dragged within its group; Move / Schedule… files '
+              'it elsewhere',
+          onRefused: (reason) =>
+              ref.read(noticeProvider.notifier).show('reorder failed: $reason'),
+          onDrop: (moved, after) async {
+            final commands = ref.read(taskCommandsProvider);
+            if (widget.view.section == const ListSection(TaskList.today)) {
+              await commands.reorderToday(moved, after: after);
+            } else {
+              await commands.reorder(moved, after: after);
+            }
+          },
+        );
+      });
 
   /// The built rows: each task's index in the view against the scroll
   /// offset that would put its row at the top. A lazy list builds only
@@ -223,38 +262,6 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     return items;
   }
 
-  Future<void> _reorder(
-    TaskViewSection section,
-    List<_Item> items,
-    int oldIndex,
-    int newIndex,
-  ) async {
-    // [newIndex] is already the slot after removal (onReorderItem).
-    final ids = [for (final item in items) item.task.id];
-    final moved = ids.removeAt(oldIndex);
-    final to = newIndex;
-    ids.insert(to, moved);
-    // The anchor is the nearest live row above the drop slot: not a
-    // ghost, and not a finished row kept until midnight (#97) — the
-    // store refuses a finished anchor.
-    final finished = {
-      for (final item in items)
-        if (item.task.status != TaskStatus.open) item.task.id,
-    };
-    TaskId? after;
-    for (var i = to - 1; i >= 0; i--) {
-      if (_ghosts.containsKey(ids[i]) || finished.contains(ids[i])) continue;
-      after = ids[i];
-      break;
-    }
-    final commands = ref.read(taskCommandsProvider);
-    if (widget.view.section == const ListSection(TaskList.today)) {
-      await commands.reorderToday(moved, after: after);
-    } else {
-      await commands.reorder(moved, after: after);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final view = widget.view;
@@ -319,6 +326,14 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         );
       }
       final canDrag = reorderable(view, section) && items.length > 1;
+      ReorderController<TaskId>? group;
+      if (canDrag) {
+        group = _group(s)
+          ..order = [for (final item in items) item.task.id]
+          ..canAnchor = (id) =>
+              !_ghosts.containsKey(id) &&
+              widget.projection.task(id)?.status == TaskStatus.open;
+      }
       // A row in the Trash is selectable and nothing else (#97): Restore
       // is the inspector's, and a deleted task keeps its status.
       final trash = view.section == const TrashSection();
@@ -328,7 +343,7 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         final ghost = item.ghost;
         // A live row outside the Trash carries its menu (#98).
         if (ghost == null && !trash) {
-          return TaskMenu(
+          Widget live(BuildContext context, Widget? handle) => TaskMenu(
             key: ValueKey('menu-${task.id}'),
             task: task,
             view: view,
@@ -349,13 +364,22 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
               onCancel: task.status == TaskStatus.open
                   ? () => _finish(task, s, at, i, RowFinish.cancelled)
                   : null,
-              gutter: canDrag
-                  ? (child) =>
-                        ReorderableDragStartListener(index: i, child: child)
-                  : null,
+              handle: handle,
               trailing: button,
               onSecondaryTapDown: (at) => open(at),
             ),
+          );
+          if (group == null) return live(context, null);
+          // A finished row kept until midnight (#97) is a target — the
+          // slot beside it works — but is not itself dragged: the store
+          // refuses a finished anchor, so it stays where it is.
+          return ReorderRow<TaskId>(
+            key: ValueKey('reorder-${task.id}'),
+            controller: group,
+            id: task.id,
+            title: task.title,
+            enabled: task.status == TaskStatus.open,
+            builder: live,
           );
         }
         return TaskRow(
@@ -387,29 +411,14 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
               : () {
                   if (mounted) setState(() => _ghosts.remove(task.id));
                 },
-          gutter: canDrag && ghost == null
-              ? (child) => ReorderableDragStartListener(index: i, child: child)
-              : null,
         );
       }
 
       slivers.add(
-        canDrag
-            ? SliverReorderableList(
-                itemCount: items.length,
-                itemBuilder: (context, i) => row(i),
-                onReorderItem: (from, to) => _reorder(section, items, from, to),
-                proxyDecorator: (child, index, animation) => Material(
-                  color: SaiColors.bg,
-                  elevation: 6,
-                  shadowColor: SaiColors.ink.withValues(alpha: 0.35),
-                  child: child,
-                ),
-              )
-            : SliverList.builder(
-                itemCount: items.length,
-                itemBuilder: (context, i) => row(i),
-              ),
+        SliverList.builder(
+          itemCount: items.length,
+          itemBuilder: (context, i) => row(i),
+        ),
       );
     }
     slivers.add(const SliverPadding(padding: EdgeInsets.only(bottom: 80)));

@@ -53,7 +53,7 @@ class TaskRow extends StatefulWidget {
     this.onCheck,
     this.onCancel,
     this.onGone,
-    this.gutter,
+    this.handle,
     this.trailing,
     this.onSecondaryTapDown,
   });
@@ -72,9 +72,10 @@ class TaskRow extends StatefulWidget {
   /// Called once a finishing row has collapsed away.
   final VoidCallback? onGone;
 
-  /// Wraps the check gutter — a drag-start listener where the list can be
-  /// reordered.
-  final Widget Function(Widget child)? gutter;
+  /// The drag handle (#98) where the list can be reordered: before the
+  /// check, faint until the row is hovered or selected, always in the
+  /// tree. The check itself only completes.
+  final Widget? handle;
 
   /// The row's "…" button (#98), shown on hover and selection like the
   /// cross and always in the tree for the keyboard and assistive tech.
@@ -199,7 +200,6 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
                 ? 'Reopen ${task.title}'
                 : 'Complete ${task.title}',
           );
-    if (widget.gutter case final gutter?) check = gutter(check);
 
     final row = Semantics(
       label: label.toString(),
@@ -227,6 +227,15 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
+                if (widget.handle case final handle? when finishing == null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Opacity(
+                      opacity: _hovered || widget.selected ? 1 : 0.4,
+                      alwaysIncludeSemantics: true,
+                      child: handle,
+                    ),
+                  ),
                 check,
                 const SizedBox(width: 8),
                 Expanded(
