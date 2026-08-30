@@ -38,6 +38,45 @@ void main() {
       expect(container.read(captureFocusProvider).hasFocus, isTrue);
     }, variant: macOS);
 
+    testWidgets('⌘N shows the Inbox from any pane and captures there (#96)', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      final project = await tester.runAsync(
+        () => store.createProject(title: 'Kitchen'),
+      );
+      await tester.pump();
+      const inbox = ListSection(TaskList.inbox);
+      for (final from in [
+        const ListSection(TaskList.today),
+        ProjectSection(project!),
+        const TrashSection(),
+        const ListSection(TaskList.logbook),
+        inbox,
+      ]) {
+        await selectSection(tester, container, from);
+        container.read(captureFocusProvider).unfocus();
+        await tester.pump();
+        await chord(tester, LogicalKeyboardKey.keyN);
+        expect(container.read(selectedSectionProvider), inbox, reason: '$from');
+        expect(paneTitle(tester), 'Inbox');
+        expect(
+          container.read(captureFocusProvider).hasFocus,
+          isTrue,
+          reason: '$from',
+        );
+      }
+      // What is typed next is an Inbox task — unfiled, unscheduled …
+      await capture(tester, container, 'Buy oat milk');
+      expect(rowTitles(tester), ['Buy oat milk']);
+      expect(sidebarCount(tester, inbox), 1);
+      // … unless the capture grammar schedules it out of the Inbox.
+      await capture(tester, container, 'Call the bank @today');
+      expect(rowTitles(tester), ['Buy oat milk']);
+      expect(sidebarCount(tester, const ListSection(TaskList.today)), 1);
+    }, variant: macOS);
+
     testWidgets('⌘1–⌘6 switch the lists and ⌘7 opens the Trash', (
       tester,
     ) async {

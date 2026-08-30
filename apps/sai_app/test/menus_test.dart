@@ -28,7 +28,7 @@ void main() {
   group('saiMenus', () {
     final calls = <String>[];
     final commands = AppCommands(
-      focusCapture: () => calls.add('capture'),
+      newTask: () => calls.add('new-task'),
       undo: () => calls.add('undo'),
       toggleChat: () => calls.add('chat'),
       sendChat: () => calls.add('send'),
@@ -100,7 +100,7 @@ void main() {
       );
     });
 
-    test('File > New Task is ⌘N and focuses capture', () {
+    test('File > New Task is ⌘N and starts a new task', () {
       final item = menuItem(menus(), ['File', 'New Task']);
       expect(
         chord(item),
@@ -108,7 +108,7 @@ void main() {
       );
       expect(chord(item), containsPair('shortcutModifiers', 1));
       item.onSelected!();
-      expect(calls, ['capture']);
+      expect(calls, ['new-task']);
     });
 
     test('Edit > Undo is ⌘Z, live only with something to undo', () {
@@ -229,6 +229,18 @@ void main() {
       await tester.pump();
       expect(paneTitle(tester), 'Inbox');
       expect(find.text('Buy oat milk'), findsOneWidget);
+    });
+
+    testWidgets('File > New Task shows the Inbox with capture focused', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      expect(paneTitle(tester), 'Today');
+      menuItem(menuDelegate.menus, ['File', 'New Task']).onSelected!();
+      await tester.pump();
+      await tester.pump();
+      expect(paneTitle(tester), 'Inbox');
+      expect(container.read(captureFocusProvider).hasFocus, isTrue);
     });
 
     testWidgets('Edit > Undo reverses the last capture', (tester) async {

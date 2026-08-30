@@ -62,12 +62,27 @@ class Notice extends Notifier<String> {
   void clear() => state = '';
 }
 
+/// A new task starts in the Inbox (#96): the pane switches there so the
+/// person sees where the line will land, then capture takes focus — now,
+/// and again after the frame the switch schedules, the way [finishSetup]
+/// does. Behind the welcome or a modal the field cannot take focus
+/// (`ExcludeFocus`, a route above the chrome), and then nothing moves.
+void _newTask(ProviderContainer container) {
+  final node = container.read(captureFocusProvider);
+  if (!node.canRequestFocus) return;
+  container
+      .read(selectedSectionProvider.notifier)
+      .select(const ListSection(TaskList.inbox));
+  node.requestFocus();
+  WidgetsBinding.instance.addPostFrameCallback((_) => node.requestFocus());
+}
+
 /// Every shell command with exactly one handler each, so the menu bar,
 /// the key bindings and the buttons steer the same code and cannot
 /// double-fire or drift.
 class AppCommands {
   const AppCommands({
-    required this.focusCapture,
+    required this.newTask,
     required this.undo,
     required this.toggleChat,
     required this.sendChat,
@@ -92,7 +107,7 @@ class AppCommands {
   factory AppCommands.of(BuildContext context) {
     final container = ProviderScope.containerOf(context);
     return AppCommands(
-      focusCapture: () => container.read(captureFocusProvider).requestFocus(),
+      newTask: () => _newTask(container),
       undo: () => _undo(container),
       toggleChat: () => _toggleChat(container),
       sendChat: () => _sendChat(container),
@@ -113,7 +128,8 @@ class AppCommands {
     );
   }
 
-  final VoidCallback focusCapture;
+  /// ⌘N and File › New Task: the Inbox, with quick capture focused.
+  final VoidCallback newTask;
   final VoidCallback undo;
   final VoidCallback toggleChat;
 

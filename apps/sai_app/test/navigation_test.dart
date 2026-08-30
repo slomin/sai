@@ -524,12 +524,15 @@ void main() {
           );
         });
         await tester.pump();
+        // ⌘N lands in the Inbox (#96); from there the arrows stay put.
+        const inbox = ListSection(TaskList.inbox);
         await chord(tester, LogicalKeyboardKey.keyN);
         expect(container.read(captureFocusProvider).hasFocus, isTrue);
+        expect(container.read(selectedSectionProvider), inbox);
         await key(tester, down);
         await key(tester, right);
         expect(container.read(captureFocusProvider).hasFocus, isTrue);
-        expect(container.read(selectedSectionProvider), today);
+        expect(container.read(selectedSectionProvider), inbox);
         expect(container.read(selectedTaskProvider), isNull);
         await tester.tap(find.byKey(chatFieldKey));
         await tester.pump();
@@ -537,7 +540,7 @@ void main() {
         await key(tester, down);
         await key(tester, right);
         expect(container.read(assistantFocusProvider).hasFocus, isTrue);
-        expect(container.read(selectedSectionProvider), today);
+        expect(container.read(selectedSectionProvider), inbox);
         expect(container.read(selectedTaskProvider), isNull);
       }, variant: macOS);
 
