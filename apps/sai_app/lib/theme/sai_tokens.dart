@@ -38,11 +38,17 @@ abstract final class SaiColors {
   static const sheetStrike = Color(0xFF8A8781);
 }
 
-/// The two bundled families (`fonts/`, SIL OFL). Space Grotesk ships as a
-/// variable font, so weight goes through [FontVariation] as well as
-/// [FontWeight]; JetBrains Mono ships as three static weights.
+/// The three faces (#99, ADR 0020). Functional text — titles of tasks,
+/// body copy, the chat, inputs and controls — sets in the macOS system
+/// sans, which Flutter names `CupertinoSystemText` and the engine maps
+/// to the platform's face; it is Apple's and is never bundled. Two
+/// families ship as assets (`fonts/`, SIL OFL): Space Grotesk for the
+/// brand and display roles — a variable font, so weight goes through
+/// [FontVariation] as well as [FontWeight] — and JetBrains Mono for
+/// metadata and code, three static weights.
 abstract final class SaiFonts {
-  static const sans = 'SpaceGrotesk';
+  static const sans = 'CupertinoSystemText';
+  static const display = 'SpaceGrotesk';
   static const mono = 'JetBrainsMono';
 }
 

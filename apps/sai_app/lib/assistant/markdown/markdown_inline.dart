@@ -19,10 +19,7 @@ class MarkdownStyles {
 
   /// Headings are stronger paragraphs, never larger ones: same size,
   /// heavier weight, so a `#` cannot reflow the lines under it.
-  late final TextStyle heading = body.copyWith(
-    fontWeight: FontWeight.w700,
-    fontVariations: const [FontVariation('wght', 700)],
-  );
+  late final TextStyle heading = body.copyWith(fontWeight: FontWeight.w700);
 
   /// The inline code chip: mono, one point smaller on the same line
   /// height, so its line box never exceeds the paragraph's.
@@ -52,11 +49,7 @@ class MarkdownStyles {
   );
 
   /// Bold and italic, as deltas Flutter merges into the surround.
-  /// Space Grotesk is variable: weight needs the axis set too.
-  static const strong = TextStyle(
-    fontWeight: FontWeight.w700,
-    fontVariations: [FontVariation('wght', 700)],
-  );
+  static const strong = TextStyle(fontWeight: FontWeight.w700);
   static const em = TextStyle(fontStyle: FontStyle.italic);
 
   /// A link is named in the accent, not underlined — an underline

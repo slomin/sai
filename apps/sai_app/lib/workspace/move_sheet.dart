@@ -252,10 +252,7 @@ class _Option extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = context.saiText;
     final style = selected
-        ? text.body.copyWith(
-            fontWeight: FontWeight.w700,
-            fontVariations: const [FontVariation.weight(700)],
-          )
+        ? text.body.copyWith(fontWeight: FontWeight.w700)
         : text.body;
     final line = Text(
       '$prefix$label',

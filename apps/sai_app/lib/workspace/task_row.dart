@@ -248,7 +248,6 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
                         task.title,
                         style: text.body.copyWith(
                           fontWeight: FontWeight.w500,
-                          fontVariations: const [FontVariation.weight(500)],
                           color: finished ? SaiColors.inkFaint : SaiColors.ink,
                           decoration: finished
                               ? TextDecoration.lineThrough
