@@ -164,12 +164,19 @@ final class ContextSizeError implements Exception {
       'the archive allows $limit';
 }
 
+/// The one-word user line a warm-up carries: chat templates refuse a
+/// prompt with no user message (Qwen's jinja: "No user query found"),
+/// and the divergence it causes sits after the shared prefix, so the
+/// cached profile and catalog still serve the real turn.
+const warmupPrompt = 'ready?';
+
 /// The shared prefix of every catalog turn as a request of its own
-/// (#105): the profile and the whole catalog, one reply token. Sent
-/// ahead by the cache warmer, it lets a local endpoint ingest and cache
-/// the expensive prefix in the background, so the next real turn pays
-/// only for its own tail. Byte-identical to a turn's leading messages
-/// by construction — same profile, same renderer, same splice — and
+/// (#105): the profile and the whole catalog, the [warmupPrompt] line
+/// the template demands, one reply token. Sent ahead by the cache
+/// warmer, it lets a local endpoint ingest and cache the expensive
+/// prefix in the background, so the next real turn pays only for its
+/// own tail. Byte-identical to a turn's leading messages by
+/// construction — same profile, same renderer, same splice — and
 /// [reasoning] mirrors the chat's switch so the served template cannot
 /// differ.
 LlmRequest assembleWarmup({
@@ -180,7 +187,10 @@ LlmRequest assembleWarmup({
 }) {
   if (profile.isEmpty) throw ArgumentError('profile must not be empty');
   return LlmRequest(
-    messages: [LlmMessage(LlmRole.system, profile)],
+    messages: [
+      LlmMessage(LlmRole.system, profile),
+      const LlmMessage(LlmRole.user, warmupPrompt),
+    ],
     maxTokens: 1,
     taskContext: taskCatalog(projection, today: today),
     taskContextProvenance: TaskProvenance.catalog,

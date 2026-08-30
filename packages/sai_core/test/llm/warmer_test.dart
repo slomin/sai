@@ -103,10 +103,13 @@ void main() {
     expect(sent, hasLength(1));
     final payload = sent.single['payload']! as Map<String, Object?>;
     final messages = payload['messages']! as List;
-    expect(messages, hasLength(2));
+    // Profile, catalog, and the one-word user line chat templates
+    // demand — the shared prefix ends before it.
+    expect(messages, hasLength(3));
     expect((messages[0] as Map)['text'], defaultProfile);
     expect((messages[1] as Map)['text'], contains('Feed the gargoyle'));
     expect((messages[1] as Map)['text'], contains('TASK CATALOG'));
+    expect(messages[2], {'role': 'user', 'text': warmupPrompt});
     expect(payload['max_tokens'], 1);
     sub.close();
   });
