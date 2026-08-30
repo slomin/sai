@@ -85,3 +85,31 @@ final class InMemorySecretStore implements SecretStore {
     return _items.remove(account) != null;
   }
 }
+
+/// What the dev flavor answers about any credential (#95, ADR 0019).
+const devSecretsMessage =
+    'the dev copy holds no credentials; use the stable copy';
+
+/// A store with nothing in it that refuses every call with [reason] — the
+/// dev flavor's (#95): a low-authority build never opens a Keychain, and
+/// whatever `me.slominski.sai.dev` items an earlier dev copy filed are left
+/// where they are, untouched and unread.
+final class NoSecretStore implements SecretStore {
+  const NoSecretStore(this.reason);
+
+  final String reason;
+
+  Never _refuse() => throw SecretStoreException(reason);
+
+  @override
+  String? read(String account) => _refuse();
+
+  @override
+  bool has(String account) => _refuse();
+
+  @override
+  void write(String account, String value) => _refuse();
+
+  @override
+  bool delete(String account) => _refuse();
+}

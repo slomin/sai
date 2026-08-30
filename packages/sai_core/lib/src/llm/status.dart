@@ -46,3 +46,6 @@ const reenterCredentialSuffix = ' · key needs re-entry';
 
 /// Appended when the secret store could not be asked.
 const unavailableSecretsSuffix = ' · keychain unavailable';
+
+/// Appended in the dev flavor, which holds no credentials (#95).
+const absentCredentialSuffix = ' · no credentials in dev';

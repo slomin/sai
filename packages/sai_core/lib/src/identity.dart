@@ -35,7 +35,7 @@ enum SaiIdentity {
   /// (`<slug>.app`), the local bundle directory, kept-release names.
   final String slug;
 
-  /// The macOS bundle identifier; also the Keychain service (ADR 0008).
+  /// The macOS bundle identifier; stable's Keychain service too (ADR 0008).
   final String bundleId;
 
   /// The terminal client's command name and its executable.
@@ -45,8 +45,11 @@ enum SaiIdentity {
   /// writes into a staged artifact's `flavor` seal: the enum's own name.
   String get flavor => name;
 
-  /// The Keychain `service` this flavor's credentials are filed under.
-  String get keychainService => bundleId;
+  /// The Keychain `service` this flavor's credentials are filed under —
+  /// stable's bundle id. Dev has none (#95, ADR 0019): its builds carry
+  /// no stable signing authority, so they hold no persistent credentials
+  /// either; a credentialed provider is unavailable there.
+  String? get keychainService => isDev ? null : bundleId;
 
   /// The directory under `Application Support` (or `$XDG_DATA_HOME`).
   String get dataDirName => slug;

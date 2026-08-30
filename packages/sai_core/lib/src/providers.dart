@@ -297,20 +297,22 @@ final settingsProvider = NotifierProvider<SettingsNotifier, Settings>(
 );
 
 /// Where secrets live (ADR 0008): the Keychain on macOS, under this
-/// flavor's service, memory anywhere else. Every test harness overrides
-/// this with an [InMemorySecretStore] — nothing under `test/` may reach
-/// the login keychain.
-final secretStoreProvider = Provider<SecretStore>(
-  (ref) => Platform.isMacOS
-      ? KeychainSecretStore(
-          service: ref.watch(identityProvider).keychainService,
-        )
-      : InMemorySecretStore(),
-);
+/// flavor's service, memory anywhere else — and nowhere at all in the dev
+/// flavor (#95), which has no service and opens no Keychain. Every test
+/// harness overrides this with an [InMemorySecretStore] — nothing under
+/// `test/` may reach the login keychain.
+final secretStoreProvider = Provider<SecretStore>((ref) {
+  final service = ref.watch(identityProvider).keychainService;
+  if (service == null) return const NoSecretStore(devSecretsMessage);
+  return Platform.isMacOS
+      ? KeychainSecretStore(service: service)
+      : InMemorySecretStore();
+});
 
 /// Whether a provider's credential is there. [CredentialStatus.none] is a
-/// provider that takes no key; the others say what the store answered.
-enum CredentialStatus { none, set, missing, unavailable }
+/// provider that takes no key; [CredentialStatus.absent] is the dev
+/// flavor, which holds none (#95); the others say what the store answered.
+enum CredentialStatus { none, set, missing, unavailable, absent }
 
 /// Writes credentials through [secretStoreProvider] and bumps a revision
 /// so [credentialStatusProvider] re-reads. Values never enter state.
@@ -330,6 +332,9 @@ final credentialStatusProvider = Provider.family<CredentialStatus, String>((
     settingsProvider.select((s) => s.provider(id)?.credential),
   );
   if (account == null) return CredentialStatus.none;
+  if (ref.watch(identityProvider).keychainService == null) {
+    return CredentialStatus.absent;
+  }
   try {
     return ref.watch(secretStoreProvider).has(account)
         ? CredentialStatus.set
@@ -372,6 +377,7 @@ String credentialSuffix(CredentialStatus status, ProviderConfig? config) =>
             : setCredentialSuffix,
       CredentialStatus.missing => missingCredentialSuffix,
       CredentialStatus.unavailable => unavailableSecretsSuffix,
+      CredentialStatus.absent => absentCredentialSuffix,
     };
 
 /// The providers that ship with every build, needing no configuration,
@@ -513,6 +519,7 @@ final llmStatusProvider = Provider<String>((ref) {
       switch (ref.watch(credentialStatusProvider(id))) {
         CredentialStatus.missing => missingCredentialSuffix,
         CredentialStatus.unavailable => unavailableSecretsSuffix,
+        CredentialStatus.absent => absentCredentialSuffix,
         CredentialStatus.none || CredentialStatus.set => '',
       };
 });
@@ -667,6 +674,9 @@ class CredentialsNotifier extends Notifier<int> {
 
   /// Whether [account] holds a secret, configured or not.
   CredentialStatus statusOf(String account) {
+    if (ref.read(identityProvider).keychainService == null) {
+      return CredentialStatus.absent;
+    }
     try {
       return ref.read(secretStoreProvider).has(account)
           ? CredentialStatus.set
@@ -1018,6 +1028,8 @@ class Connection extends Notifier<ConnectionStatus> {
         return const ConnectionStatus.down('no key');
       case CredentialStatus.unavailable:
         return const ConnectionStatus.down('keychain unavailable');
+      case CredentialStatus.absent:
+        return const ConnectionStatus.down('no credentials in dev');
       case CredentialStatus.none || CredentialStatus.set:
         break;
     }

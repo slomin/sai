@@ -24,7 +24,8 @@ void main() {
       expect(d.name, 'dev');
       expect(d.slug, 'sai-dev');
       expect(d.bundleId, 'me.slominski.sai.dev');
-      expect(d.keychainService, 'me.slominski.sai.dev');
+      // Dev holds no credentials (#95): no service, nothing to file under.
+      expect(d.keychainService, isNull);
       expect(d.dataDirName, 'sai-dev');
       expect(d.tuiCommand, 'sai_tui-dev');
       expect(d.appBundle, 'sai-dev.app');
@@ -34,7 +35,7 @@ void main() {
       for (final field in [
         (SaiIdentity s) => s.slug,
         (SaiIdentity s) => s.bundleId,
-        (SaiIdentity s) => s.keychainService,
+        (SaiIdentity s) => s.keychainService ?? '',
         (SaiIdentity s) => s.dataDirName,
         (SaiIdentity s) => s.tuiCommand,
         (SaiIdentity s) => s.appBundle,
