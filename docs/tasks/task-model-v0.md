@@ -191,12 +191,19 @@ state (#74): the app keeps it while the task still exists — an edit that
 moves the task out of the list being shown leaves the inspector on it —
 and clears it when the task is deleted (unless the Trash is showing),
 unknown, or the person moves to a section that does not show it.
-Restored workspace state (#76) reads the same value. Dragging a row in the macOS app maps
-onto the two orders above — Today through `reorderToday`, the Inbox and
-every structural group shown on its own (a project's unheaded tasks, a
-heading, an area's direct tasks) through `reorderTask`, `after` being the
-live row above the drop slot or null for first. Upcoming, the Logbook and
-the Anytime/Someday hierarchies keep their derived order.
+Restored workspace state (#76) reads the same value. Dragging a row by
+its handle in the macOS app (#98) maps onto the two orders above — Today
+through `reorderToday`, the Inbox and every structural group shown on its
+own (a project's unheaded tasks, a heading, an area's direct tasks)
+through `reorderTask`, `after` being the nearest open live row above the
+drop slot or null for first; Move up / Move down (⌘↑, ⌘↓) step one row
+by the same rule. A drag stays in its group — a task is filed elsewhere
+through Move / Schedule…, which writes one `task.edit` of `when` or one
+`task.move` and never touches the deadline. Headings drag within their
+project, areas among the live areas, projects within their group, each
+onto the matching `*.reorder`; a drop across groups writes nothing and
+says why. Upcoming, the Logbook and the Anytime/Someday hierarchies keep
+their derived order.
 
 `taskViewProvider` and `sidebarProvider` preserve the task provider's loading
 and error state and watch both its projection and `todayProvider`.
