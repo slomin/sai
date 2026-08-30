@@ -194,10 +194,25 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     RowFinish finish,
   ) async {
     final commands = ref.read(taskCommandsProvider);
-    final logbook = widget.view.section == const ListSection(TaskList.logbook);
-    if (logbook) {
-      // Reopening from the Logbook: the row simply leaves.
+    if (task.status != TaskStatus.open) {
+      // The check on a finished row — in the Logbook, or a row kept in
+      // its list until midnight (#97) — reopens: the row simply leaves
+      // the Logbook, or takes its colour back where it stands.
       await commands.reopen(task.id);
+      return;
+    }
+    final retained =
+        ref.read(finishedTaskVisibilityProvider) ==
+        FinishedTaskVisibility.endOfDay;
+    if (retained) {
+      // End of day (#97): the store answers, the view keeps the row at
+      // its position and it re-renders finished — the mark fills, the
+      // title greys; nothing collapses until midnight.
+      if (finish == RowFinish.completed) {
+        await commands.complete(task.id);
+      } else {
+        await commands.cancel(task.id);
+      }
       return;
     }
     setState(() => _ghosts[task.id] = _Ghost(task, section, at, index, finish));
@@ -229,10 +244,16 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     final moved = ids.removeAt(oldIndex);
     final to = newIndex;
     ids.insert(to, moved);
-    // The anchor is the nearest live row above the drop slot.
+    // The anchor is the nearest live row above the drop slot: not a
+    // ghost, and not a finished row kept until midnight (#97) — the
+    // store refuses a finished anchor.
+    final finished = {
+      for (final item in items)
+        if (item.task.status != TaskStatus.open) item.task.id,
+    };
     TaskId? after;
     for (var i = to - 1; i >= 0; i--) {
-      if (_ghosts.containsKey(ids[i])) continue;
+      if (_ghosts.containsKey(ids[i]) || finished.contains(ids[i])) continue;
       after = ids[i];
       break;
     }
@@ -308,6 +329,9 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         );
       }
       final canDrag = reorderable(view, section) && items.length > 1;
+      // A row in the Trash is selectable and nothing else (#97): Restore
+      // is the inspector's, and a deleted task keeps its status.
+      final trash = view.section == const TrashSection();
       Widget row(int i) {
         final item = items[i];
         final task = item.task;
@@ -328,10 +352,10 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
           finishing: ghost?.finish,
           entering: ghost == null && _entering.contains(task.id),
           onSelect: ghost == null ? () => select(task.id) : null,
-          onCheck: ghost == null
+          onCheck: ghost == null && !trash
               ? () => _finish(task, s, at, i, RowFinish.completed)
               : null,
-          onCancel: ghost == null && task.status == TaskStatus.open
+          onCancel: ghost == null && !trash && task.status == TaskStatus.open
               ? () => _finish(task, s, at, i, RowFinish.cancelled)
               : null,
           onGone: ghost == null

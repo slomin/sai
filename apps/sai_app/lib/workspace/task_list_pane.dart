@@ -134,9 +134,14 @@ class _TaskListPaneState extends ConsumerState<TaskListPane> {
     });
     final text = context.saiText;
     final title = view.value?.title ?? sectionTitle(widget.projection, section);
-    final tasks = view.value?.tasks ?? const <Task>[];
+    final shown = view.value?.tasks ?? const <Task>[];
+    // The meta counts what is still to do — in the Trash, what is there;
+    // a finished row kept until midnight (#97) is shown, not counted.
+    final tasks = section == const TrashSection()
+        ? shown
+        : shown.where((t) => t.status == TaskStatus.open).toList();
     final withDeadline = tasks.where((t) => t.deadline != null).length;
-    final meta = tasks.isEmpty
+    final meta = shown.isEmpty
         ? null
         : '${tasks.length == 1 ? '1 TASK' : '${tasks.length} TASKS'}'
               '${section == const ListSection(TaskList.today) ? ' · $withDeadline WITH DEADLINES' : ''}';

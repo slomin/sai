@@ -185,7 +185,10 @@ void main() {
     testWidgets('a completed row steps to the one that took its place', (
       tester,
     ) async {
-      final container = await pumpApp(tester);
+      final container = await pumpApp(
+        tester,
+        finishedTasks: FinishedTaskVisibility.immediate,
+      );
       final store = container.read(tasksProvider.notifier).store;
       late TaskId a, b, c, d;
       await tester.runAsync(() async {
@@ -221,6 +224,46 @@ void main() {
       expect(selected(), c, reason: 'the row above where d stood');
       await key(tester, up);
       expect(selected(), a);
+    }, variant: macOS);
+
+    testWidgets('a completed row stays selected where it is (#97)', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      late TaskId a, b, c;
+      await tester.runAsync(() async {
+        a = await store.createTask(title: 'a');
+        b = await store.createTask(title: 'b');
+        c = await store.createTask(title: 'c');
+      });
+      await selectSection(tester, container, inbox);
+      TaskId? selected() => container.read(selectedTaskProvider);
+      await tester.tap(row(b));
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.enter),
+      );
+      expect(store.projection.tasks[b]!.status, TaskStatus.completed);
+      expect(rowTitles(tester), ['a', 'b', 'c']);
+      expect(selected(), b);
+      await key(tester, down);
+      expect(selected(), c, reason: 'the arrows step over a kept row');
+      await key(tester, up);
+      expect(selected(), b);
+      await key(tester, up);
+      expect(selected(), a);
+      // ⌘⏎ on the kept row reopens it.
+      await key(tester, down);
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.enter),
+      );
+      expect(store.projection.tasks[b]!.status, TaskStatus.open);
+      expect(rowTitles(tester), ['a', 'b', 'c']);
     }, variant: macOS);
 
     testWidgets('a deleted row hands the selection to its neighbour', (

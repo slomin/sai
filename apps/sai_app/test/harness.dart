@@ -81,6 +81,7 @@ Future<ProviderContainer> pumpApp(
   Map<String, String> environment = const {},
   bool firstRun = false,
   SaiIdentity identity = SaiIdentity.stable,
+  FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
   // real data directory, whatever the developer's environment says. A
@@ -96,6 +97,7 @@ Future<ProviderContainer> pumpApp(
         environment: environment,
         firstRun: firstRun,
         identity: identity,
+        finishedTasks: finishedTasks,
       ),
       ...overrides,
     ],
@@ -131,6 +133,7 @@ List<Override> appOverrides({
   Map<String, String> environment = const {},
   bool firstRun = false,
   SaiIdentity identity = SaiIdentity.stable,
+  FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
 }) => [
   // Stable unless a test asks for dev: the goldens show the plain
   // header, and `appFlavor` is unset under `flutter test` anyway.
@@ -161,6 +164,12 @@ List<Override> appOverrides({
   // Reduced by default, so lists settle in one frame and a test never
   // waits out a confirmation hold; the motion tests turn it back on.
   reduceMotionProvider.overrideWithBuild((ref, notifier) => reduceMotion),
+  // The product default (#97) unless a test is about the collapse: a
+  // finished row stays, greyed, until midnight. Pinned here rather than
+  // written to the file; a test about the switch itself passes null and
+  // reads the setting through.
+  if (finishedTasks != null)
+    finishedTaskVisibilityProvider.overrideWithValue(finishedTasks),
   // Past the welcome (#40) unless a test is about it: an empty archive
   // and no file is what every test starts from.
   setupSeenProvider.overrideWithBuild((ref, notifier) => !firstRun),

@@ -78,6 +78,7 @@ class _WorkspaceRestorerState extends ConsumerState<WorkspaceRestorer> {
       task: saved.task,
       collapsedAreas: saved.collapsedAreas,
       today: ref.read(todayProvider),
+      visibility: ref.read(finishedTaskVisibilityProvider),
     );
     ref.read(collapsedAreasProvider.notifier).set(restored.collapsedAreas);
     ref.read(selectedSectionProvider.notifier).select(restored.section);
