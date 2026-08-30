@@ -30,10 +30,15 @@ class OrganiseCommands {
     (store) => store.createProject(title: title, area: area),
   );
 
-  Future<HeadingId?> createHeading(ProjectId project, String title) => _create(
-    'new heading',
-    (store) => store.createHeading(project: project, title: title),
-  );
+  /// Null once the heading is in, otherwise the reason it was refused —
+  /// the prompt shows it beside the title it keeps (#96). The title is
+  /// trimmed here, so whitespace never reaches the log as a name.
+  Future<String?> tryCreateHeading(ProjectId project, String title) =>
+      tryStoreCommand(
+        _ref,
+        'new heading',
+        (store) => store.createHeading(project: project, title: title.trim()),
+      );
 
   Future<TagId?> createTag(String title) =>
       _create('new tag', (store) => store.createTag(title: title));

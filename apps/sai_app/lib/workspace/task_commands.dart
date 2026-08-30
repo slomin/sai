@@ -95,15 +95,26 @@ Future<bool> runStoreCommand(
   Ref ref,
   String verb,
   Future<void> Function(TaskStore store) act,
+) async => await tryStoreCommand(ref, verb, act) == null;
+
+/// The body of [runStoreCommand]: null once the store took [act],
+/// otherwise the refusal's own sentence — for a prompt that keeps its
+/// line on screen (#96). The notice carries it too, so the top bar keeps
+/// the trace after the prompt is gone.
+Future<String?> tryStoreCommand(
+  Ref ref,
+  String verb,
+  Future<void> Function(TaskStore store) act,
 ) async {
   final notice = ref.read(noticeProvider.notifier);
   try {
     await act(ref.read(tasksProvider.notifier).store);
     notice.clear();
-    return true;
+    return null;
   } on Object catch (error) {
-    notice.show('$verb failed: ${describeFailure(error)}');
-    return false;
+    final reason = describeFailure(error);
+    notice.show('$verb failed: $reason');
+    return reason;
   }
 }
 

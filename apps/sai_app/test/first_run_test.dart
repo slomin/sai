@@ -56,6 +56,11 @@ void main() {
       await tester.pump();
       expect(container.read(captureFocusProvider).hasFocus, isFalse);
       expect(find.byKey(firstRunKey), findsOneWidget);
+      // Nor does the pane behind the welcome move (#96).
+      expect(
+        container.read(selectedSectionProvider),
+        const ListSection(TaskList.today),
+      );
     }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
     testWidgets('setup done in the file: no welcome, ever', (tester) async {

@@ -7,7 +7,7 @@ import 'settings_row.dart';
 /// Every chord the app binds, in the order Help lists them — the one
 /// table the Shortcuts page and the tests read.
 const shortcutRows = <(String, String)>[
-  ('⌘N', 'New task (focus quick capture)'),
+  ('⌘N', 'New task — the Inbox, with quick capture focused'),
   ('⌘K', 'Quick Find — or just start typing'),
   ('⌘1–⌘6', 'Inbox, Today, Upcoming, Anytime, Someday, Logbook'),
   ('⌘7', 'Trash'),

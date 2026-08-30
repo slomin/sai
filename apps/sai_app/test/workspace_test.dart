@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_app/assistant/assistant_band.dart';
+import 'package:sai_app/settings/settings_screen.dart';
+import 'package:sai_app/sidebar.dart';
 import 'package:sai_app/theme/sai_tokens.dart';
+import 'package:sai_app/top_bar.dart';
+import 'package:sai_app/widgets/cog_button.dart';
 import 'package:sai_app/widgets/chip.dart';
 import 'package:sai_app/widgets/empty_state.dart';
 import 'package:sai_app/widgets/glyph_button.dart';
@@ -602,6 +608,19 @@ void main() {
       return container;
     }
 
+    testWidgets('the top bar fits a 640-wide window', (tester) async {
+      // Plain text size: the band's header (#99's) overflows at 1.3× here
+      // with or without the cog; the bar is what this measures.
+      await populated(tester);
+      tester.view.physicalSize = const Size(640, 700);
+      await tester.pump();
+      // No RenderFlex overflow is the assertion; the cog stays on the bar.
+      final bar = tester.getRect(find.byType(TopBar));
+      final cog = tester.getRect(find.byKey(settingsButtonKey));
+      expect(cog.right, lessThanOrEqualTo(bar.right));
+      expect(find.byKey(undoButtonKey), findsOneWidget);
+    });
+
     for (final size in const [Size(900, 600), Size(1440, 900)]) {
       testWidgets('the layout survives 1.3× text at $size', (tester) async {
         tester.platformDispatcher.textScaleFactorTestValue = 1.3;
@@ -639,8 +658,95 @@ void main() {
         startsWith('Tuck the assistant away'),
       );
       expect(tester.getSemantics(sidebarRow(today)).label, 'Today, 2');
+      expect(
+        tester.widget<CogButton>(find.byKey(settingsButtonKey)).label,
+        'Settings',
+      );
       expect(find.byType(TaskSectionHeader), findsNothing);
     });
+  });
+
+  group('the Settings cog (#96)', () {
+    final macOS = TargetPlatformVariant.only(TargetPlatform.macOS);
+
+    bool generalSelected(WidgetTester tester) => tester
+        .widget<SidebarRow>(find.byKey(settingsNavKey(SettingsSection.general)))
+        .selected;
+
+    testWidgets('a click opens General, as ⌘, does; Esc leaves', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      expect(find.byKey(settingsScreenKey), findsNothing);
+      await tester.tap(find.byKey(settingsButtonKey));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(settingsScreenKey), findsOneWidget);
+      expect(generalSelected(tester), isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(settingsScreenKey), findsNothing);
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'workspace');
+    }, variant: macOS);
+
+    testWidgets('assistive tech activates it through its own node', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      final handle = tester.ensureSemantics();
+      await tester.pump();
+      final button = find.descendant(
+        of: find.byKey(settingsButtonKey),
+        matching: find.bySemanticsLabel('Settings'),
+      );
+      expect(
+        tester
+            .getSemantics(button)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+      tester.semantics.performAction(
+        find.semantics.byLabel('Settings'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(settingsScreenKey), findsOneWidget);
+      handle.dispose();
+    });
+
+    testWidgets('it is a named button the keyboard reaches', (tester) async {
+      await pumpApp(tester);
+      expect(
+        find.descendant(
+          of: find.byKey(settingsButtonKey),
+          matching: find.bySemanticsLabel('Settings'),
+        ),
+        findsOneWidget,
+      );
+      // Tab from the resting scope walks the chrome; the cog is on it.
+      final cog = find.byKey(settingsButtonKey);
+      var focused = false;
+      for (var i = 0; i < 24 && !focused; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        final context = FocusManager.instance.primaryFocus?.context;
+        focused =
+            context != null &&
+            find
+                .ancestor(of: find.byWidget(context.widget), matching: cog)
+                .evaluate()
+                .isNotEmpty;
+      }
+      expect(focused, isTrue, reason: 'Tab never reached the cog');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(settingsScreenKey), findsOneWidget);
+      expect(generalSelected(tester), isTrue);
+    }, variant: macOS);
   });
 
   group('goldens', () {

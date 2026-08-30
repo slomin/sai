@@ -86,44 +86,17 @@ Future<ProviderContainer> pumpApp(
   // real data directory, whatever the developer's environment says. A
   // test that seeds either before launch passes the [tempDir] it used.
   tmp ??= tempDir();
-  final root = Directory('${tmp.path}/archive');
   final container = ProviderContainer.test(
     overrides: [
-      // Stable unless a test asks for dev: the goldens show the plain
-      // header, and `appFlavor` is unset under `flutter test` anyway.
-      identityProvider.overrideWithValue(identity),
-      archiveRootProvider.overrideWithValue(root),
-      settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
-      // A home of its own (#40): nothing that resolves a path from the
-      // environment — the Things locator above all — may wander into the
-      // developer's real directories from a test.
-      environmentProvider.overrideWithValue({'HOME': tmp.path, ...environment}),
-      eventSourceProvider.overrideWithValue(EventSources.app),
-      // Never the login keychain from a test.
-      secretStoreProvider.overrideWithValue(InMemorySecretStore()),
-      // The fake alone, nothing selected: a test never reaches LM Studio
-      // or the LAN box unless it asks for them.
-      builtinLlmsProvider.overrideWithValue(builtins),
-      defaultLlmIdProvider.overrideWithValue(null),
-      // Widget tests must finish with no pending timers. Core exercises the
-      // real midnight scheduler with fake_async; app tests pin the same read
-      // contract without creating a day-long timer in Flutter's fake clock.
-      todayProvider.overrideWithBuild(
-        (ref, notifier) => CalendarDate.fromLocal(ref.watch(clockProvider)()),
+      ...appOverrides(
+        tmp: tmp,
+        builtins: builtins,
+        reduceMotion: reduceMotion,
+        clock: clock,
+        environment: environment,
+        firstRun: firstRun,
+        identity: identity,
       ),
-      // A pinned day, advancing with real time so event timestamps keep
-      // their order: the goldens carry dates, and a golden that only
-      // matches on the day it was recorded is not a golden.
-      clockProvider.overrideWithValue(clock ?? _pinnedClock()),
-      // Reduced by default, so lists settle in one frame and a test never
-      // waits out a confirmation hold; the motion tests turn it back on.
-      reduceMotionProvider.overrideWithBuild((ref, notifier) => reduceMotion),
-      // Past the welcome (#40) unless a test is about it: an empty archive
-      // and no file is what every test starts from.
-      setupSeenProvider.overrideWithBuild((ref, notifier) => !firstRun),
-      // The light probes on selection and on demand, never on a timer
-      // here: a periodic timer would outlive the test.
-      connectionProbeEveryProvider.overrideWithValue(null),
       ...overrides,
     ],
   );
@@ -146,6 +119,63 @@ Future<ProviderContainer> pumpApp(
   await tester.pump();
   return container;
 }
+
+/// The overrides every app test runs under, with or without widgets:
+/// [pumpApp] builds its container from them, and a provider-level test
+/// (`organise_commands_test`) uses them on a bare [ProviderContainer].
+List<Override> appOverrides({
+  required Directory tmp,
+  List<LlmProvider Function()> builtins = const [FakeLlmProvider.new],
+  bool reduceMotion = true,
+  DateTime Function()? clock,
+  Map<String, String> environment = const {},
+  bool firstRun = false,
+  SaiIdentity identity = SaiIdentity.stable,
+}) => [
+  // Stable unless a test asks for dev: the goldens show the plain
+  // header, and `appFlavor` is unset under `flutter test` anyway.
+  identityProvider.overrideWithValue(identity),
+  archiveRootProvider.overrideWithValue(Directory('${tmp.path}/archive')),
+  settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
+  // A home of its own (#40): nothing that resolves a path from the
+  // environment — the Things locator above all — may wander into the
+  // developer's real directories from a test.
+  environmentProvider.overrideWithValue({'HOME': tmp.path, ...environment}),
+  eventSourceProvider.overrideWithValue(EventSources.app),
+  // Never the login keychain from a test.
+  secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+  // The fake alone, nothing selected: a test never reaches LM Studio
+  // or the LAN box unless it asks for them.
+  builtinLlmsProvider.overrideWithValue(builtins),
+  defaultLlmIdProvider.overrideWithValue(null),
+  // Widget tests must finish with no pending timers. Core exercises the
+  // real midnight scheduler with fake_async; app tests pin the same read
+  // contract without creating a day-long timer in Flutter's fake clock.
+  todayProvider.overrideWithBuild(
+    (ref, notifier) => CalendarDate.fromLocal(ref.watch(clockProvider)()),
+  ),
+  // A pinned day, advancing with real time so event timestamps keep
+  // their order: the goldens carry dates, and a golden that only
+  // matches on the day it was recorded is not a golden.
+  clockProvider.overrideWithValue(clock ?? _pinnedClock()),
+  // Reduced by default, so lists settle in one frame and a test never
+  // waits out a confirmation hold; the motion tests turn it back on.
+  reduceMotionProvider.overrideWithBuild((ref, notifier) => reduceMotion),
+  // Past the welcome (#40) unless a test is about it: an empty archive
+  // and no file is what every test starts from.
+  setupSeenProvider.overrideWithBuild((ref, notifier) => !firstRun),
+  // The light probes on selection and on demand, never on a timer
+  // here: a periodic timer would outlive the test.
+  connectionProbeEveryProvider.overrideWithValue(null),
+];
+
+/// Pumps and lets real async run until [ready] — for a dialog that
+/// answers a refused commit in place, where no event count moves.
+Future<void> settleUntil(
+  WidgetTester tester,
+  bool Function() ready,
+  String Function() describe,
+) => _settle(tester, ready, describe);
 
 /// Types [line] into the capture field and submits it, waiting (under
 /// real async) until the store has committed the resulting event — or

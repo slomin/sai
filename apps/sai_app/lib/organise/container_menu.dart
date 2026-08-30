@@ -95,7 +95,10 @@ class _ContainerMenuState extends ConsumerState<ContainerMenu> {
   }
 
   Future<void> _newChild() async {
+    // Read before the prompt: this row leaves the tree when its container
+    // goes underneath, and a ref read after the await would throw.
     final organise = ref.read(organiseCommandsProvider);
+    final select = ref.read(selectedSectionProvider.notifier).select;
     switch (widget.section) {
       case AreaSection(:final area):
         final title = await promptForTitle(
@@ -106,18 +109,19 @@ class _ContainerMenuState extends ConsumerState<ContainerMenu> {
         );
         if (title == null) return;
         final id = await organise.createProject(title, area: area);
-        if (id != null) {
-          ref.read(selectedSectionProvider.notifier).select(ProjectSection(id));
-        }
+        if (id != null) select(ProjectSection(id));
       case ProjectSection(:final project):
+        // Committed while the prompt is up (#96), then the project is
+        // shown: a heading made from another list was invisible before.
         final title = await promptForTitle(
           context,
           eyebrow: widget.title,
           title: 'New heading',
           confirm: 'Create',
+          commit: (title) => organise.tryCreateHeading(project, title),
         );
         if (title == null) return;
-        await organise.createHeading(project, title);
+        select(ProjectSection(project));
       case _:
         break;
     }

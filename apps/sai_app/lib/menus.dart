@@ -69,7 +69,7 @@ List<PlatformMenuItem> saiMenus({
       PlatformMenuItem(
         label: 'New Task',
         shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-        onSelected: commands.focusCapture,
+        onSelected: commands.newTask,
       ),
     ],
   ),
@@ -369,7 +369,7 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
       child: CallbackShortcuts(
         bindings: <ShortcutActivator, VoidCallback>{
           const SingleActivator(LogicalKeyboardKey.keyN, meta: true):
-              commands.focusCapture,
+              commands.newTask,
           const SingleActivator(LogicalKeyboardKey.keyJ, meta: true):
               commands.toggleChat,
           const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
