@@ -102,13 +102,15 @@ void main() {
       ]);
       expect(log[0]['actor'], 'user');
       expect(log[0]['payload'], {'text': 'what is due today?'});
+      // The fake is local, so the model saw the whole catalog (#105).
+      expect(answer.provenance, TaskProvenance.catalog);
       final request = log[1]['payload']! as Map<String, Object?>;
       final sentMessages = request['messages']! as List;
       expect(sentMessages[1], {
         'role': 'system',
-        'text': taskContextFor(
+        'text': taskCatalog(
           container.read(tasksProvider).value!,
-          const CalendarDate(2026, 8, 25),
+          today: const CalendarDate(2026, 8, 25),
         ),
       });
       expect(request['context_hash'], startsWith('sha256-'));
@@ -131,7 +133,17 @@ void main() {
   );
 
   test('what the budget cut is on the answer for the client', () async {
-    final container = await make();
+    // On the compact path — a cloud provider with sharing on — so the
+    // Upcoming cut still exists to be shown.
+    final cloudy = FakeLlmProvider(
+      id: 'cloudy',
+      privacy: LlmPrivacy.cloud,
+      script: echo,
+    );
+    final container = await make(extraLlms: [cloudy]);
+    final settings = container.read(settingsProvider.notifier);
+    settings.selectLlm('cloudy');
+    settings.setShareTasksWithCloud(true);
     // A window that fits the profile, the draft and Today, but not the
     // Upcoming day.
     final chat = container.read(chatProvider.notifier);
@@ -439,13 +451,14 @@ void main() {
             'the first request, its response and its chat line — '
             'nothing of the second call',
       );
-      // Sharing on: the earlier answer comes back into the history.
+      // Sharing on covers the compact lists only: the first answer saw
+      // the catalog, so it stays out of the history even now (#105) —
+      // the withheld second answer, which saw nothing, may return.
       settings.setShareTasksWithCloud(true);
       await chat.send('again?');
-      expect(
-        container.read(chatProvider).turns.last.text,
-        contains('assistant:system:'),
-      );
+      final again = container.read(chatProvider).turns.last.text;
+      expect(again, contains('user:due?'));
+      expect(again, isNot(contains('TASK CATALOG')));
     });
 
     test('sharing on sends it', () async {

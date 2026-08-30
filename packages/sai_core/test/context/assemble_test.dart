@@ -263,6 +263,62 @@ void main() {
         );
       });
     });
+
+    group('catalog shape (#105)', () {
+      test('carries the whole catalog, provenance and all', () {
+        final out = assembleContext(
+          profile: defaultProfile,
+          projection: fixture(),
+          today: today,
+          history: const [],
+          draft: 'what did I finish?',
+          shape: TaskContextShape.catalog,
+        );
+        expect(out.request.taskContext, taskCatalog(fixture(), today: today));
+        expect(out.request.taskContextProvenance, TaskProvenance.catalog);
+        expect(out.request.taskContext, contains('Old thing'));
+        expect(out.dropped, isEmpty);
+      });
+
+      test('cuts turns then memory, never the catalog', () {
+        final big = 'x' * 400;
+        final catalog = taskCatalog(fixture(), today: today);
+        final need =
+            estimateTokens('p') +
+            estimateTokens('now') +
+            estimateTokens(catalog);
+        final out = assembleContext(
+          profile: 'p',
+          memory: big,
+          projection: fixture(),
+          today: today,
+          history: [
+            LlmMessage(LlmRole.user, big),
+            LlmMessage(LlmRole.assistant, big),
+          ],
+          draft: 'now',
+          budget: ContextBudget(maxTokens: need + 110, replyReserve: 100),
+          shape: TaskContextShape.catalog,
+        );
+        expect(out.dropped, ['turns:2', 'memory']);
+        expect(out.request.taskContext, catalog);
+      });
+
+      test('past that it refuses rather than shrink the catalog', () {
+        expect(
+          () => assembleContext(
+            profile: 'p',
+            projection: fixture(),
+            today: today,
+            history: const [],
+            draft: 'now',
+            budget: const ContextBudget(maxTokens: 120, replyReserve: 100),
+            shape: TaskContextShape.catalog,
+          ),
+          throwsA(isA<ContextBudgetError>()),
+        );
+      });
+    });
   });
 
   test('estimateTokens rounds four bytes up to a token', () {

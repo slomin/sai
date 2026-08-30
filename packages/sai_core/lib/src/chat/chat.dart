@@ -9,6 +9,7 @@ import '../context/assemble.dart';
 import '../llm/call.dart';
 import '../llm/failure.dart';
 import '../llm/privacy.dart';
+import '../llm/provider.dart';
 import '../llm/recorder.dart';
 import '../llm/status.dart';
 import '../providers.dart';
@@ -195,6 +196,11 @@ class ChatNotifier extends Notifier<ChatState> {
         budget: budget,
         // Off asks the backend not to think; on leaves it to the model.
         reasoning: container.read(reasoningProvider) ? null : false,
+        // A local model sees the whole collection; a cloud one at most
+        // the compact lists (#105).
+        shape: provider.privacy == LlmPrivacy.local
+            ? TaskContextShape.catalog
+            : TaskContextShape.compact,
       );
     } on ContextBudgetError catch (error) {
       return _refuse(error.toString());

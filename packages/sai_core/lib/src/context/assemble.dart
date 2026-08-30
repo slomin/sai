@@ -8,6 +8,13 @@ import '../tasks/model.dart';
 import '../tasks/projection.dart';
 import '../tasks/sidebar.dart';
 import '../tasks/views.dart';
+import 'catalog.dart';
+
+/// Which task context a turn carries (#105): compact — Today and
+/// Upcoming, what a cloud provider may see; catalog — the complete
+/// collection, local providers only. The caller maps the provider's
+/// privacy tag to a shape; assembly itself knows nothing of providers.
+enum TaskContextShape { compact, catalog }
 
 /// The assistant's standing instructions until the profile (#31) exists.
 /// Provider-independent: the same text goes to every model.
@@ -147,9 +154,10 @@ final class ContextBudgetError implements Exception {
 /// the recorder can withhold them from a cloud provider (ADR 0010).
 ///
 /// When the estimate exceeds [budget], cuts go in a fixed order until it
-/// fits: the oldest [history] messages, then Upcoming days from the
-/// farthest back, then memory. Today and the profile are never cut;
-/// past that, [ContextBudgetError].
+/// fits — for the compact [shape]: the oldest [history] messages, then
+/// Upcoming days from the farthest back, then memory; for the catalog
+/// shape: turns, then memory — the catalog itself is never cut (#105).
+/// Today and the profile are never cut; past that, [ContextBudgetError].
 AssembledContext assembleContext({
   required String profile,
   String? memory,
@@ -159,6 +167,7 @@ AssembledContext assembleContext({
   required String draft,
   ContextBudget budget = defaultContextBudget,
   bool? reasoning,
+  TaskContextShape shape = TaskContextShape.compact,
 }) {
   final message = draft.trim();
   if (message.isEmpty) throw ArgumentError('draft must not be blank');
@@ -166,11 +175,18 @@ AssembledContext assembleContext({
   if (memory != null && memory.isEmpty) {
     throw ArgumentError('memory must be null or non-empty');
   }
-  final upcomingDays = taskView(
-    projection,
-    const ListSection(TaskList.upcoming),
-    today: today,
-  ).sections;
+  // Rendered once and never shrunk; null on the compact path, where the
+  // context is re-rendered per cut instead.
+  final catalog = shape == TaskContextShape.catalog
+      ? taskCatalog(projection, today: today)
+      : null;
+  final upcomingDays = shape == TaskContextShape.compact
+      ? taskView(
+          projection,
+          const ListSection(TaskList.upcoming),
+          today: today,
+        ).sections
+      : const <TaskViewSection>[];
 
   var keptHistory = history;
   var keptDays = upcomingDays.length;
@@ -178,7 +194,8 @@ AssembledContext assembleContext({
   final dropped = <String>[];
 
   (LlmRequest, int) build() {
-    final tasks = taskContextFor(projection, today, upcomingDays: keptDays);
+    final tasks =
+        catalog ?? taskContextFor(projection, today, upcomingDays: keptDays);
     final notes = keptMemory;
     final request = LlmRequest(
       messages: [
@@ -189,6 +206,9 @@ AssembledContext assembleContext({
       ],
       maxTokens: budget.replyReserve,
       taskContext: tasks,
+      taskContextProvenance: catalog != null
+          ? TaskProvenance.catalog
+          : TaskProvenance.compact,
       reasoning: reasoning,
     );
     final estimate = request.sent.fold(0, (n, m) => n + estimateTokens(m.text));
