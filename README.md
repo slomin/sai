@@ -20,7 +20,7 @@ This repository is a Dart workspace:
 | `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
 | `docs/settings/`     | The settings file contract ([settings v0](docs/settings/settings-v0.md)).   |
 | `docs/release/`      | Installing, upgrading and building a release ([README](docs/release/README.md)). |
-| `tool/`              | Developer scripts (`release.sh`, `install-local.sh`, `sign-tui.sh`, `app-icons.swift`) with their tests and smoke drivers. |
+| `tool/`              | Developer scripts (`release.sh`, `install-local.sh`, `verify-release.sh`, `build-tui.sh`, `app-icons.swift`) with their tests and smoke drivers. |
 | `docs/decisions/`    | Technical ADRs.                                                            |
 
 Both clients read the same providers from `sai_core`; nothing in `sai_core`
@@ -88,8 +88,8 @@ a bundle, the binary beside the SQLite it bundles — `dart build cli -t
 apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui` puts
 it at `build/tui/bundle/bin/sai_tui` (`dart compile exe` refuses the
 build hook `package:sqlite3` needs; `bin/sai_tui-dev.dart` is the dev
-entry point and lands as `sai_tui-dev`) — or signed via
-`tool/sign-tui.sh` (below). To try one against a scratch archive instead of the real one,
+entry point and lands as `sai_tui-dev`) — `tool/build-tui.sh
+[output-dir] [stable|dev]` does the same and ad-hoc signs every Mach-O. To try one against a scratch archive instead of the real one,
 point `SAI_ARCHIVE_ROOT` at a throwaway directory, e.g.
 `SAI_ARCHIVE_ROOT=/tmp/sai-demo/archive`. Non-secret settings live in
 `settings.json` in the same data directory as the default archive;
@@ -166,21 +166,21 @@ For a local test, LM Studio's server (default port 1234) or
 `llama-server` a key with `--api-key-file`, never `--api-key` (argv is
 visible to every process).
 
-Keychain items trust the binary that created them by its code-signing
-identity. Ad-hoc signed builds (the default) get a new identity on every
-build and so a Keychain prompt after every rebuild. To avoid that in
-development, make a self-signed identity once — Keychain Access →
-Certificate Assistant → Create a Certificate, type *Code Signing*, name
-it e.g. `sai-dev` (a certificate name; the dev *flavor* is unrelated) —
-and point both builds at it, keeping the name out of the tree:
-
-```sh
-# app: gitignored per-machine override, picked up by every configuration of both flavors
-echo 'CODE_SIGN_IDENTITY = sai-dev' > apps/sai_app/macos/Runner/Configs/Local.xcconfig
-# terminal client: build the bundle and sign it in one step
-SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/tui          # stable
-SAI_CODESIGN_IDENTITY=sai-dev tool/sign-tui.sh build/tui-dev dev  # dev
-```
+Development builds carry no stable signing authority and no persistent
+credentials (#95, ADR 0017 and 0019): the dev flavor never opens a Keychain, a
+credential-backed provider is *no credentials in dev*, and the fake and
+the keyless local providers (LM Studio, the LAN box) are what a dev
+copy talks to. Stable is signed in a separate phase from a dedicated
+keychain that asks before its key is used ([docs/release](docs/release/README.md)).
+An ad-hoc signed dev app gets a new code-directory hash on every build,
+so macOS re-asks its permissions (Accessibility for the smoke driver,
+say) after every rebuild. To keep them, make a self-signed identity
+once — Keychain Access → Certificate Assistant → Create a Certificate,
+type *Code Signing*, name it exactly `sai dev` — and
+`tool/release.sh local-install dev` uses it when it is there, ad-hoc
+otherwise; it signs nothing stable, and a certificate by that name that
+cannot be used (a locked keychain, a denied key) stops the build rather
+than falling back.
 
 Build a debug app bundle (what CI does, for both flavors): `cd
 apps/sai_app && flutter build macos --debug --flavor dev` →
@@ -194,10 +194,12 @@ come from the same build, not from a release. With that flavor quit and
 a clean tree:
 
 ```sh
-SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install       # build, verify, install stable
-SAI_CODESIGN_IDENTITY="…" tool/release.sh local-install dev   # the same for the dev flavor
-tool/install-local.sh dist/sai-v<version>                     # install what is already built (dist/sai-dev-v… for dev)
-tool/release.sh install references/releases/<name>            # roll back to a kept one
+tool/release.sh local-install dev              # build, verify, install the dev flavor
+tool/release.sh prepare stable                 # build stable, unsigned and sealed
+tool/release.sh sign                           # sign it from the dedicated keychain (macOS asks)
+tool/release.sh local-install stable           # verify and install the signed release
+tool/install-local.sh dist/sai-v<version>/release   # install what is already staged (dist/sai-dev-v… for dev)
+tool/release.sh install references/releases/<name>  # roll back to a kept one
 ```
 
 That puts `~/Applications/sai.app`, `~/.local/share/sai/bundle/` and
@@ -296,6 +298,7 @@ swift tool/app-icons.swift check         # macOS
 dart build cli -t apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui
 dart build cli -t apps/sai_tui/bin/sai_tui-dev.dart --root-package=sai_tui -o build/tui-dev
 sh tool/test/install_local_test.sh       # the installer, both flavors, against temporary roots
+sh tool/test/release_sign_test.sh        # the signing phase, with a fake security/codesign on PATH
 gitleaks git . --config .gitleaks.toml   # no secret in any commit
 ```
 

@@ -87,8 +87,15 @@ the layout and the toolchain; this file has the rules.
 - Secrets go only through `SecretStore` in `sai_core` (the Keychain via
   `Security.framework`, ADR 0008): never `settings.json`, never the
   archive, never a log line, never an exception message, never the
-  `security` command. Tests use `InMemorySecretStore` or a throwaway
-  keychain file; nothing under `test/` touches the login keychain.
+  `security` command — with one exception, `tool/release.sh sign`,
+  which may run exactly `security find-identity -v -p codesigning`
+  against the dedicated signing keychain, keep the output out of every
+  log and use only the one public identity it lists; it never inspects
+  or mutates generic-password items, and no script unlocks a keychain
+  or changes a search list, ACL or partition list
+  (`no_spawn_test` pins this). The dev flavor opens no Keychain at all
+  (#95). Tests use `InMemorySecretStore` or a throwaway keychain file;
+  nothing under `test/` touches the login keychain.
 - Agents never hold a credential (#56). An agent never receives or asks
   for a real key, never reads a vendor's credential store or Keychain
   item, never runs `security find-generic-password`, and never spawns
@@ -163,17 +170,24 @@ the layout and the toolchain; this file has the rules.
   tree.
 - Releases are built and published by hand with `tool/release.sh`
   (`docs/release/README.md`, ADR 0017); CI has no release job and a
-  pushed `v*` tag does nothing. `tool/release.sh local-install` installs
-  the same build on this Mac as the dogfood copy (#87) — it writes under
-  `~/Applications` and `~/.local`, which the sandbox denies — an agent
-  runs that one command with the sandbox switched off (`/sandbox`) and
-  says so first. Two flavors exist and no third (ADR 0019): `stable` is
-  the daily copy, `dev` (`local-install dev`) the isolated one beside it;
-  a flavorless `flutter run`/`build` is dev, and publishing is
+  pushed `v*` tag does nothing. Building and signing are two phases
+  (#95): `prepare stable` runs every toolchain with no identity in
+  reach; `sign` is a person's step — it reads the dedicated signing
+  keychain and macOS asks at the dialog — an agent never runs it, never
+  creates, unlocks or touches that keychain, and never holds an
+  identity name. `tool/release.sh local-install dev` builds and installs
+  the dev copy on this Mac (#87), signed low or ad-hoc, holding no
+  credentials — it writes under `~/Applications` and `~/.local`, which
+  the sandbox denies — an agent runs that one command with the sandbox
+  switched off (`/sandbox`) and says so first; `local-install stable`
+  installs a release a person has signed. Two flavors exist and no third
+  (ADR 0019): `stable` is the daily copy, `dev` the isolated one beside
+  it; a flavorless `flutter run`/`build` is dev, and publishing is
   stable-only. `tool/test/install_local_test.sh` covers the installer,
   both flavors and their isolation, with fixture releases against
-  temporary roots. Bump `saiVersion` and the three pubspecs together
-  before a release; tests keep them equal.
+  temporary roots; `tool/test/release_sign_test.sh` covers the sign
+  phase with a fake `security`/`codesign`. Bump `saiVersion` and the
+  three pubspecs together before a release; tests keep them equal.
 
 ## Commits and pull requests
 

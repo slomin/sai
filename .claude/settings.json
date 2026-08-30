@@ -65,7 +65,7 @@
       "Read(~/.local/share/opencode/**)",
       "Read(~/.config/openai/**)",
       "Read(~/.openai/**)",
-      "Bash(security find-generic-password:*)",
+      "Bash(security:*)",
       "Bash(security find-internet-password:*)",
       "Bash(security dump-keychain:*)",
       "Bash(claude:*)",

@@ -189,7 +189,12 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                     child: const Text('Cancel test'),
                   )
                 : TextButton(
-                    onPressed: () => _runTest(provider),
+                    // A dev copy cannot send a key it does not hold.
+                    onPressed:
+                        ref.watch(credentialStatusProvider(provider.id)) ==
+                            CredentialStatus.absent
+                        ? null
+                        : () => _runTest(provider),
                     child: const Text('Test'),
                   ),
           ],
@@ -250,8 +255,13 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
             : 'A key is stored in the Keychain.',
       CredentialStatus.missing => 'No key stored yet.',
       CredentialStatus.unavailable => 'The Keychain could not be read.',
+      // Dev holds no credentials (#95, ADR 0019).
+      CredentialStatus.absent =>
+        'The dev copy holds no credentials. Use the stable app for this '
+            'provider.',
       CredentialStatus.none => '',
     };
+    final absent = status == CredentialStatus.absent;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -265,6 +275,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                 child: TextField(
                   key: apiKeyFieldKey,
                   controller: _controller,
+                  enabled: !absent,
                   obscureText: true,
                   enableSuggestions: false,
                   autocorrect: false,
@@ -283,7 +294,9 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                 child: const Text('Remove'),
               ),
               FilledButton(
-                onPressed: value.text.trim().isEmpty ? null : () => _save(id),
+                onPressed: absent || value.text.trim().isEmpty
+                    ? null
+                    : () => _save(id),
                 child: const Text('Save'),
               ),
             ],

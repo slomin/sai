@@ -23,8 +23,8 @@ void main() {
   );
 
   /// Settings › Providers: the page the dialog of #29 became (#40).
-  Future<void> open(WidgetTester tester) async {
-    menuItem(menuDelegate.menus, ['sai', 'Settings…']).onSelected!();
+  Future<void> open(WidgetTester tester, {String app = 'sai'}) async {
+    menuItem(menuDelegate.menus, [app, 'Settings…']).onSelected!();
     await tester.pump();
     await tester.tap(find.byKey(settingsNavKey(SettingsSection.providers)));
     await tester.pump();
@@ -168,6 +168,58 @@ void main() {
       isNot(contains(canary)),
     );
     expect(find.textContaining(canary), findsNothing);
+  });
+
+  testWidgets('the dev copy holds no credentials (#95)', (tester) async {
+    final container = await pumpApp(tester, identity: SaiIdentity.dev);
+    final settings = container.read(settingsProvider.notifier);
+    // With an endpoint, so the row has a Test button to disable too.
+    settings.upsertProvider(
+      ProviderConfig(
+        id: 'lan',
+        kind: 'fake',
+        endpoint: 'http://127.0.0.1:1/v1',
+        defaultModel: 'qwen',
+        credential: 'provider:lan',
+      ),
+    );
+    settings.selectLlm('lan');
+    await tester.pump();
+    expect(find.textContaining('· no credentials in dev'), findsWidgets);
+    await open(tester, app: 'sai dev');
+    expect(
+      find.text(
+        'The dev copy holds no credentials. Use the stable app for this '
+        'provider.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<TextField>(find.byKey(apiKeyFieldKey)).enabled,
+      isFalse,
+    );
+    await tester.enterText(find.byKey(apiKeyFieldKey), 'sk-x');
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Save'))
+          .onPressed,
+      isNull,
+    );
+    expect(
+      container.read(credentialStatusProvider('lan')),
+      CredentialStatus.absent,
+    );
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Test'))
+          .onPressed,
+      isNull,
+    );
+    // The fake still works in dev.
+    settings.selectLlm('fake');
+    await tester.pump();
+    expect(find.textContaining('fake (fake-1) — local'), findsWidgets);
   });
 
   testWidgets('remove deletes the key and says so', (tester) async {

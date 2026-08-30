@@ -1,6 +1,6 @@
 /// A secret could not be read or written. Carries a fixed message and, on
 /// macOS, the `OSStatus` — never the value that was being stored.
-final class SecretStoreException implements Exception {
+class SecretStoreException implements Exception {
   const SecretStoreException(this.message, {this.status});
 
   final String message;
@@ -84,4 +84,38 @@ final class InMemorySecretStore implements SecretStore {
     checkAccount(account);
     return _items.remove(account) != null;
   }
+}
+
+/// What the dev flavor answers about any credential (#95, ADR 0019).
+const devSecretsMessage =
+    'the dev copy holds no credentials; use the stable copy';
+
+/// A store with nothing in it that refuses every call with [reason] — the
+/// dev flavor's (#95): a low-authority build never opens a Keychain, and
+/// whatever `me.slominski.sai.dev` items an earlier dev copy filed are left
+/// where they are, untouched and unread.
+final class NoSecretStore implements SecretStore {
+  const NoSecretStore(this.reason);
+
+  final String reason;
+
+  Never _refuse() => throw NoSecretsException(reason);
+
+  @override
+  String? read(String account) => _refuse();
+
+  @override
+  bool has(String account) => _refuse();
+
+  @override
+  void write(String account, String value) => _refuse();
+
+  @override
+  bool delete(String account) => _refuse();
+}
+
+/// What a [NoSecretStore] throws: a refusal by policy, not a Keychain
+/// that failed — a caller may say so in its own words.
+final class NoSecretsException extends SecretStoreException {
+  const NoSecretsException(super.message);
 }

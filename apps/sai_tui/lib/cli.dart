@@ -277,7 +277,13 @@ Future<int> runCli(
             'with --${missing == 'default_model' ? 'model' : missing}',
           );
         }
-        if (key && wasBound && !config.keyBound) {
+        final stable = SaiIdentity.stable.tuiCommand;
+        if (key && container.read(identityProvider).keychainService == null) {
+          out.writeln(
+            'this dev copy holds no credentials; the key is set in the '
+            'stable one: $stable secret set $id',
+          );
+        } else if (key && wasBound && !config.keyBound) {
           out.writeln(
             'the endpoint moved; enter its key again: $program secret set $id',
           );
@@ -381,6 +387,15 @@ Future<int> runCli(
         if (!ProviderConfig.idForm.hasMatch(id)) {
           throw _Usage("'$id' is not a provider id");
         }
+        // Dev holds no credentials (#95, ADR 0019): nothing to set, ask
+        // or clear, and no Keychain is ever opened for it.
+        if (container.read(identityProvider).keychainService == null) {
+          err.writeln(
+            '$program holds no credentials (ADR 0019); '
+            'use ${SaiIdentity.stable.tuiCommand}',
+          );
+          return cliFailed;
+        }
         final config = container.read(settingsProvider).provider(id);
         final credentials = container.read(credentialsProvider.notifier);
         if (verb == 'set') {
@@ -416,6 +431,7 @@ Future<int> runCli(
               CredentialStatus.set => 'set',
               CredentialStatus.missing => 'missing',
               CredentialStatus.unavailable => 'keychain unavailable',
+              CredentialStatus.absent => 'no credentials in dev',
               CredentialStatus.none => 'none',
             });
         }

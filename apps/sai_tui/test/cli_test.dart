@@ -140,7 +140,8 @@ void main() {
     expect(await run('frobnicate now'), cliUsageError);
     expect(err.toString(), startsWith('sai_tui-dev: '));
     expect(await run('provider add lan --kind fake --key'), cliOk);
-    expect(out.toString(), contains('sai_tui-dev secret set lan'));
+    // The key lives in the stable copy (#95): the hint says which one.
+    expect(out.toString(), contains('sai_tui secret set lan'));
   });
 
   test('help and an unknown command', () async {
@@ -381,6 +382,32 @@ void main() {
 
     final everything = '$out$err${settingsFile().readAsStringSync()}';
     expect(everything, isNot(contains(canary)));
+  });
+
+  test('the dev client holds no credentials (#95)', () async {
+    container = testContainer(
+      overrides: [identityProvider.overrideWithValue(SaiIdentity.dev)],
+    );
+    expect(await run('provider add lan --kind fake --key'), cliOk);
+    expect(out.toString(), contains('sai_tui secret set lan'));
+    expect(out.toString(), isNot(contains('sai_tui-dev secret set')));
+    out.clear();
+    expect(await run('provider list'), cliOk);
+    expect(out.toString(), contains('· no credentials in dev'));
+    out.clear();
+    for (final verb in ['set', 'status', 'clear']) {
+      err.clear();
+      expect(await run('secret $verb lan'), cliFailed);
+      expect(
+        err.toString().trim(),
+        'sai_tui-dev holds no credentials (ADR 0019); use sai_tui',
+      );
+    }
+    expect(prompts, isEmpty);
+    expect(out.toString(), isEmpty);
+    // Keyless providers are untouched.
+    expect(await run('provider use fake'), cliOk);
+    expect(out.toString().trim(), 'fake (fake-1) — local');
   });
 
   test('secret set with nothing given changes nothing', () async {

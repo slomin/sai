@@ -134,6 +134,10 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     final String? key;
     try {
       key = _secrets.read(account);
+    } on NoSecretsException catch (e) {
+      // The dev flavor holds no credentials (#95): its own words, not a
+      // Keychain that could not be read.
+      return (refuse(LlmFailureKind.credential, e.message), null);
     } on SecretStoreException {
       return (
         refuse(LlmFailureKind.credential, TransportText.keychainUnavailable),

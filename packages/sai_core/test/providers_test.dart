@@ -1101,6 +1101,125 @@ void main() {
       });
     });
 
+    group('the dev flavor holds no credentials (#95)', () {
+      final lan = ProviderConfig(
+        id: 'lan',
+        kind: 'fake',
+        defaultModel: 'qwen',
+        credential: 'provider:lan',
+      );
+
+      /// A dev container on the real secret-store provider: it must never
+      /// reach a Keychain, so the harness does not override it here.
+      ProviderContainer dev() => ProviderContainer.test(
+        overrides: [
+          identityProvider.overrideWithValue(SaiIdentity.dev),
+          archiveRootProvider.overrideWithValue(root),
+          settingsFileProvider.overrideWithValue(
+            File('${tmp.path}/settings.json'),
+          ),
+          eventSourceProvider.overrideWithValue('sai/test'),
+          defaultLlmIdProvider.overrideWithValue(null),
+        ],
+      );
+
+      test('the store refuses everything and opens nothing', () {
+        final store = dev().read(secretStoreProvider);
+        expect(store, isA<NoSecretStore>());
+        for (final call in [
+          () => store.read('provider:lan'),
+          () => store.has('provider:lan'),
+          () => store.write('provider:lan', 'k'),
+          () => store.delete('provider:lan'),
+        ]) {
+          expect(
+            call,
+            throwsA(
+              isA<SecretStoreException>().having(
+                (e) => e.message,
+                'message',
+                devSecretsMessage,
+              ),
+            ),
+          );
+        }
+      });
+
+      test('a credentialed provider is absent, and says so everywhere', () {
+        final container = dev();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(lan);
+        settings.selectLlm('lan');
+        expect(
+          container.read(credentialStatusProvider('lan')),
+          CredentialStatus.absent,
+        );
+        expect(
+          container.read(llmStatusProvider),
+          'lan (qwen) — local · no credentials in dev',
+        );
+        expect(
+          container.read(connectionProvider),
+          const ConnectionStatus.down('no credentials in dev'),
+        );
+        final credentials = container.read(credentialsProvider.notifier);
+        expect(
+          () => credentials.set('lan', 'k'),
+          throwsA(isA<SecretStoreException>()),
+        );
+        expect(credentials.statusOf('provider:lan'), CredentialStatus.absent);
+        expect(
+          () => credentials.clearAccount('provider:lan'),
+          throwsA(isA<SecretStoreException>()),
+        );
+      });
+
+      test('keyless providers still work', () async {
+        final container = dev();
+        final settings = container.read(settingsProvider.notifier);
+        settings.selectLlm('fake');
+        expect(
+          container.read(credentialStatusProvider('fake')),
+          CredentialStatus.none,
+        );
+        expect(container.read(llmStatusProvider), 'fake (fake-1) — local');
+        final answer = await container
+            .read(activeLlmProvider)!
+            .start(LlmRequest(messages: [LlmMessage(LlmRole.user, 'hi')]))
+            .done;
+        expect(answer.text, isNotEmpty);
+      });
+
+      test('a provider that reads its key says the dev words', () async {
+        final container = dev();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'cloud',
+            kind: 'openai_compatible',
+            endpoint: 'http://127.0.0.1:1/v1',
+            defaultModel: 'm',
+            credential: 'provider:cloud',
+          ),
+        );
+        settings.selectLlm('cloud');
+        final result = await container
+            .read(activeLlmProvider)!
+            .start(LlmRequest(messages: [LlmMessage(LlmRole.user, 'hi')]))
+            .done;
+        expect(result.failure?.kind, LlmFailureKind.credential);
+        expect(result.failure?.message, devSecretsMessage);
+      });
+
+      test('stable keeps its Keychain service', () {
+        expect(SaiIdentity.stable.keychainService, saiKeychainService);
+        expect(
+          credentialSuffix(CredentialStatus.absent, null),
+          absentCredentialSuffix,
+        );
+      });
+    });
+
     group('the privacy policy (#27)', () {
       final cloudy = ProviderConfig(
         id: 'cloudy',
