@@ -653,39 +653,74 @@ void main() {
     ) async {
       final container = await pumpApp(tester);
       final store = container.read(tasksProvider.notifier).store;
-      late TaskId id;
+      late TaskId open, done;
       await tester.runAsync(() async {
-        id = await store.createTask(title: 'Gone thing');
-        await store.deleteTask(id);
+        open = await store.createTask(title: 'Gone thing');
+        await store.deleteTask(open);
+        done = await store.createTask(title: 'Done and gone');
+        await store.cancelTask(done);
+        await store.deleteTask(done);
       });
       await selectSection(tester, container, const TrashSection());
-      expect(rowTitles(tester), ['Gone thing']);
-      final count = store.projection.eventCount;
+      expect(rowTitles(tester), ['Done and gone', 'Gone thing']);
+      // An open task in the Trash has no box to tick; a finished one keeps
+      // its mark as a plain indicator — neither announces an action.
       expect(
-        tester
-            .widget<CheckMark>(
-              find.descendant(of: row(id), matching: find.byType(CheckMark)),
-            )
-            .onTap,
-        isNull,
+        find.descendant(of: row(open), matching: find.byType(CheckMark)),
+        findsNothing,
       );
-      await tester.tap(check(id), warnIfMissed: false);
-      await tester.tap(row(id));
+      final mark = tester.widget<CheckMark>(
+        find.descendant(of: row(done), matching: find.byType(CheckMark)),
+      );
+      expect(mark.onTap, isNull);
+      expect(mark.cancelled, isTrue);
+      for (final id in [open, done]) {
+        final label = tester.getSemantics(row(id)).label;
+        expect(label, isNot(contains('Complete')), reason: label);
+        expect(label, isNot(contains('Reopen')), reason: label);
+        expect(find.byKey(cancelButtonKey(id)), findsNothing);
+      }
+      expect(tester.getSemantics(row(done)).label, contains('cancelled'));
+      final count = store.projection.eventCount;
+      await tester.tap(row(open));
       await tester.pump();
-      expect(find.byKey(cancelButtonKey(id)), findsNothing);
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 50)),
       );
       await tester.pump();
       expect(store.projection.eventCount, count, reason: 'nothing written');
-      expect(container.read(selectedTaskProvider), id, reason: 'selectable');
+      expect(container.read(selectedTaskProvider), open, reason: 'selectable');
       expect(find.text('Restore'), findsOneWidget, reason: 'the inspector');
       await settleEvents(
         tester,
         container,
         () => tester.tap(find.text('Restore')),
       );
-      expect(store.projection.task(id)!.deletedAt, isNull);
+      expect(store.projection.task(open)!.deletedAt, isNull);
+      expect(find.text('1 TASK'), findsOneWidget, reason: 'the Trash counts');
+    });
+
+    testWidgets('the Logbook and the Trash count what they hold', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      await tester.runAsync(() async {
+        for (final title in ['One', 'Two', 'Three']) {
+          final id = await store.createTask(title: title);
+          await store.completeTask(id);
+        }
+      });
+      await selectSection(tester, container, logbook);
+      expect(rowTitles(tester), hasLength(3));
+      expect(find.text('3 TASKS'), findsWidgets, reason: 'meta and day header');
+      expect(find.text('0 TASKS'), findsNothing);
+      // The same rows kept in the Inbox are shown, not counted: nothing
+      // is left to do there, as the sidebar says.
+      await selectSection(tester, container, inbox);
+      expect(rowTitles(tester), hasLength(3));
+      expect(find.text('0 TASKS'), findsOneWidget);
+      expect(sidebarCount(tester, inbox), 0);
     });
 
     testWidgets('a drag past a kept row anchors on the live row above', (
