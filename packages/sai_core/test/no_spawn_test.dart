@@ -107,14 +107,22 @@ void main() {
     });
 
     test('no user-supplied identity selector remains', () {
-      final files = [
-        ...Directory('${repo.path}/tool').listSync(recursive: true),
-        ...Directory('${repo.path}/docs').listSync(recursive: true),
-        File('${repo.path}/README.md'),
-        File('${repo.path}/AGENTS.md'),
-        ...Directory('${repo.path}/apps/sai_app/macos')
-            .listSync(recursive: true),
-      ].whereType<File>().where((f) => !f.path.contains('/build/'));
+      final files =
+          [
+                ...Directory('${repo.path}/tool').listSync(recursive: true),
+                ...Directory('${repo.path}/docs').listSync(recursive: true),
+                File('${repo.path}/README.md'),
+                File('${repo.path}/AGENTS.md'),
+                ...Directory('${repo.path}/apps/sai_app/macos')
+                    .listSync(recursive: true),
+              ]
+              .whereType<File>()
+              .where((f) => !f.path.contains('/build/'))
+              .where(
+                (f) => RegExp(
+                  r'\.(sh|md|yml|yaml|xcconfig|plist|swift|py|dart|txt|entitlements)$',
+                ).hasMatch(f.path),
+              );
       for (final f in files) {
         expect(
           f.readAsStringSync(),

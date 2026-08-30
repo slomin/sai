@@ -1,6 +1,6 @@
 # 8. Secrets live in the file keychain, through Security.framework
 
-Date: 2026-08-24 · Status: accepted · Issue: #29 · Schema: [settings-v0](../settings/settings-v0.md)
+Date: 2026-08-24 · Amended: 2026-08-30 (#95) · Status: accepted · Issue: #29 · Schema: [settings-v0](../settings/settings-v0.md)
 
 ## Context
 
@@ -29,21 +29,33 @@ One implementation serves both clients.
   item is `SecItemAdd`ed. Never delete-and-recreate: the item's access
   control list and partition list belong to the item, and recreating
   it resets them.
-- **Never the `security` command.** An item written by
+- **Never the `security` command** for items. An item written by
   `/usr/bin/security` trusts that tool, so any process that runs
   `security` reads the item silently, with no prompt. That is the
   documented weakness of the way some coding agents store their own
-  credentials, and the reason the FFI path is not optional.
-- **One stable signing identity for both binaries.** The item's ACL
-  binds to the code-signing designated requirement of the app that
-  created it. An ad-hoc signature (`CODE_SIGN_IDENTITY = -`, the
-  default) changes on every build, so every rebuild re-prompts. A
-  self-signed "Code Signing" certificate from Keychain Access, applied
-  through the gitignored `macos/Runner/Configs/Local.xcconfig` and
-  `tool/sign-tui.sh`, keeps the identity across builds in development;
-  releases are signed with an Apple Development identity through
-  `tool/release.sh` (ADR [0017](0017-releases-are-signed-with-an-apple-development-identity.md)).
-  No identity name is in the tree.
+  credentials, and the reason the FFI path is not optional. One narrow
+  exception (#95): `tool/release.sh sign` runs exactly `security
+  find-identity -v -p codesigning <the dedicated signing keychain>` —
+  an enumeration of public certificate identities, never a
+  generic-password query — keeps its output in a variable without
+  logging it, and uses only the one identity it lists. No script
+  unlocks a keychain, changes the search list, an ACL or a
+  key-partition list.
+- **One stable signing identity for both stable binaries; dev holds
+  no credentials.** The item's ACL binds to the code-signing designated
+  requirement of the app that created it, so the stable app and client
+  are signed with one Apple Development identity through
+  `tool/release.sh sign` (ADR
+  [0017](0017-releases-are-signed-with-an-apple-development-identity.md)),
+  and only there. Code signed with that identity and sai's identifier
+  can read the items, which is why (#95) the dev flavor never carries
+  the identity — a dev build is signed with a self-signed `sai dev`
+  certificate or ad-hoc — and, being low-authority, never opens a
+  Keychain: its secret store refuses every call, a credentialed
+  provider is *no credentials in dev*, and items an earlier dev copy
+  filed under `me.slominski.sai.dev` are left where they are. No
+  identity name is in the tree, an environment variable, an argument
+  or a log.
 - **Every test uses a throwaway keychain** created with
   `SecKeychainCreate` under a temp directory; nothing under `test/`
   reaches the login keychain, and nothing prompts. Off macOS the
@@ -79,8 +91,12 @@ code running as the user. The app runs without the App Sandbox (ADR
 that can build and run a binary as the user can present itself to the
 user for approval, or read the item after one careless "Always Allow".
 #56 keeps real keys out of coding agents' reach by never giving them
-one. The damage cap for a key that does leak is the provider's: scoped
-keys, spend limits, rotation.
+one, and #95 keeps the stable signing key out of every build's reach:
+signing is a separate phase from a locked keychain outside the search
+list, so using the key needs a person at the dialog, and nothing that
+runs during a build — Xcode scripts, Dart build hooks, package tooling
+— can sign as sai. The damage cap for a key that does leak is the
+provider's: scoped keys, spend limits, rotation.
 
 ## Consequences
 
@@ -94,5 +110,6 @@ keys, spend limits, rotation.
 - `SecKeychainCreate`, `kSecUseKeychain` and `kSecMatchSearchList` are
   deprecated but exported on macOS 26; if they go, the tests move to a
   unique `service` in the login keychain with teardown deletion.
-- Developers who skip the stable identity get a Keychain prompt on the
-  first read after each rebuild. It is a prompt, not a failure.
+- A dev copy has no keys to prompt for; a person who wants a cloud
+  provider uses the stable copy, or a stable-signed bundle over scratch
+  roots for a smoke (`docs/smoke/cloud.md`).

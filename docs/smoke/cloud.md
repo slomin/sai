@@ -22,8 +22,11 @@ A key used for a smoke is minted for the smoke and deleted after it:
 - **OpenAI**: a dedicated project with a hard monthly limit ≤ $1; a
   project key (`sk-proj-`), never an admin key.
 
-The key enters sai through `sai_tui secret set` (hidden prompt) or the
-app's masked field — never on a command line, in a file, in the shell
+The smoke runs the **stable** flavor — a signed bundle from
+`tool/release.sh sign`, launched with scratch `SAI_ARCHIVE_ROOT` and
+`SAI_SETTINGS_FILE` overrides so the real data stays out of it; the dev
+flavor holds no credentials at all (#95). The key enters sai through
+`sai_tui secret set` (hidden prompt) or the app's masked field — never on a command line, in a file, in the shell
 that launches an agent, or in a chat with one. When the smoke is done,
 delete the key at the provider and remove the entry from the Keychain.
 

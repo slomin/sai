@@ -1,6 +1,6 @@
 # 19. Stable and dev are two installed identities
 
-Date: 2026-08-29 · Amended: 2026-08-29 (#91) · Status: accepted · Issue: #90 · Builds on: [0006](0006-settings-live-in-a-file-beside-the-archive.md), [0008](0008-secrets-live-in-the-file-keychain.md), [0015](0015-the-workspace-is-restored-from-settings.md), [0017](0017-releases-are-signed-with-an-apple-development-identity.md)
+Date: 2026-08-29 · Amended: 2026-08-29 (#91) · Amended: 2026-08-30 (#95) · Status: accepted · Issue: #90 · Builds on: [0006](0006-settings-live-in-a-file-beside-the-archive.md), [0008](0008-secrets-live-in-the-file-keychain.md), [0015](0015-the-workspace-is-restored-from-settings.md), [0017](0017-releases-are-signed-with-an-apple-development-identity.md)
 
 ## Context
 
@@ -27,7 +27,7 @@ replaced on its own, while the daily copy stays what it is.
   | app bundle / executable | `sai.app` / `sai` | `sai-dev.app` / `sai-dev` |
   | bundle id | `me.slominski.sai` | `me.slominski.sai.dev` |
   | data directory | `Application Support/sai` | `Application Support/sai-dev` |
-  | Keychain service | `me.slominski.sai` | `me.slominski.sai.dev` |
+  | Keychain service | `me.slominski.sai` | none — dev holds no credentials (#95) |
   | window frame autosave | `sai.main` | `sai-dev.main` |
   | terminal command | `sai_tui` | `sai_tui-dev` |
   | local bundle, record | `~/.local/share/sai` | `~/.local/share/sai-dev` |
@@ -54,7 +54,7 @@ replaced on its own, while the daily copy stays what it is.
 - **Isolation is per flavor, in both directions.** One flavor running
   never blocks the other's install, upgrade or rollback; each still
   refuses while its own copy runs. Nothing copies or synchronises data
-  or Keychain items between the two.
+  between the two, and dev has no Keychain items to synchronise.
 - **Publishing is stable-only.** `tool/release.sh publish` takes no
   flavor and refuses a dev dist.
 - **Dev says so.** The app header wears a `DEV` label at all times, the
@@ -78,8 +78,14 @@ replaced on its own, while the daily copy stays what it is.
 - The debug bundle CI and the smoke driver use moves to
   `Products/Debug-dev/sai-dev.app`; `drive.sh` finds a window by the
   bundle's display name so both flavors can run during a smoke.
-- The self-signed development identity is still named `sai-dev` in the
-  README; it is a certificate name, not the flavor. Both flavors are
-  signed with the same identity, so each keeps trusting its own Keychain
-  items across rebuilds.
-- The two flavors differ in launcher artwork but nothing functional.
+- The two flavors are signed differently (#95): stable with the Apple
+  Development identity in a separate `sign` phase from a dedicated
+  keychain, dev with a self-signed `sai dev` certificate when this Mac
+  has one, ad-hoc otherwise. A dev build never carries stable signing
+  authority, so it holds no persistent credentials either: its secret
+  store refuses every call, a credential-backed provider is *no
+  credentials in dev*, and `sai_tui-dev secret …` refuses. Items an
+  earlier dev copy filed under `me.slominski.sai.dev` are neither read
+  nor migrated; Keychain Access removes them.
+- The two flavors differ in launcher artwork and in credentials; the
+  fake and the keyless local providers work in both.
