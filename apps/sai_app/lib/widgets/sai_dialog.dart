@@ -184,55 +184,69 @@ class _PromptState extends State<_Prompt> {
       _pending = false;
       _failure = failure;
     });
-    _focus.requestFocus();
+    // The field is disabled while pending and cannot take focus until
+    // the frame that re-enables it has built.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final text = context.saiText;
-    return SaiDialog(
-      eyebrow: widget.eyebrow,
-      title: widget.title,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            key: dialogFieldKey,
-            controller: _controller,
-            focusNode: _focus,
-            autofocus: true,
-            enabled: !_pending,
-            onSubmitted: (_) => _submit(),
-            style: text.body,
-          ),
-          if (_failure case final failure?)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Semantics(
-                liveRegion: true,
-                child: Text(
-                  failure,
-                  key: dialogErrorKey,
-                  style: text.meta.copyWith(color: SaiColors.red),
+    // Esc and the barrier wait for an in-flight commit: a dismissal
+    // mid-write would let the line land while the caller hears nothing.
+    return PopScope(
+      canPop: !_pending,
+      child: SaiDialog(
+        eyebrow: widget.eyebrow,
+        title: widget.title,
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              key: dialogFieldKey,
+              controller: _controller,
+              focusNode: _focus,
+              autofocus: true,
+              enabled: !_pending,
+              onChanged: (_) {
+                // A refusal describes the line it refused; editing it
+                // starts over.
+                if (_failure != null) setState(() => _failure = null);
+              },
+              onSubmitted: (_) => _submit(),
+              style: text.body,
+            ),
+            if (_failure case final failure?)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    failure,
+                    key: dialogErrorKey,
+                    style: text.meta.copyWith(color: SaiColors.red),
+                  ),
                 ),
               ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: _pending ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ValueListenableBuilder(
+            valueListenable: _controller,
+            builder: (context, value, _) => SaiPrimaryButton(
+              label: widget.confirm,
+              onPressed: value.text.trim().isEmpty || _pending ? null : _submit,
             ),
+          ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: _pending ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ValueListenableBuilder(
-          valueListenable: _controller,
-          builder: (context, value, _) => SaiPrimaryButton(
-            label: widget.confirm,
-            onPressed: value.text.trim().isEmpty || _pending ? null : _submit,
-          ),
-        ),
-      ],
     );
   }
 }

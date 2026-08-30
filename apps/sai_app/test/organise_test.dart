@@ -651,6 +651,19 @@ void main() {
       );
       expect(store.projection.eventCount, before);
       expect(store.projection.headingsOf(ids.kitchen), isEmpty);
+      // The field is back in hand, and editing the line retires the
+      // sentence about the old one.
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(dialogFieldKey))
+            .focusNode!
+            .hasFocus,
+        isTrue,
+      );
+      await tester.enterText(find.byKey(dialogFieldKey), 'Prep work');
+      await tester.pump();
+      expect(find.byKey(dialogErrorKey), findsNothing);
       // The draft is still live: Cancel leaves, nothing was written.
       await tester.tap(find.text('Cancel'));
       await tester.pump();
