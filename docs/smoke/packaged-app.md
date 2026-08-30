@@ -30,7 +30,8 @@ the commit under test;
    deadline, location (area or project) and tags. Evidence: the
    inspector after each change; the `task.updated` lines.
 3. **Organise.** Create an area, a project in it and a heading in the
-   project; file tasks under them and reorder; find one with Quick Find;
+   project; file tasks under them (Move / Schedule…) and reorder by the
+   drag handles — a task, a heading, a project, an area; find one with Quick Find;
    move through the sidebar and a list by keyboard only. Evidence:
    screenshots of the project view and Quick Find; the container events.
 4. **Complete and restore.** Complete one task and undo; delete another

@@ -3,29 +3,21 @@ import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import '../commands.dart';
 import '../organise/heading_menu.dart';
-import '../theme/sai_tokens.dart';
+import '../organise/organise_commands.dart';
+import '../reorder/reorder.dart';
 import '../widgets/empty_state.dart';
 import 'dates.dart';
 import 'empty_states.dart';
+import 'ordering.dart';
 import 'task_commands.dart';
+import 'task_menu.dart';
 import 'task_row.dart';
 import 'task_row_chips.dart';
 import 'task_section_header.dart';
 
-/// Whether the rows of [section] in [view] can be dragged into a new
-/// order: Today (its own order) and every structural group shown on its
-/// own — the Inbox, a project's unheaded tasks, a heading, an area's
-/// direct tasks. Chronological and hierarchical views keep their order.
-bool reorderable(TaskView view, TaskViewSection section) =>
-    switch (view.section) {
-      ListSection(list: TaskList.today || TaskList.inbox) => true,
-      ProjectSection() || AreaSection() =>
-        section.kind == TaskViewSectionKind.project ||
-            section.kind == TaskViewSectionKind.heading ||
-            section.kind == TaskViewSectionKind.area,
-      _ => false,
-    };
+export 'ordering.dart' show reorderable;
 
 /// What names a section across rebuilds: the day, the container, the
 /// heading — never its position, which shifts when a group empties.
@@ -89,6 +81,12 @@ const _rowExtent = 56.0;
 class _TaskListBodyState extends ConsumerState<TaskListBody> {
   final _scroll = ScrollController();
   final _ghosts = <TaskId, _Ghost>{};
+
+  /// One drag mechanic per section shown (#98), kept across rebuilds so
+  /// a live drag survives the store's emissions — and one for a
+  /// project's headings.
+  final _groups = <_SectionKey, ReorderController<TaskId>>{};
+  ReorderController<HeadingId>? _headings;
   var _known = <TaskId>{};
   var _entering = <TaskId>{};
   SidebarSection? _knownSection;
@@ -102,8 +100,17 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         ? ids.difference(_known)
         : const {};
     _known = ids;
-    // A ghost belongs to the view it left; another section starts clean.
-    if (widget.view.section != _knownSection) _ghosts.clear();
+    // A ghost belongs to the view it left; another section starts clean,
+    // and so do the drag groups.
+    if (widget.view.section != _knownSection) {
+      _ghosts.clear();
+      for (final group in _groups.values) {
+        group.dispose();
+      }
+      _groups.clear();
+      _headings?.dispose();
+      _headings = null;
+    }
     _knownSection = widget.view.section;
     // A ghost whose task is back in the view (undo) gives way to the row.
     _ghosts.removeWhere((id, _) => ids.contains(id));
@@ -124,8 +131,49 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
   @override
   void dispose() {
     _scroll.dispose();
+    for (final group in _groups.values) {
+      group.dispose();
+    }
+    _headings?.dispose();
     super.dispose();
   }
+
+  /// The drag group of a project's headings (#98): a drop reorders them
+  /// within the project; a task or a row from elsewhere is refused.
+  ReorderController<HeadingId> _headingGroup(ProjectId project) =>
+      _headings ??= ReorderController<HeadingId>(
+        group: ('headings', project),
+        refusal: 'a heading is ordered within its project',
+        onRefused: (reason) =>
+            ref.read(noticeProvider.notifier).show('reorder failed: $reason'),
+        onDrop: (moved, after) => ref
+            .read(organiseCommandsProvider)
+            .reorderHeading(moved, after: after),
+      );
+
+  /// The drag group of the section keyed [key]: a drop is a reorder in
+  /// Today's own order or a structural move, the anchor the nearest open
+  /// live row above the slot; a task from another section is refused —
+  /// the sheet is how a task changes group.
+  ReorderController<TaskId> _group(_SectionKey key) =>
+      _groups.putIfAbsent(key, () {
+        return ReorderController<TaskId>(
+          group: key,
+          refusal:
+              'a task is dragged within its group; Move / Schedule… files '
+              'it elsewhere',
+          onRefused: (reason) =>
+              ref.read(noticeProvider.notifier).show('reorder failed: $reason'),
+          onDrop: (moved, after) async {
+            final commands = ref.read(taskCommandsProvider);
+            if (widget.view.section == const ListSection(TaskList.today)) {
+              await commands.reorderToday(moved, after: after);
+            } else {
+              await commands.reorder(moved, after: after);
+            }
+          },
+        );
+      });
 
   /// The built rows: each task's index in the view against the scroll
   /// offset that would put its row at the top. A lazy list builds only
@@ -233,38 +281,6 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     return items;
   }
 
-  Future<void> _reorder(
-    TaskViewSection section,
-    List<_Item> items,
-    int oldIndex,
-    int newIndex,
-  ) async {
-    // [newIndex] is already the slot after removal (onReorderItem).
-    final ids = [for (final item in items) item.task.id];
-    final moved = ids.removeAt(oldIndex);
-    final to = newIndex;
-    ids.insert(to, moved);
-    // The anchor is the nearest live row above the drop slot: not a
-    // ghost, and not a finished row kept until midnight (#97) — the
-    // store refuses a finished anchor.
-    final finished = {
-      for (final item in items)
-        if (item.task.status != TaskStatus.open) item.task.id,
-    };
-    TaskId? after;
-    for (var i = to - 1; i >= 0; i--) {
-      if (_ghosts.containsKey(ids[i]) || finished.contains(ids[i])) continue;
-      after = ids[i];
-      break;
-    }
-    final commands = ref.read(taskCommandsProvider);
-    if (widget.view.section == const ListSection(TaskList.today)) {
-      await commands.reorderToday(moved, after: after);
-    } else {
-      await commands.reorder(moved, after: after);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final view = widget.view;
@@ -314,21 +330,52 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         final label = section.kind == TaskViewSectionKind.day
             ? dayGroupLabel(section.day!, today: widget.today)
             : section.title;
-        slivers.add(
-          SliverToBoxAdapter(
-            child: TaskSectionHeader(
-              label: label,
-              meta: _meta(section.tasks.length),
-              trailing:
-                  section.kind == TaskViewSectionKind.heading &&
-                      view.section is ProjectSection
-                  ? HeadingMenu(heading: section.heading!, title: section.title)
-                  : null,
-            ),
-          ),
+        final ownHeading =
+            section.kind == TaskViewSectionKind.heading &&
+            view.section is ProjectSection;
+        Widget header(Widget? handle) => TaskSectionHeader(
+          label: label,
+          meta: _meta(section.tasks.length),
+          leading: handle,
+          trailing: ownHeading
+              ? HeadingMenu(heading: section.heading!, title: section.title)
+              : null,
         );
+        if (ownHeading) {
+          final project = (view.section as ProjectSection).project;
+          final headings = [
+            for (final h in widget.projection.headingsOf(project)) h.id,
+          ];
+          final group = _headingGroup(project)..order = headings;
+          slivers.add(
+            SliverToBoxAdapter(
+              child: ReorderRow<HeadingId>(
+                key: ValueKey('reorder-heading-${section.heading}'),
+                controller: group,
+                id: section.heading!,
+                title: section.title,
+                enabled: headings.length > 1,
+                builder: (context, handle) => header(handle),
+              ),
+            ),
+          );
+        } else {
+          slivers.add(SliverToBoxAdapter(child: header(null)));
+        }
       }
-      final canDrag = reorderable(view, section) && items.length > 1;
+      // A reorderable section is a drag target even with one row — a
+      // drag from another section must find it, to be refused — while
+      // its own handles need a sibling to change places with.
+      final canDrag = reorderable(view, section);
+      final siblings = items.length > 1;
+      ReorderController<TaskId>? group;
+      if (canDrag) {
+        group = _group(s)
+          ..order = [for (final item in items) item.task.id]
+          ..canAnchor = (id) =>
+              !_ghosts.containsKey(id) &&
+              widget.projection.task(id)?.status == TaskStatus.open;
+      }
       // A row in the Trash is selectable and nothing else (#97): Restore
       // is the inspector's, and a deleted task keeps its status.
       final trash = view.section == const TrashSection();
@@ -336,6 +383,47 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         final item = items[i];
         final task = item.task;
         final ghost = item.ghost;
+        // A live row outside the Trash carries its menu (#98).
+        if (ghost == null && !trash) {
+          Widget live(BuildContext context, Widget? handle) => TaskMenu(
+            key: ValueKey('menu-${task.id}'),
+            task: task,
+            view: view,
+            builder: (context, open, button) => TaskRow(
+              key: taskRowKey(task.id),
+              task: task,
+              chips: taskRowChips(
+                task,
+                today: widget.today,
+                section: view.section,
+                container: containerLabel(widget.projection, task),
+                tags: tagLabels(widget.projection, task),
+              ),
+              selected: selected == task.id,
+              entering: _entering.contains(task.id),
+              onSelect: () => select(task.id),
+              onCheck: () => _finish(task, s, at, i, RowFinish.completed),
+              onCancel: task.status == TaskStatus.open
+                  ? () => _finish(task, s, at, i, RowFinish.cancelled)
+                  : null,
+              handle: handle,
+              trailing: button,
+              onSecondaryTapDown: (at) => open(at),
+            ),
+          );
+          if (group == null) return live(context, null);
+          // A finished row kept until midnight (#97) is a target — the
+          // slot beside it works — but is not itself dragged: the store
+          // refuses a finished anchor, so it stays where it is.
+          return ReorderRow<TaskId>(
+            key: ValueKey('reorder-${task.id}'),
+            controller: group,
+            id: task.id,
+            title: task.title,
+            enabled: siblings && task.status == TaskStatus.open,
+            builder: live,
+          );
+        }
         return TaskRow(
           key: ghost == null
               ? taskRowKey(task.id)
@@ -365,29 +453,14 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
               : () {
                   if (mounted) setState(() => _ghosts.remove(task.id));
                 },
-          gutter: canDrag && ghost == null
-              ? (child) => ReorderableDragStartListener(index: i, child: child)
-              : null,
         );
       }
 
       slivers.add(
-        canDrag
-            ? SliverReorderableList(
-                itemCount: items.length,
-                itemBuilder: (context, i) => row(i),
-                onReorderItem: (from, to) => _reorder(section, items, from, to),
-                proxyDecorator: (child, index, animation) => Material(
-                  color: SaiColors.bg,
-                  elevation: 6,
-                  shadowColor: SaiColors.ink.withValues(alpha: 0.35),
-                  child: child,
-                ),
-              )
-            : SliverList.builder(
-                itemCount: items.length,
-                itemBuilder: (context, i) => row(i),
-              ),
+        SliverList.builder(
+          itemCount: items.length,
+          itemBuilder: (context, i) => row(i),
+        ),
       );
     }
     slivers.add(const SliverPadding(padding: EdgeInsets.only(bottom: 80)));

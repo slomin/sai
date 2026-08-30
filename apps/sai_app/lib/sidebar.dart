@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import 'commands.dart';
 import 'organise/container_menu.dart';
+import 'organise/organise_commands.dart';
+import 'reorder/reorder.dart';
 import 'theme/sai_theme.dart';
 import 'theme/sai_tokens.dart';
 import 'widgets/eyebrow.dart';
@@ -37,6 +40,38 @@ const _groupGap = 26.0;
 class _SaiSidebarState extends ConsumerState<SaiSidebar> {
   final _scroll = ScrollController();
 
+  /// The drag groups (#98): the live areas, and the projects of each
+  /// group — an area's, or the standalone ones (keyed null).
+  ReorderController<AreaId>? _areas;
+  final _projects = <AreaId?, ReorderController<ProjectId>>{};
+
+  void _refused(String reason) =>
+      ref.read(noticeProvider.notifier).show('reorder failed: $reason');
+
+  ReorderController<AreaId> _areaGroup() =>
+      _areas ??= ReorderController<AreaId>(
+        group: 'areas',
+        refusal: 'only an area is ordered among the areas',
+        onRefused: _refused,
+        onDrop: (moved, after) =>
+            ref.read(organiseCommandsProvider).reorderArea(moved, after: after),
+      );
+
+  ReorderController<ProjectId> _projectGroup(AreaId? area) =>
+      _projects.putIfAbsent(
+        area,
+        () => ReorderController<ProjectId>(
+          group: ('projects', area),
+          refusal: area == null
+              ? 'a project is ordered among the standalone projects'
+              : 'a project is ordered within its area',
+          onRefused: _refused,
+          onDrop: (moved, after) => ref
+              .read(organiseCommandsProvider)
+              .reorderProject(moved, after: after),
+        ),
+      );
+
   /// Where each row's top sits in the scroll, as of the last build.
   var _offsets = <SidebarSection, double>{};
 
@@ -51,6 +86,10 @@ class _SaiSidebarState extends ConsumerState<SaiSidebar> {
   @override
   void dispose() {
     _scroll.dispose();
+    _areas?.dispose();
+    for (final group in _projects.values) {
+      group.dispose();
+    }
     super.dispose();
   }
 
@@ -110,6 +149,7 @@ class _SaiSidebarState extends ConsumerState<SaiSidebar> {
       bool nested = false,
       bool archived = false,
       Widget? leading,
+      Widget? handle,
     }) => ContainerMenu(
       section: entry.section,
       title: entry.title,
@@ -121,11 +161,52 @@ class _SaiSidebarState extends ConsumerState<SaiSidebar> {
         selected: entry.section == selected,
         dim: archived,
         leading: leading,
+        handle: handle,
         trailing: button,
         onTap: () => select(entry.section),
         onSecondaryTapDown: (at) => open(at),
       ),
     );
+    // A live area or project row is a drag target of its group and, with
+    // a sibling to change places with, carries the handle (#98).
+    final areaIds = [
+      for (final area in model.areas) (area.entry.section as AreaSection).area,
+    ];
+    final areas = _areaGroup()..order = areaIds;
+    Widget areaRow(SidebarArea area, {required Widget chevron}) =>
+        ReorderRow<AreaId>(
+          key: ValueKey(('reorder', area.entry.section)),
+          controller: areas,
+          id: (area.entry.section as AreaSection).area,
+          title: area.entry.title,
+          enabled: areaIds.length > 1,
+          builder: (context, handle) =>
+              container(area.entry, leading: chevron, handle: handle),
+        );
+    Widget projectRow(SidebarEntry entry, {AreaId? area, bool nested = false}) {
+      final siblings = [
+        for (final p
+            in area == null
+                ? model.projects
+                : model.areas
+                      .firstWhere(
+                        (a) => (a.entry.section as AreaSection).area == area,
+                      )
+                      .projects)
+          (p.section as ProjectSection).project,
+      ];
+      final group = _projectGroup(area)..order = siblings;
+      return ReorderRow<ProjectId>(
+        key: ValueKey(('reorder', entry.section)),
+        controller: group,
+        id: (entry.section as ProjectSection).project,
+        title: entry.title,
+        enabled: siblings.length > 1,
+        builder: (context, handle) =>
+            container(entry, nested: nested, handle: handle),
+      );
+    }
+
     // The fold chevron (#76): folded areas keep their projects out of the
     // sidebar; the set is remembered across launches.
     Widget chevron(SidebarArea area, {required bool folded}) {
@@ -183,14 +264,18 @@ class _SaiSidebarState extends ConsumerState<SaiSidebar> {
           const _Heading('Areas & projects', trailing: SidebarAddMenu()),
           for (final area in model.areas) ...[
             if (collapsed.contains((area.entry.section as AreaSection).area))
-              container(area.entry, leading: chevron(area, folded: true))
+              areaRow(area, chevron: chevron(area, folded: true))
             else ...[
-              container(area.entry, leading: chevron(area, folded: false)),
+              areaRow(area, chevron: chevron(area, folded: false)),
               for (final project in area.projects)
-                container(project, nested: true),
+                projectRow(
+                  project,
+                  area: (area.entry.section as AreaSection).area,
+                  nested: true,
+                ),
             ],
           ],
-          for (final project in model.projects) container(project),
+          for (final project in model.projects) projectRow(project),
           if (model.archived.isNotEmpty) ...[
             const SizedBox(height: 26),
             const _Heading('Archived'),
@@ -237,6 +322,7 @@ class SidebarRow extends StatefulWidget {
     required this.selected,
     required this.onTap,
     this.leading,
+    this.handle,
     this.trailing,
     this.onSecondaryTapDown,
     this.dim = false,
@@ -250,6 +336,9 @@ class SidebarRow extends StatefulWidget {
   /// Sits in the row's left margin, outside its semantics — the area
   /// chevron. Always shown, unlike [trailing].
   final Widget? leading;
+
+  /// The drag handle (#98), beside the "…" button, shown the same way.
+  final Widget? handle;
   final Widget? trailing;
   final void Function(Offset at)? onSecondaryTapDown;
   final bool dim;
@@ -287,6 +376,7 @@ class _SidebarRowState extends State<SidebarRow> {
     final selected = widget.selected;
     final dim = widget.dim;
     final leading = widget.leading;
+    final handle = widget.handle;
     final trailing = widget.trailing;
     final onSecondaryTapDown = widget.onSecondaryTapDown;
     final color = selected
@@ -365,6 +455,17 @@ class _SidebarRowState extends State<SidebarRow> {
                 ),
               ),
             ),
+            if (handle case final handle?)
+              Opacity(
+                opacity: _hovered || selected ? 1 : 0,
+                alwaysIncludeSemantics: true,
+                child: IconTheme(
+                  data: IconThemeData(
+                    color: selected ? SaiColors.onInk : SaiColors.inkFaint,
+                  ),
+                  child: handle,
+                ),
+              ),
             if (trailing case final trailing?)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
@@ -372,6 +473,7 @@ class _SidebarRowState extends State<SidebarRow> {
                 // keyboard and assistive tech reach it regardless.
                 child: Opacity(
                   opacity: _hovered || selected ? 1 : 0,
+                  alwaysIncludeSemantics: true,
                   child: IconTheme(
                     data: IconThemeData(
                       color: selected ? SaiColors.onInk : SaiColors.inkFaint,

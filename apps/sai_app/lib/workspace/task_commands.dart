@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import '../commands.dart';
+import 'ordering.dart';
 
 /// The row and inspector commands (#72, #74): each goes straight to the
 /// store — the projection's own emission updates the lists, so nothing
@@ -64,6 +65,27 @@ class TaskCommands {
         store.moveTask(task, project: project, area: area, heading: heading),
   );
 
+  /// The Move sheet's two picks (#98), each answering with the refusal's
+  /// sentence so the sheet can keep it on screen: a schedule writes one
+  /// edit of `when` alone, a place one move.
+  Future<String?> trySchedule(TaskId task, TaskWhen when) => tryStoreCommand(
+    _ref,
+    'schedule',
+    (store) => store.editTask(task, when: Patch(when)),
+  );
+
+  Future<String?> tryMove(
+    TaskId task, {
+    ProjectId? project,
+    AreaId? area,
+    HeadingId? heading,
+  }) => tryStoreCommand(
+    _ref,
+    'move',
+    (store) =>
+        store.moveTask(task, project: project, area: area, heading: heading),
+  );
+
   Future<bool> setChecklist(TaskId task, List<ChecklistItem> items) =>
       runStoreCommand(
         _ref,
@@ -87,6 +109,28 @@ class TaskCommands {
         'reorder',
         (store) => store.reorderTask(task, after: after),
       );
+
+  /// Move up ([by] -1) or Move down (+1) (#98): one step among the open
+  /// rows of [task]'s section in [view] — the keyboard's and assistive
+  /// tech's way to what a drag does. False, and nothing written, at
+  /// either end, for a finished row, or where the view keeps its own
+  /// order.
+  Future<bool> nudge(TaskId task, int by, {required TaskView view}) {
+    for (final section in view.sections) {
+      if (!section.tasks.any((t) => t.id == task)) continue;
+      if (!reorderable(view, section)) return Future.value(false);
+      final ids = [
+        for (final t in section.tasks)
+          if (t.status == TaskStatus.open) t.id,
+      ];
+      final anchor = nudgeAnchor(ids, task, by);
+      if (!anchor.moves) return Future.value(false);
+      return view.section == const ListSection(TaskList.today)
+          ? reorderToday(task, after: anchor.after)
+          : reorder(task, after: anchor.after);
+    }
+    return Future.value(false);
+  }
 }
 
 /// Runs [act] against the open store; a success clears the notice, a

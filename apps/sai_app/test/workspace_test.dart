@@ -1,9 +1,13 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_app/assistant/assistant_band.dart';
+import 'package:sai_app/reorder/drag_handle.dart';
+import 'package:sai_app/reorder/reorder.dart';
+import 'package:sai_app/commands.dart';
 import 'package:sai_app/settings/settings_screen.dart';
 import 'package:sai_app/sidebar.dart';
 import 'package:sai_app/theme/sai_tokens.dart';
@@ -14,7 +18,9 @@ import 'package:sai_app/widgets/chip.dart';
 import 'package:sai_app/widgets/empty_state.dart';
 import 'package:sai_app/widgets/glyph_button.dart';
 import 'package:sai_app/widgets/sai_dialog.dart';
+import 'package:sai_app/workspace/move_sheet.dart';
 import 'package:sai_app/workspace/task_list.dart';
+import 'package:sai_app/workspace/task_menu.dart';
 import 'package:sai_app/workspace/task_row.dart';
 import 'package:sai_app/workspace/task_row_chips.dart';
 import 'package:sai_app/workspace/task_section_header.dart';
@@ -395,6 +401,10 @@ void main() {
       );
       await selectSection(tester, container, inbox);
       await capture(tester, container, 'One');
+      // Let the first row grow in: a list whose first child is still at
+      // height zero puts the next row at offset zero, off stage.
+      await tester.pump(SaiDurations.enter);
+      await tester.pump();
       await capture(tester, container, 'Two');
       final ids = container.read(tasksProvider).value!.structuralOrder;
       // The second row entered after the first frame: it is still growing.
@@ -735,12 +745,17 @@ void main() {
       await settleEvents(tester, container, () => tester.tap(check(ids[1])));
       await tester.pump();
       expect(rowTitles(tester), ['A', 'B', 'C']);
-      await settleEvents(tester, container, () async {
-        final step = tester.getSize(row(ids[0])).height;
+      await settleEvents(
+        tester,
+        container,
         // A over B (finished) and C: it lands last, anchored on C.
-        await tester.drag(check(ids[0]), Offset(0, 4 * step));
-        await tester.pump(const Duration(milliseconds: 300));
-      });
+        () => dragRow(
+          tester,
+          handle: handle(ids[0]),
+          source: row(ids[0]),
+          target: row(ids[2]),
+        ),
+      );
       final line = archiveLines(container.read(archiveRootProvider)).last;
       expect(line, contains('"task.move"'));
       expect(line, contains('"after":"${ids[2]}"'), reason: 'C, not B');
@@ -748,11 +763,17 @@ void main() {
       expect(rowTitles(tester), ['B', 'C', 'A']);
       // And back to the top: nothing live above, so it goes first, and
       // the finished B keeps its place.
-      await settleEvents(tester, container, () async {
-        final step = tester.getSize(row(ids[0])).height;
-        await tester.drag(check(ids[0]), Offset(0, -4 * step));
-        await tester.pump(const Duration(milliseconds: 300));
-      });
+      await settleEvents(
+        tester,
+        container,
+        () => dragRow(
+          tester,
+          handle: handle(ids[0]),
+          source: row(ids[0]),
+          target: row(ids[1]),
+          below: false,
+        ),
+      );
       expect(
         archiveLines(container.read(archiveRootProvider)).last,
         contains('"after":null'),
@@ -762,37 +783,246 @@ void main() {
     });
   });
 
-  group('reordering', () {
-    testWidgets('dragging a row by its check reorders Today, and it persists', (
-      tester,
+  group('the row menu and Move up / Move down (#98)', () {
+    Future<void> chord(WidgetTester tester, LogicalKeyboardKey key) async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyDownEvent(key);
+      await tester.sendKeyUpEvent(key);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+      await tester.pump();
+    }
+
+    Future<List<TaskId>> three(
+      WidgetTester tester,
+      ProviderContainer container,
     ) async {
+      await selectSection(tester, container, inbox);
+      for (final title in ['A', 'B', 'C']) {
+        await capture(tester, container, title);
+      }
+      return container.read(tasksProvider).value!.structuralOrder;
+    }
+
+    List<String> menuLabels(WidgetTester tester) => [
+      for (final e in find.byType(MenuItemButton).evaluate())
+        ((e.widget as MenuItemButton).child as Text).data!,
+    ];
+
+    testWidgets('the … button and a secondary click open the menu and '
+        'select the row; the Trash has neither', (tester) async {
       final container = await pumpApp(tester);
-      final store = container.read(tasksProvider.notifier).store;
-      final day = container.read(todayProvider);
-      await tester.runAsync(() async {
-        for (final title in ['A', 'B', 'C']) {
-          await store.createTask(title: title, when: TaskWhen.date(day));
-        }
-      });
-      await tester.pump();
-      expect(rowTitles(tester), ['A', 'B', 'C']);
-      final ids = store.projection.todayOrder;
-      await settleEvents(tester, container, () async {
-        // Well past the two rows below: the drop lands after the last one.
-        final step = tester.getSize(row(ids[0])).height;
-        await tester.drag(check(ids[0]), Offset(0, 4 * step));
-        await tester.pump(const Duration(milliseconds: 300));
-      });
+      final ids = await three(tester, container);
       expect(
-        archiveLines(container.read(archiveRootProvider)).last,
-        contains('"task.reorder"'),
+        tester
+            .getSemantics(
+              find.descendant(
+                of: find.byKey(taskMenuKey(ids[1])),
+                matching: find.byType(InkWell),
+              ),
+            )
+            .label,
+        'Options for B',
       );
+      await tester.tap(find.byKey(taskMenuKey(ids[1])));
       await tester.pump();
-      expect(rowTitles(tester), ['B', 'C', 'A']);
-      await tester.runAsync(store.reload);
+      expect(container.read(selectedTaskProvider), ids[1]);
+      expect(menuLabels(tester), [
+        'Move / Schedule…',
+        'Move up',
+        'Move down',
+        'Complete',
+        'Cancel',
+        'Delete…',
+      ]);
+      await tester.tap(find.byKey(taskMenuKey(ids[1])));
       await tester.pump();
-      expect(rowTitles(tester), ['B', 'C', 'A']);
+      expect(find.byType(MenuItemButton), findsNothing);
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(row(ids[2])),
+        kind: PointerDeviceKind.mouse,
+        buttons: kSecondaryMouseButton,
+      );
+      await gesture.up();
+      await tester.pump();
+      expect(container.read(selectedTaskProvider), ids[2]);
+      expect(find.widgetWithText(MenuItemButton, 'Move up'), findsOneWidget);
+      await tester.tap(find.widgetWithText(MenuItemButton, 'Move / Schedule…'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(moveSheetKey), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // A finished row offers Reopen and no Cancel; the Trash no menu.
+      await settleEvents(tester, container, () => tester.tap(check(ids[0])));
+      await tester.tap(find.byKey(taskMenuKey(ids[0])));
+      await tester.pump();
+      expect(menuLabels(tester), ['Move / Schedule…', 'Reopen', 'Delete…']);
+      await tester.tap(find.byKey(taskMenuKey(ids[0])));
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => container.read(tasksProvider.notifier).store.deleteTask(ids[0]),
+      );
+      await selectSection(tester, container, const TrashSection());
+      expect(find.byKey(taskMenuKey(ids[0])), findsNothing);
     });
+
+    testWidgets('Move down writes one reorder with the right anchor; the '
+        'ends and a kept view write nothing', (tester) async {
+      final container = await pumpApp(tester);
+      final ids = await three(tester, container);
+      final store = container.read(tasksProvider.notifier).store;
+      await tester.tap(find.byKey(taskMenuKey(ids[0])));
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => tapMenuItem(tester, 'Move down'),
+      );
+      var line = archiveLines(container.read(archiveRootProvider)).last;
+      expect(line, contains('"task.move"'));
+      expect(line, contains('"after":"${ids[1]}"'));
+      expect(rowTitles(tester), ['B', 'A', 'C']);
+      expect(container.read(selectedTaskProvider), ids[0]);
+
+      // ⌘↓ again, then ⌘↑ twice: the last press is at the top.
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.arrowDown),
+      );
+      expect(rowTitles(tester), ['B', 'C', 'A']);
+      var count = store.projection.eventCount;
+      await chord(tester, LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.arrowUp),
+        count: 1,
+      );
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.arrowUp),
+        count: 1,
+      );
+      line = archiveLines(container.read(archiveRootProvider)).last;
+      expect(line, contains('"after":null'));
+      expect(rowTitles(tester), ['A', 'B', 'C']);
+
+      // Today has its own order and its own event.
+      await settleEvents(
+        tester,
+        container,
+        () => store.editTask(
+          ids[1],
+          when: Patch(TaskWhen.date(container.read(todayProvider))),
+        ),
+      );
+      await settleEvents(
+        tester,
+        container,
+        () => store.editTask(
+          ids[2],
+          when: Patch(TaskWhen.date(container.read(todayProvider))),
+        ),
+      );
+      await selectSection(tester, container, today);
+      expect(rowTitles(tester), ['B', 'C']);
+      container.read(selectedTaskProvider.notifier).select(ids[2]);
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.arrowUp),
+      );
+      line = archiveLines(container.read(archiveRootProvider)).last;
+      expect(line, contains('"task.reorder"'));
+      expect(rowTitles(tester), ['C', 'B']);
+      expect(store.projection.structuralOrder, ids);
+
+      // Upcoming keeps its order: no items, and the chord is inert.
+      await settleEvents(
+        tester,
+        container,
+        () => store.editTask(
+          ids[1],
+          when: Patch(TaskWhen.date(container.read(todayProvider).addDays(1))),
+        ),
+      );
+      await selectSection(tester, container, upcoming);
+      container.read(selectedTaskProvider.notifier).select(ids[1]);
+      await tester.pump();
+      count = store.projection.eventCount;
+      await chord(tester, LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      await tester.tap(find.byKey(taskMenuKey(ids[1])));
+      await tester.pump();
+      expect(find.widgetWithText(MenuItemButton, 'Move up'), findsNothing);
+      expect(find.widgetWithText(MenuItemButton, 'Move down'), findsNothing);
+      await tester.tap(find.byKey(taskMenuKey(ids[1])));
+      await tester.pump();
+    });
+
+    testWidgets('a plain arrow still moves the selection', (tester) async {
+      final container = await pumpApp(tester);
+      final ids = await three(tester, container);
+      container.read(captureFocusProvider).unfocus();
+      container.read(selectedTaskProvider.notifier).select(ids[0]);
+      await tester.pump();
+      final count = container.read(tasksProvider).value!.eventCount;
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(container.read(selectedTaskProvider), ids[1]);
+      expect(container.read(tasksProvider).value!.eventCount, count);
+    });
+  });
+
+  group('reordering', () {
+    testWidgets(
+      'dragging a row by its handle reorders Today, and it persists',
+      (tester) async {
+        final container = await pumpApp(tester);
+        final store = container.read(tasksProvider.notifier).store;
+        final day = container.read(todayProvider);
+        await tester.runAsync(() async {
+          for (final title in ['A', 'B', 'C']) {
+            await store.createTask(title: title, when: TaskWhen.date(day));
+          }
+        });
+        await tester.pump();
+        expect(rowTitles(tester), ['A', 'B', 'C']);
+        final ids = store.projection.todayOrder;
+        await settleEvents(
+          tester,
+          container,
+          // Below the last row: the drop lands after it.
+          () => dragRow(
+            tester,
+            handle: handle(ids[0]),
+            source: row(ids[0]),
+            target: row(ids[2]),
+          ),
+        );
+        expect(
+          archiveLines(container.read(archiveRootProvider)).last,
+          contains('"task.reorder"'),
+        );
+        await tester.pump();
+        expect(rowTitles(tester), ['B', 'C', 'A']);
+        await tester.runAsync(store.reload);
+        await tester.pump();
+        expect(rowTitles(tester), ['B', 'C', 'A']);
+      },
+    );
 
     testWidgets('the Inbox reorders its structural order', (tester) async {
       final container = await pumpApp(tester);
@@ -801,11 +1031,17 @@ void main() {
         await capture(tester, container, title);
       }
       final ids = container.read(tasksProvider).value!.structuralOrder;
-      await settleEvents(tester, container, () async {
-        final step = tester.getSize(row(ids[2])).height;
-        await tester.drag(check(ids[2]), Offset(0, -4 * step));
-        await tester.pump(const Duration(milliseconds: 300));
-      });
+      await settleEvents(
+        tester,
+        container,
+        () => dragRow(
+          tester,
+          handle: handle(ids[2]),
+          source: row(ids[2]),
+          target: row(ids[0]),
+          below: false,
+        ),
+      );
       expect(
         archiveLines(container.read(archiveRootProvider)).last,
         contains('"task.move"'),
@@ -825,7 +1061,260 @@ void main() {
       await selectSection(tester, container, upcoming);
       final view = container.read(taskViewProvider(upcoming)).value!;
       expect(reorderable(view, view.sections.single), isFalse);
-      expect(find.byType(SliverReorderableList), findsNothing);
+      expect(find.byType(DragHandle), findsNothing);
+      await selectSection(tester, container, logbook);
+      expect(find.byType(DragHandle), findsNothing);
+      await selectSection(tester, container, const TrashSection());
+      expect(find.byType(DragHandle), findsNothing);
+    });
+
+    testWidgets('the check completes and never starts a drag (#98)', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      await selectSection(tester, container, inbox);
+      for (final title in ['A', 'B', 'C']) {
+        await capture(tester, container, title);
+      }
+      final ids = container.read(tasksProvider).value!.structuralOrder;
+      final count = container.read(tasksProvider).value!.eventCount;
+      final step = tester.getSize(row(ids[0])).height;
+      final gesture = await tester.startGesture(
+        tester.getCenter(check(ids[0])),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.moveBy(Offset(0, 2.5 * step));
+      await tester.pump();
+      expect(openGap(), findsNothing);
+      await gesture.up();
+      await tester.pump();
+      await tester.pump();
+      expect(container.read(tasksProvider).value!.eventCount, count);
+      expect(rowTitles(tester), ['A', 'B', 'C']);
+      expect(
+        tester
+            .getSemantics(
+              find.descendant(
+                of: handle(ids[0]),
+                matching: find.byType(DragHandle),
+              ),
+            )
+            .label,
+        'Drag A',
+      );
+    });
+
+    testWidgets('the slot opens in one frame under Reduce Motion, and grows '
+        'over the gap duration otherwise', (tester) async {
+      Future<void> hover(
+        WidgetTester tester,
+        ProviderContainer container,
+      ) async {
+        await selectSection(tester, container, inbox);
+        for (final title in ['A', 'B', 'C']) {
+          await capture(tester, container, title);
+          // Grown in, so every row is on stage under full motion too.
+          await tester.pump(SaiDurations.enter);
+          await tester.pump();
+        }
+        final ids = container.read(tasksProvider).value!.structuralOrder;
+        await dragRow(
+          tester,
+          handle: handle(ids[0]),
+          source: row(ids[0]),
+          target: row(ids[2]),
+          release: false,
+        );
+      }
+
+      var container = await pumpApp(tester);
+      await hover(tester, container);
+      expect(openGap(), findsOneWidget);
+      expect(tester.getSize(openGap()).height, DropGap.extent);
+      expect(find.byType(AnimatedSize), findsNothing);
+      // The proxy follows the pointer: a second copy of the row is up.
+      expect(find.text('A'), findsNWidgets(2));
+      await tester.pumpWidget(const SizedBox());
+
+      container = await pumpApp(tester, reduceMotion: false);
+      await hover(tester, container);
+      expect(openGap(), findsOneWidget);
+      final grown = find.descendant(
+        of: openGap(),
+        matching: find.byType(AnimatedSize),
+      );
+      expect(grown, findsOneWidget);
+      expect(tester.getSize(grown).height, lessThan(DropGap.extent));
+      await tester.pump(SaiDurations.gap);
+      await tester.pump();
+      expect(tester.getSize(grown).height, DropGap.extent);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a drop where the row stands writes nothing; undo takes a '
+        'drag back', (tester) async {
+      final container = await pumpApp(tester);
+      await selectSection(tester, container, inbox);
+      for (final title in ['A', 'B', 'C']) {
+        await capture(tester, container, title);
+      }
+      final ids = container.read(tasksProvider).value!.structuralOrder;
+      final store = container.read(tasksProvider.notifier).store;
+      final count = store.projection.eventCount;
+      await dragRow(
+        tester,
+        handle: handle(ids[1]),
+        source: row(ids[1]),
+        target: row(ids[0]),
+      );
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      expect(rowTitles(tester), ['A', 'B', 'C']);
+
+      await settleEvents(
+        tester,
+        container,
+        () => dragRow(
+          tester,
+          handle: handle(ids[1]),
+          source: row(ids[1]),
+          target: row(ids[2]),
+        ),
+      );
+      expect(rowTitles(tester), ['A', 'C', 'B']);
+      await settleUndo(
+        tester,
+        container,
+        () => tester.tap(find.text('Undo')),
+        depth: 3,
+      );
+      expect(rowTitles(tester), ['A', 'B', 'C']);
+    });
+
+    testWidgets('a heading with one task is still a target: a foreign drag '
+        'onto it is refused, and that row carries no handle', (tester) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      final ids = await tester.runAsync(() async {
+        final project = await store.createProject(title: 'Kitchen');
+        final prep = await store.createHeading(project: project, title: 'Prep');
+        final fit = await store.createHeading(project: project, title: 'Fit');
+        final a = await store.createTask(
+          title: 'A',
+          project: project,
+          heading: prep,
+        );
+        await store.createTask(title: 'B', project: project, heading: prep);
+        final c = await store.createTask(
+          title: 'C',
+          project: project,
+          heading: fit,
+        );
+        return (project: project, a: a, c: c);
+      });
+      container.read(chatVisibleProvider.notifier).toggle();
+      await selectSection(tester, container, ProjectSection(ids!.project));
+      expect(handle(ids.c), findsNothing);
+      final count = store.projection.eventCount;
+      final gesture = await dragRow(
+        tester,
+        handle: handle(ids.a),
+        source: row(ids.a),
+        target: row(ids.c),
+        release: false,
+      );
+      expect(openGap(), findsNothing);
+      await gesture.up();
+      await tester.pump();
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      expect(container.read(noticeProvider), startsWith('reorder failed:'));
+    });
+
+    testWidgets('a task dragged onto another heading is refused with a '
+        'notice, nothing written', (tester) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      final ids = await tester.runAsync(() async {
+        final project = await store.createProject(title: 'Kitchen');
+        final prep = await store.createHeading(project: project, title: 'Prep');
+        final fit = await store.createHeading(project: project, title: 'Fit');
+        final a = await store.createTask(
+          title: 'A',
+          project: project,
+          heading: prep,
+        );
+        final b = await store.createTask(
+          title: 'B',
+          project: project,
+          heading: prep,
+        );
+        final c = await store.createTask(
+          title: 'C',
+          project: project,
+          heading: fit,
+        );
+        final d = await store.createTask(
+          title: 'D',
+          project: project,
+          heading: fit,
+        );
+        return (project: project, a: a, b: b, c: c, d: d);
+      });
+      // Tuck the band away: four rows under two headers need the height.
+      container.read(chatVisibleProvider.notifier).toggle();
+      await selectSection(tester, container, ProjectSection(ids!.project));
+      expect(rowTitles(tester), ['A', 'B', 'C', 'D']);
+      final count = store.projection.eventCount;
+      final gesture = await dragRow(
+        tester,
+        handle: handle(ids.a),
+        source: row(ids.a),
+        target: row(ids.d),
+        release: false,
+      );
+      expect(openGap(), findsNothing);
+      await gesture.up();
+      await tester.pump();
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      expect(container.read(noticeProvider), startsWith('reorder failed:'));
+      expect(container.read(noticeProvider), contains('Move / Schedule…'));
+      expect(rowTitles(tester), ['A', 'B', 'C', 'D']);
+      // A drag that crossed the foreign heading and was let go over the
+      // blank padding below the list is a plain cancel: no notice.
+      container.read(noticeProvider.notifier).clear();
+      final wander = await dragRow(
+        tester,
+        handle: handle(ids.a),
+        source: row(ids.a),
+        target: row(ids.d),
+        release: false,
+      );
+      await wander.moveTo(
+        tester.getBottomLeft(row(ids.d)) + const Offset(200, 60),
+      );
+      await tester.pump();
+      await tester.runAsync(() async {});
+      await wander.up();
+      await tester.pump();
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      expect(container.read(noticeProvider), '');
+
+      // Within the heading it works.
+      await settleEvents(
+        tester,
+        container,
+        () => dragRow(
+          tester,
+          handle: handle(ids.a),
+          source: row(ids.a),
+          target: row(ids.b),
+        ),
+      );
+      expect(rowTitles(tester), ['B', 'A', 'C', 'D']);
+      expect(container.read(noticeProvider), '');
     });
   });
 
@@ -876,6 +1365,10 @@ void main() {
         tester.platformDispatcher.textScaleFactorTestValue = 1.3;
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
         final container = await populated(tester);
+        // Tucked away: with the band open the list's viewport is 111 px
+        // at the smaller size, and a lazy sliver builds only the first
+        // (long) row — both rows are what the overflow check is about.
+        container.read(chatVisibleProvider.notifier).toggle();
         tester.view.physicalSize = size;
         await tester.pump();
         // No RenderFlex overflow is the assertion: flutter_test fails on one.

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
@@ -10,6 +11,8 @@ import 'package:sai_app/setup/first_run.dart';
 import 'package:sai_app/sidebar.dart';
 import 'package:sai_app/widgets/check_mark.dart';
 import 'package:sai_app/workspace/task_list_pane.dart';
+import 'package:sai_app/reorder/drag_handle.dart';
+import 'package:sai_app/reorder/reorder.dart';
 import 'package:sai_app/workspace/task_row.dart';
 import 'package:sai_core/sai_core.dart';
 
@@ -326,6 +329,52 @@ Finder row(TaskId task) => find.byKey(taskRowKey(task));
 /// The check at the head of [task]'s row.
 Finder check(TaskId task) =>
     find.descendant(of: row(task), matching: find.byType(CheckMark));
+
+/// The drag handle of [task]'s row (#98).
+Finder handle(TaskId task) => find.byKey(dragHandleKey(task));
+
+/// The slot a live drag has opened, if any.
+Finder openGap() => find.byWidgetPredicate((w) => w is DropGap && w.visible);
+
+/// Drags [source]'s row by [handle] until the proxy's middle is in the
+/// lower ([below]) or upper half of [target], and releases it there. The
+/// proxy lifts from the source row's own corner, so the pointer is moved
+/// by where the row's centre must go. Run it under [settleEvents] when
+/// the drop is expected to write; with [release] off the gesture comes
+/// back still held.
+Future<TestGesture> dragRow(
+  WidgetTester tester, {
+  required Finder handle,
+  required Finder source,
+  required Finder target,
+  bool below = true,
+  bool release = true,
+}) async {
+  final start = tester.getCenter(handle);
+  final toCentre = tester.getCenter(source) - start;
+  final gesture = await tester.startGesture(
+    start,
+    kind: PointerDeviceKind.mouse,
+  );
+  await gesture.moveBy(const Offset(0, 24));
+  await tester.pump();
+  // A quarter in from the edge: the pointer, which is what picks the
+  // target, sits a few points off the proxy's centre and must land on
+  // the row too.
+  final rect = tester.getRect(target);
+  final quarter = rect.height / 4;
+  final aim = Offset(
+    rect.center.dx,
+    below ? rect.bottom - quarter : rect.top + quarter,
+  );
+  await gesture.moveTo(aim - toCentre);
+  await tester.pump();
+  if (release) {
+    await gesture.up();
+    await tester.pump();
+  }
+  return gesture;
+}
 
 /// The titles on screen, top to bottom, of the rows in the list.
 List<String> rowTitles(WidgetTester tester) {

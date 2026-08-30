@@ -4,7 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/organise/container_menu.dart';
 import 'package:sai_app/organise/heading_menu.dart';
+import 'package:sai_app/commands.dart';
 import 'package:sai_app/organise/tags_dialog.dart';
+import 'package:sai_app/reorder/drag_handle.dart';
+import 'package:sai_app/workspace/task_section_header.dart';
 import 'package:sai_app/widgets/sai_dialog.dart';
 import 'package:sai_app/workspace/task_list_pane.dart';
 import 'package:sai_core/sai_core.dart';
@@ -507,6 +510,93 @@ void main() {
       expect(store.projection.tasks[tiles.id]!.heading, isNull);
       expect(store.projection.tasks[tiles.id]!.project, ids.kitchen);
       expect(rowTitles(tester), contains('Tiles'));
+    });
+
+    testWidgets('a heading drags below another by its handle; the order '
+        'persists through replay; a task dropped on a header is refused '
+        '(#98)', (tester) async {
+      final container = await pumpApp(tester);
+      final ids = await seed(tester, container);
+      final store = storeOf(container);
+      final (prep, build) = (await tester.runAsync(() async {
+        final prep = await store.createHeading(
+          project: ids.kitchen,
+          title: 'Prep',
+        );
+        final build = await store.createHeading(
+          project: ids.kitchen,
+          title: 'Build',
+        );
+        return (prep, build);
+      }))!;
+      container.read(chatVisibleProvider.notifier).toggle();
+      await selectSection(tester, container, ProjectSection(ids.kitchen));
+      Finder header(HeadingId heading) => find.ancestor(
+        of: find.byKey(dragHandleKey(heading)),
+        matching: find.byType(TaskSectionHeader),
+      );
+      expect(
+        tester
+            .getSemantics(
+              find.descendant(
+                of: header(prep),
+                matching: find.byType(DragHandle),
+              ),
+            )
+            .label,
+        'Drag Prep',
+      );
+      await settleEvents(
+        tester,
+        container,
+        () => dragRow(
+          tester,
+          handle: find.byKey(dragHandleKey(prep)),
+          source: header(prep),
+          target: header(build),
+        ),
+      );
+      expect(
+        archiveLines(container.read(archiveRootProvider)).last,
+        contains('"heading.reorder"'),
+      );
+      expect(store.projection.headingsOf(ids.kitchen).map((h) => h.title), [
+        'Build',
+        'Prep',
+      ]);
+      final replayed = await tester.runAsync(
+        () async => TaskStore.open(
+          await Archive.open(container.read(archiveRootProvider)),
+          source: 'sai/tui',
+        ),
+      );
+      expect(replayed!.projection.headingsOf(ids.kitchen).map((h) => h.title), [
+        'Build',
+        'Prep',
+      ]);
+      replayed.dispose();
+
+      // A task's handle over a header: no slot, and a drop says why.
+      final tiles = store.projection.tasks.values
+          .firstWhere((t) => t.title == 'Tiles')
+          .id;
+      final count = store.projection.eventCount;
+      final gesture = await dragRow(
+        tester,
+        handle: handle(tiles),
+        source: row(tiles),
+        target: header(prep),
+        release: false,
+      );
+      expect(openGap(), findsNothing);
+      await gesture.up();
+      await tester.pump();
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      expect(
+        container.read(noticeProvider),
+        'reorder failed: a heading is ordered within its project',
+      );
     });
 
     testWidgets(

@@ -28,7 +28,7 @@ knows about either client.
 
 ## Toolchain
 
-- Flutter 3.47.1 stable (Dart 3.13.1). CI pins the same version
+- Flutter 3.47.2 stable (Dart 3.13.2). CI pins the same version
   (`.github/workflows/ci.yml`), so match it locally.
 - Xcode with the macOS platform, for `apps/sai_app`.
 
@@ -258,6 +258,19 @@ first row) and edits in place: a field commits when it is left, so every
 edit is one archive event and one undo step. Areas, projects and headings
 are organised from the sidebar rows' `…` menu (or a secondary click) and
 a project view's heading headers; tags from the inspector's `Manage…`.
+
+A task moves in two independent dimensions (#98): **Move / Schedule…**
+(`⇧⌘M`, the row's `…` menu or a secondary click, the Task menu, the
+inspector) schedules it — Today, Tomorrow, Someday, a date, no plan — or
+files it under the Inbox, any live area or project, or any project's
+heading; one pick, one event, the other dimension and the deadline
+untouched. Order is a drag by the handle every reorderable row carries —
+tasks in Today, the Inbox and each project, heading or area group;
+headings within their project; areas; projects within their area or the
+standalone group — or `⌘↑`/`⌘↓` (Move up / Move down in the menus). The
+slot opens as a red rule; under Reduce Motion it appears in one frame.
+A drop across groups, or on a stale row, writes nothing and the top bar
+says why.
 
 ## Verify
 

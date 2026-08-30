@@ -286,11 +286,31 @@ void main() {
         container,
         () => tapMenuItem(tester, '        · Demolition'),
       );
-      final task = store.projection.tasks[id]!;
+      var task = store.projection.tasks[id]!;
       expect(task.heading, isNotNull);
       expect(task.project, kitchen);
       final lines = archiveLines(container.read(archiveRootProvider));
       expect(lines.last, contains('"task.move"'));
+
+      // Another project's heading is offered too (#98), and the move
+      // carries that project.
+      final bath = await tester.runAsync(
+        () => store.createProject(title: 'Bath', area: home),
+      );
+      final tiling = await tester.runAsync(
+        () => store.createHeading(project: bath!, title: 'Tiling'),
+      );
+      await tester.pump();
+      await tester.tap(find.text('Kitchen').first);
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => tapMenuItem(tester, '        · Tiling'),
+      );
+      task = store.projection.tasks[id]!;
+      expect(task.project, bath);
+      expect(task.heading, tiling);
     });
 
     testWidgets(

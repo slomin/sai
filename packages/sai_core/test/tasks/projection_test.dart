@@ -251,6 +251,64 @@ void main() {
       );
     });
 
+    test('a heading of any live project is a destination when the move '
+        'names that project (#98)', () {
+      final p1 = emit(ProjectCreated(title: 'One'));
+      final p2 = emit(ProjectCreated(title: 'Two'));
+      final heading = emit(HeadingCreated(project: p2.id, title: 'H'));
+      final created = emit(TaskCreated(title: 'x', project: p1.id));
+      final moved = emit(
+        TaskMoved(created.id, project: p2.id, heading: heading.id),
+      );
+      final p = applyAll([p1, p2, heading, created, moved]);
+      expect(p.task(created.id)!.project, p2.id);
+      expect(p.task(created.id)!.heading, heading.id);
+      expect(p.underHeading(heading.id).map((t) => t.id), [created.id]);
+    });
+
+    test('an archived project or area refuses a move with a reason', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final area = emit(AreaCreated(title: 'A'));
+      final created = emit(TaskCreated(title: 'x'));
+      final base = applyAll([
+        project,
+        area,
+        created,
+        emit(ProjectArchived(project.id)),
+        emit(AreaArchived(area.id)),
+      ]);
+      for (final event in [
+        TaskMoved(created.id, project: project.id),
+        TaskMoved(created.id, area: area.id),
+      ]) {
+        expect(
+          () => base.apply(emit(event)),
+          throwsA(
+            isA<TaskProjectionError>().having(
+              (e) => e.reason,
+              'reason',
+              contains('archived'),
+            ),
+          ),
+        );
+      }
+    });
+
+    test('a move without an anchor lands last in the destination group', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final a = emit(TaskCreated(title: 'a', project: project.id));
+      final b = emit(TaskCreated(title: 'b', project: project.id));
+      final x = emit(TaskCreated(title: 'x'));
+      final p = applyAll([
+        project,
+        a,
+        b,
+        x,
+        emit(TaskMoved(x.id, project: project.id)),
+      ]);
+      expect(p.inProject(project.id).map((t) => t.title), ['a', 'b', 'x']);
+    });
+
     test('creating a task in an unknown project is refused', () {
       final ghost = BlobRef.sha256OfBytes(utf8.encode('ghost'));
       final created = emit(TaskCreated(title: 'x', project: ghost));

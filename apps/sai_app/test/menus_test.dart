@@ -41,6 +41,9 @@ void main() {
       open: (result) => calls.add('open $result'),
       select: (section) => calls.add('select $section'),
       toggleInspector: () => calls.add('inspector'),
+      moveSelected: () => calls.add('move'),
+      moveSelectedUp: () => calls.add('up'),
+      moveSelectedDown: () => calls.add('down'),
       completeSelected: () => calls.add('complete'),
       cancelSelected: () => calls.add('cancel-task'),
       deleteSelected: () => calls.add('delete'),
@@ -201,6 +204,40 @@ void main() {
         containsPair('shortcutTrigger', LogicalKeyboardKey.comma.keyId),
       );
       expect(chord(item), containsPair('shortcutModifiers', 1));
+    });
+
+    test('Task > Move / Schedule… on ⇧⌘M, for a selected task only (#98)', () {
+      expect(
+        menuItem(menus(), ['Task', 'Move / Schedule…']).onSelected,
+        isNull,
+      );
+      final item = menuItem(menus(task: true), ['Task', 'Move / Schedule…']);
+      item.onSelected!();
+      expect(calls, ['move']);
+      expect(
+        chord(item),
+        containsPair('shortcutTrigger', LogicalKeyboardKey.keyM.keyId),
+      );
+      // meta and shift, in Flutter's serialisation of the modifier mask.
+      expect(chord(item), containsPair('shortcutModifiers', 1 | 2));
+    });
+
+    test('Task > Move up and Move down on ⌘↑ and ⌘↓ (#98)', () {
+      expect(menuItem(menus(), ['Task', 'Move up']).onSelected, isNull);
+      final up = menuItem(menus(task: true), ['Task', 'Move up']);
+      final down = menuItem(menus(task: true), ['Task', 'Move down']);
+      up.onSelected!();
+      down.onSelected!();
+      expect(calls, ['up', 'down']);
+      expect(
+        chord(up),
+        containsPair('shortcutTrigger', LogicalKeyboardKey.arrowUp.keyId),
+      );
+      expect(
+        chord(down),
+        containsPair('shortcutTrigger', LogicalKeyboardKey.arrowDown.keyId),
+      );
+      expect(chord(up), containsPair('shortcutModifiers', 1));
     });
 
     test('Task > Cancel on ⌥⌘⏎', () {
