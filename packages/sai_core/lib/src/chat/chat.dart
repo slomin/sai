@@ -161,10 +161,6 @@ class ChatNotifier extends Notifier<ChatState> {
   /// the turn then ends before anything is sent.
   var _cancelRequested = false;
 
-  /// The window a turn is assembled for. A constant until the budget
-  /// follows the endpoint's context window (ADR 0011); tests set it.
-  ContextBudget budget = defaultContextBudget;
-
   /// Writes [next] unless the notifier is gone — a call that outlives
   /// its container must not throw from a stream callback.
   void _set(ChatState next) {
@@ -193,7 +189,9 @@ class ChatNotifier extends Notifier<ChatState> {
         today: container.read(todayProvider),
         history: _history(),
         draft: message,
-        budget: budget,
+        // The active local provider's probed window, or the conservative
+        // default; a synchronous read — a send never awaits a probe.
+        budget: container.read(chatBudgetProvider),
         // Off asks the backend not to think; on leaves it to the model.
         reasoning: container.read(reasoningProvider) ? null : false,
         // A local model sees the whole collection; a cloud one at most

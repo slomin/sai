@@ -140,7 +140,11 @@ void main() {
       privacy: LlmPrivacy.cloud,
       script: echo,
     );
-    final container = await make(extraLlms: [cloudy]);
+    var budget = defaultContextBudget;
+    final container = await make(
+      extraLlms: [cloudy],
+      overrides: [chatBudgetProvider.overrideWith((ref) => budget)],
+    );
     final settings = container.read(settingsProvider.notifier);
     settings.selectLlm('cloudy');
     settings.setShareTasksWithCloud(true);
@@ -158,7 +162,7 @@ void main() {
             upcomingDays: 0,
           ),
         );
-    chat.budget = ContextBudget(maxTokens: fits + 100, replyReserve: 100);
+    budget = ContextBudget(maxTokens: fits + 100, replyReserve: 100);
     await chat.send('go');
     final answer = container.read(chatProvider).turns.last;
     expect(answer.dropped, ['upcoming:2026-08-26']);
@@ -170,7 +174,13 @@ void main() {
   });
 
   test('an oversized catalog turn writes no event at all', () async {
-    final container = await make();
+    final container = await make(
+      overrides: [
+        chatBudgetProvider.overrideWith(
+          (ref) => const ContextBudget(maxTokens: 1000000, replyReserve: 4096),
+        ),
+      ],
+    );
     final store = container.read(tasksProvider.notifier).store;
     // Escape-heavy notes: the token estimate fits the roomy window, but
     // the JSON-encoded request crosses the recordable cap — and there is
@@ -178,7 +188,6 @@ void main() {
     // chat.message is written (#105).
     await store.createTask(title: 'Huge', notes: '"' * 400000);
     final chat = container.read(chatProvider.notifier);
-    chat.budget = const ContextBudget(maxTokens: 1000000, replyReserve: 4096);
     final before = lines().length;
     final accepted = await chat.send('what do I have?');
     expect(accepted, isFalse);

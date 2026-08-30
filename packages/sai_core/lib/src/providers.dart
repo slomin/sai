@@ -8,6 +8,7 @@ import 'app_info.dart';
 import 'identity.dart';
 import 'archive/archive.dart';
 import 'chat/chat.dart';
+import 'context/assemble.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
 import 'archive/verify_state.dart';
@@ -535,6 +536,46 @@ final endpointInfoProvider = FutureProvider.autoDispose
       return const EndpointInfo();
     });
 
+/// The context window each provider's endpoint last reported, by id
+/// (#105). Retained for the process: a selection change or a probe that
+/// did not say (null) leaves the last report standing. Fed by
+/// [Connection]'s probe — a send only reads, it never asks the network.
+final contextWindowsProvider =
+    NotifierProvider<ContextWindows, Map<String, int>>(ContextWindows.new);
+
+class ContextWindows extends Notifier<Map<String, int>> {
+  @override
+  Map<String, int> build() => const {};
+
+  /// Records what [providerId]'s endpoint reported; null or nonsense
+  /// keeps what stands.
+  void report(String providerId, int? contextWindow) {
+    if (contextWindow == null || contextWindow < 1) return;
+    if (state[providerId] == contextWindow) return;
+    state = Map.unmodifiable({...state, providerId: contextWindow});
+  }
+}
+
+/// The budget the next chat turn is assembled for (#105): the active
+/// local provider's last reported context window with the standing reply
+/// reserve, else the conservative [defaultContextBudget]. Reading it
+/// never awaits a probe — until the first probe answers, the default
+/// applies. Cloud providers stay on the default: the compact context
+/// has no use for a large window.
+final chatBudgetProvider = Provider<ContextBudget>((ref) {
+  final active = ref.watch(activeLlmProvider);
+  if (active == null || active.privacy != LlmPrivacy.local) {
+    return defaultContextBudget;
+  }
+  final window = ref.watch(contextWindowsProvider.select((w) => w[active.id]));
+  return window == null
+      ? defaultContextBudget
+      : ContextBudget(
+          maxTokens: window,
+          replyReserve: defaultContextBudget.replyReserve,
+        );
+});
+
 /// How a Things snapshot is read (#40): off the main isolate in the
 /// clients, replaced by a direct read in a widget test.
 final thingsSnapshotReaderProvider =
@@ -989,6 +1030,10 @@ class Connection extends Notifier<ConnectionStatus> {
   Timer? _timer;
   LlmEndpointProbe? _probe;
 
+  /// The selected provider's id while [_probe] is set — where a probe
+  /// answer's context window is filed (#105).
+  String? _id;
+
   /// Which selection a probe answer belongs to; an older one is dropped.
   var _epoch = 0;
 
@@ -1001,6 +1046,7 @@ class Connection extends Notifier<ConnectionStatus> {
     _timer?.cancel();
     _timer = null;
     _probe = null;
+    _id = null;
     final epoch = ++_epoch;
     ref.onDispose(() {
       _timer?.cancel();
@@ -1035,6 +1081,7 @@ class Connection extends Notifier<ConnectionStatus> {
     }
     if (active case final LlmEndpointProbe probe) {
       _probe = probe;
+      _id = id;
       scheduleMicrotask(() => _ask(epoch));
       if (ref.watch(connectionProbeEveryProvider) case final every?) {
         _timer = Timer.periodic(every, (_) => _ask(epoch));
@@ -1081,6 +1128,11 @@ class Connection extends Notifier<ConnectionStatus> {
       );
     }
     if (epoch != _epoch || request != _request || !ref.mounted) return;
+    // The probe's other answer: what window the endpoint reports, kept
+    // for the chat budget (#105).
+    if (_id case final id?) {
+      ref.read(contextWindowsProvider.notifier).report(id, info.contextWindow);
+    }
     state = switch (info.health) {
       EndpointHealth.ok => const ConnectionStatus.ready('ready'),
       EndpointHealth.loading => const ConnectionStatus.attention('loading'),
