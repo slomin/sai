@@ -30,10 +30,21 @@ class OrganiseCommands {
     (store) => store.createProject(title: title, area: area),
   );
 
+  /// The id, or null when the store refused — a blank title is refused
+  /// here, trimmed, so whitespace never reaches the log as a name.
   Future<HeadingId?> createHeading(ProjectId project, String title) => _create(
     'new heading',
-    (store) => store.createHeading(project: project, title: title),
+    (store) => store.createHeading(project: project, title: title.trim()),
   );
+
+  /// [createHeading] for the prompt (#96): null on success, otherwise the
+  /// reason, which the prompt shows beside the title it keeps.
+  Future<String?> tryCreateHeading(ProjectId project, String title) =>
+      tryStoreCommand(
+        _ref,
+        'new heading',
+        (store) => store.createHeading(project: project, title: title.trim()),
+      );
 
   Future<TagId?> createTag(String title) =>
       _create('new tag', (store) => store.createTag(title: title));

@@ -51,17 +51,20 @@ class _AddHeading extends ConsumerWidget {
       child: ExcludeSemantics(
         child: InkWell(
           key: addHeadingKey,
-          onTap: () async {
-            final name = await promptForTitle(
+          // The prompt commits while it is up (#96): a refusal keeps the
+          // title on screen with the reason instead of vanishing. The
+          // commands are read before the prompt opens: this button leaves
+          // the tree when the project is archived underneath, and a
+          // closure over its ref would throw instead of reporting.
+          onTap: () {
+            final organise = ref.read(organiseCommandsProvider);
+            promptForTitle(
               context,
               eyebrow: title,
               title: 'New heading',
               confirm: 'Create',
+              commit: (name) => organise.tryCreateHeading(project, name),
             );
-            if (name == null) return;
-            await ref
-                .read(organiseCommandsProvider)
-                .createHeading(project, name);
           },
           child: Text('+ HEADING', style: context.saiText.eyebrow),
         ),

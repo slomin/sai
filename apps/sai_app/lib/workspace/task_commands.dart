@@ -107,6 +107,26 @@ Future<bool> runStoreCommand(
   }
 }
 
+/// [runStoreCommand] for a prompt that keeps its line on screen (#96):
+/// null once the store took [act], otherwise the refusal's own sentence,
+/// which lands in the notice as well so the top bar keeps the trace.
+Future<String?> tryStoreCommand(
+  Ref ref,
+  String verb,
+  Future<void> Function(TaskStore store) act,
+) async {
+  final notice = ref.read(noticeProvider.notifier);
+  try {
+    await act(ref.read(tasksProvider.notifier).store);
+    notice.clear();
+    return null;
+  } on Object catch (error) {
+    final reason = describeFailure(error);
+    notice.show('$verb failed: $reason');
+    return reason;
+  }
+}
+
 /// The store's own sentence about a refusal, without the wrapping: a
 /// projection error names its reason, an argument error its message.
 String describeFailure(Object error) => switch (error) {

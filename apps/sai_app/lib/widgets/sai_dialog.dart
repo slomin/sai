@@ -5,10 +5,16 @@ import '../theme/sai_theme.dart';
 import '../theme/sai_tokens.dart';
 import 'eyebrow.dart';
 
-/// The dialog's field, primary action and the optional check, for tests.
+/// The dialog's field, primary action, the optional check and the line a
+/// refused commit leaves under the field, for tests.
 const dialogFieldKey = Key('dialog-field');
 const dialogPrimaryKey = Key('dialog-primary');
 const dialogOptionKey = Key('dialog-option');
+const dialogErrorKey = Key('dialog-error');
+
+/// Commits a prompted line; null when it went through, otherwise the
+/// sentence the prompt shows while it keeps the line on screen.
+typedef PromptCommit = Future<String?> Function(String line);
 
 /// The one dialog frame (#74): an eyebrow, a title, a body, and the
 /// actions — the primary red only when it is destructive, ink otherwise.
@@ -97,13 +103,18 @@ class SaiPrimaryButton extends StatelessWidget {
 }
 
 /// Asks for one line — a name — and returns it trimmed, or null when the
-/// dialog is dismissed or the line is blank.
+/// dialog is dismissed. A blank line never submits: Return on it does
+/// nothing, as the disabled button does. With [commit], the line is
+/// committed while the dialog is still up (#96): it closes on success and
+/// on a refusal stays open with the line intact and the reason under it,
+/// so a rejected create never looks like nothing happened.
 Future<String?> promptForTitle(
   BuildContext context, {
   required String eyebrow,
   required String title,
   String initial = '',
   String confirm = 'Save',
+  PromptCommit? commit,
 }) => showDialog<String>(
   context: context,
   builder: (context) => _Prompt(
@@ -111,6 +122,7 @@ Future<String?> promptForTitle(
     title: title,
     initial: initial,
     confirm: confirm,
+    commit: commit,
   ),
 );
 
@@ -120,12 +132,14 @@ class _Prompt extends StatefulWidget {
     required this.title,
     required this.initial,
     required this.confirm,
+    required this.commit,
   });
 
   final String eyebrow;
   final String title;
   final String initial;
   final String confirm;
+  final PromptCommit? commit;
 
   @override
   State<_Prompt> createState() => _PromptState();
@@ -137,40 +151,85 @@ class _PromptState extends State<_Prompt> {
       baseOffset: 0,
       extentOffset: widget.initial.length,
     );
+  final _focus = FocusNode(debugLabel: 'prompt');
+  var _pending = false;
+  String? _failure;
 
   @override
   void dispose() {
     _controller.dispose();
+    _focus.dispose();
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final line = _controller.text.trim();
-    Navigator.of(context).pop(line.isEmpty ? null : line);
+    if (line.isEmpty || _pending) return;
+    final commit = widget.commit;
+    if (commit == null) {
+      Navigator.of(context).pop(line);
+      return;
+    }
+    setState(() {
+      _pending = true;
+      _failure = null;
+    });
+    final failure = await commit(line);
+    if (!mounted) return;
+    if (failure == null) {
+      Navigator.of(context).pop(line);
+      return;
+    }
+    setState(() {
+      _pending = false;
+      _failure = failure;
+    });
+    _focus.requestFocus();
   }
 
   @override
   Widget build(BuildContext context) {
+    final text = context.saiText;
     return SaiDialog(
       eyebrow: widget.eyebrow,
       title: widget.title,
-      body: TextField(
-        key: dialogFieldKey,
-        controller: _controller,
-        autofocus: true,
-        onSubmitted: (_) => _submit(),
-        style: context.saiText.body,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            key: dialogFieldKey,
+            controller: _controller,
+            focusNode: _focus,
+            autofocus: true,
+            enabled: !_pending,
+            onSubmitted: (_) => _submit(),
+            style: text.body,
+          ),
+          if (_failure case final failure?)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Semantics(
+                liveRegion: true,
+                child: Text(
+                  failure,
+                  key: dialogErrorKey,
+                  style: text.meta.copyWith(color: SaiColors.red),
+                ),
+              ),
+            ),
+        ],
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _pending ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         ValueListenableBuilder(
           valueListenable: _controller,
           builder: (context, value, _) => SaiPrimaryButton(
             label: widget.confirm,
-            onPressed: value.text.trim().isEmpty ? null : _submit,
+            onPressed: value.text.trim().isEmpty || _pending ? null : _submit,
           ),
         ),
       ],

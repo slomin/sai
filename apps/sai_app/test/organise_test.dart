@@ -546,6 +546,118 @@ void main() {
       },
     );
 
+    testWidgets('Return creates the heading exactly like Create', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final ids = await seed(tester, container);
+      await selectSection(tester, container, ProjectSection(ids.kitchen));
+      await tester.tap(find.byKey(addHeadingKey));
+      await tester.pump();
+      await tester.enterText(find.byKey(dialogFieldKey), 'Prep');
+      await settleEvents(
+        tester,
+        container,
+        () => tester.testTextInput.receiveAction(TextInputAction.done),
+      );
+      expect(find.byKey(dialogFieldKey), findsNothing);
+      expect(
+        storeOf(container).projection
+            .headingsOf(ids.kitchen)
+            .map((h) => h.title),
+        ['Prep'],
+      );
+      expect(find.text('PREP'), findsOneWidget);
+    });
+
+    testWidgets('a blank Return keeps the dialog open and writes nothing', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final ids = await seed(tester, container);
+      final before = storeOf(container).projection.eventCount;
+      await selectSection(tester, container, ProjectSection(ids.kitchen));
+      await tester.tap(find.byKey(addHeadingKey));
+      await tester.pump();
+      await tester.enterText(find.byKey(dialogFieldKey), '   ');
+      await tester.runAsync(
+        () => tester.testTextInput.receiveAction(TextInputAction.done),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(dialogFieldKey), findsOneWidget);
+      expect(
+        tester.widget<SaiPrimaryButton>(find.byKey(dialogPrimaryKey)).onPressed,
+        isNull,
+      );
+      expect(storeOf(container).projection.eventCount, before);
+    });
+
+    testWidgets(
+      'New heading… from the sidebar selects the project and shows it',
+      (tester) async {
+        final container = await pumpApp(tester);
+        final ids = await seed(tester, container);
+        await selectSection(tester, container, today);
+        await openMenu(tester, ProjectSection(ids.kitchen));
+        await choose(tester, 'New heading…');
+        expect(find.text('New heading'), findsOneWidget);
+        await settleEvents(
+          tester,
+          container,
+          () => typeAndConfirm(tester, 'Prep'),
+        );
+        await tester.pump();
+        expect(
+          container.read(selectedSectionProvider),
+          ProjectSection(ids.kitchen),
+        );
+        expect(paneTitle(tester), 'Kitchen');
+        expect(find.text('PREP'), findsOneWidget);
+      },
+    );
+
+    testWidgets('a refused heading keeps the draft and says why', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final ids = await seed(tester, container);
+      final store = storeOf(container);
+      await selectSection(tester, container, ProjectSection(ids.kitchen));
+      await tester.tap(find.byKey(addHeadingKey));
+      await tester.pump();
+      await tester.enterText(find.byKey(dialogFieldKey), 'Prep');
+      // The project goes away underneath the open prompt.
+      await settleEvents(
+        tester,
+        container,
+        () => store.archiveProject(ids.kitchen),
+      );
+      final before = store.projection.eventCount;
+      await tester.runAsync(() => tester.tap(find.byKey(dialogPrimaryKey)));
+      await settleUntil(
+        tester,
+        () => find.byKey(dialogErrorKey).evaluate().isNotEmpty,
+        () => 'no failure shown',
+      );
+      expect(find.byKey(dialogFieldKey), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byKey(dialogFieldKey)).controller!.text,
+        'Prep',
+      );
+      expect(
+        tester.widget<Text>(find.byKey(dialogErrorKey)).data,
+        contains('archived'),
+      );
+      expect(store.projection.eventCount, before);
+      expect(store.projection.headingsOf(ids.kitchen), isEmpty);
+      // The draft is still live: Cancel leaves, nothing was written.
+      await tester.tap(find.text('Cancel'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(dialogFieldKey), findsNothing);
+    });
+
     testWidgets('an empty project with a heading shows the heading', (
       tester,
     ) async {
