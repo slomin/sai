@@ -381,6 +381,15 @@ Future<int> runCli(
         if (!ProviderConfig.idForm.hasMatch(id)) {
           throw _Usage("'$id' is not a provider id");
         }
+        // Dev holds no credentials (#95, ADR 0019): nothing to set, ask
+        // or clear, and no Keychain is ever opened for it.
+        if (container.read(identityProvider).keychainService == null) {
+          err.writeln(
+            '$program holds no credentials (ADR 0019); '
+            'use ${SaiIdentity.stable.tuiCommand}',
+          );
+          return cliFailed;
+        }
         final config = container.read(settingsProvider).provider(id);
         final credentials = container.read(credentialsProvider.notifier);
         if (verb == 'set') {
@@ -416,6 +425,7 @@ Future<int> runCli(
               CredentialStatus.set => 'set',
               CredentialStatus.missing => 'missing',
               CredentialStatus.unavailable => 'keychain unavailable',
+              CredentialStatus.absent => 'no credentials in dev',
               CredentialStatus.none => 'none',
             });
         }
