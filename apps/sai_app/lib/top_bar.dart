@@ -88,18 +88,26 @@ class TopBar extends ConsumerWidget {
             ),
           ],
           const SizedBox(width: 16),
-          // Flexible, so a narrow window squeezes the archive line before
-          // anything on the right is pushed out of the bar.
-          Flexible(
-            child: Text(
-              'ARCHIVE · $lines ${lines == 1 ? 'LINE' : 'LINES'}',
-              style: text.meta,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+          // One flex slot for the archive line and the notice: the line
+          // shrinks first in a narrow window, and what it leaves goes to
+          // the notice rather than standing empty before the buttons (a
+          // loose Flexible beside an Expanded strands its share).
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    'ARCHIVE · $lines ${lines == 1 ? 'LINE' : 'LINES'}',
+                    style: text.meta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(child: NoticeLine(ref.watch(noticeProvider))),
+              ],
             ),
           ),
-          const SizedBox(width: 16),
-          Expanded(child: NoticeLine(ref.watch(noticeProvider))),
           const SizedBox(width: 16),
           TextButton(
             key: undoButtonKey,
