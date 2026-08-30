@@ -65,11 +65,18 @@ class Notice extends Notifier<String> {
 /// A new task starts in the Inbox (#96): the pane switches there so the
 /// person sees where the line will land, then capture takes focus — now,
 /// and again after the frame the switch schedules, the way [finishSetup]
-/// does. Behind the welcome or a modal the field cannot take focus
-/// (`ExcludeFocus`, a route above the chrome), and then nothing moves.
+/// does. Behind the welcome the field cannot take focus (`ExcludeFocus`);
+/// under a route above the chrome — Settings, Quick Find, a prompt —
+/// focus sits in that route's own scope, which is no ancestor of the
+/// field (the native menu item fires there, where the chord is inert).
+/// In both cases nothing moves.
 void _newTask(ProviderContainer container) {
   final node = container.read(captureFocusProvider);
   if (!node.canRequestFocus) return;
+  final primary = FocusManager.instance.primaryFocus;
+  if (primary != null && !node.ancestors.contains(primary.nearestScope)) {
+    return;
+  }
   container
       .read(selectedSectionProvider.notifier)
       .select(const ListSection(TaskList.inbox));

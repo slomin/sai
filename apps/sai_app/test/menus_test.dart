@@ -243,6 +243,25 @@ void main() {
       expect(container.read(captureFocusProvider).hasFocus, isTrue);
     });
 
+    testWidgets('File > New Task is inert while Settings is up', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      menuItem(menuDelegate.menus, ['sai', 'Settings…']).onSelected!();
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(settingsScreenKey), findsOneWidget);
+      menuItem(menuDelegate.menus, ['File', 'New Task']).onSelected!();
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(settingsScreenKey), findsOneWidget);
+      expect(
+        container.read(selectedSectionProvider),
+        const ListSection(TaskList.today),
+      );
+      expect(container.read(captureFocusProvider).hasFocus, isFalse);
+    });
+
     testWidgets('Edit > Undo reverses the last capture', (tester) async {
       final container = await pumpApp(tester);
       expect(menuItem(menuDelegate.menus, ['Edit', 'Undo']).onSelected, isNull);
