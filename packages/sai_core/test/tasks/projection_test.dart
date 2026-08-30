@@ -493,6 +493,22 @@ void main() {
       );
     });
 
+    test('a heading cannot be created in an archived project', () {
+      final project = emit(ProjectCreated(title: 'P'));
+      final shelved = emit(ProjectArchived(project.id));
+      final heading = emit(HeadingCreated(project: project.id, title: 'H'));
+      expect(
+        () => applyAll([project, shelved, heading]),
+        throwsA(
+          isA<TaskProjectionError>().having(
+            (e) => e.reason,
+            'reason',
+            contains('archived'),
+          ),
+        ),
+      );
+    });
+
     test('a deleted tag cannot be attached', () {
       final tag = emit(TagCreated(title: 't'));
       final gone = emit(TagDeleted(tag.id));
