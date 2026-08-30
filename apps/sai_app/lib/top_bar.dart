@@ -5,11 +5,14 @@ import 'package:sai_core/sai_core.dart';
 import 'commands.dart';
 import 'theme/sai_theme.dart';
 import 'theme/sai_tokens.dart';
+import 'settings/settings_screen.dart';
+import 'widgets/cog_button.dart';
 import 'widgets/notice_line.dart';
 
-/// The Undo button and the assistant toggle, for tests.
+/// The Undo button, the assistant toggle and the Settings cog, for tests.
 const undoButtonKey = Key('undo');
 const assistantButtonKey = Key('assistant-toggle');
+const settingsButtonKey = Key('settings-cog');
 
 /// The `DEV` label the dev flavor wears at all times (ADR 0019).
 const devLabelKey = Key('dev-label');
@@ -39,7 +42,9 @@ class SaiMark extends StatelessWidget {
 }
 
 /// The bar across the top: the mark and the archive line on the left,
-/// the last notice, then Undo and the assistant toggle on the right.
+/// the last notice, then Undo, the assistant toggle and the Settings cog
+/// on the right — the cog is the pointer's way to what ⌘, and the sai
+/// menu open (#96), through the same command.
 class TopBar extends ConsumerWidget {
   const TopBar({super.key, required this.projection});
 
@@ -83,11 +88,15 @@ class TopBar extends ConsumerWidget {
             ),
           ],
           const SizedBox(width: 16),
-          Text(
-            'ARCHIVE · $lines ${lines == 1 ? 'LINE' : 'LINES'}',
-            style: text.meta,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          // Flexible, so a narrow window squeezes the archive line before
+          // anything on the right is pushed out of the bar.
+          Flexible(
+            child: Text(
+              'ARCHIVE · $lines ${lines == 1 ? 'LINE' : 'LINES'}',
+              style: text.meta,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(child: NoticeLine(ref.watch(noticeProvider))),
@@ -114,6 +123,13 @@ class TopBar extends ConsumerWidget {
             ),
             icon: Container(width: 8, height: 8, color: SaiColors.red),
             label: Text(shown ? 'Assistant ⌘J' : 'Assistant ⌘J'),
+          ),
+          const SizedBox(width: 12),
+          CogButton(
+            key: settingsButtonKey,
+            label: 'Settings',
+            color: SaiColors.ink,
+            onPressed: () => commands.showSettings(SettingsSection.general),
           ),
         ],
       ),
