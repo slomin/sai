@@ -212,9 +212,12 @@ The full story — what is verified, where the kept copies live,
 rollback — is in [docs/release](docs/release/README.md#the-dogfood-install).
 
 The app's look is the Sai visual system (`references/gui_design_v1_0/`): the
-tokens live in `apps/sai_app/lib/theme/`, and the two families it sets in —
-Space Grotesk and JetBrains Mono, both SIL OFL — ship as assets under
-`apps/sai_app/fonts/` beside their licences. Light appearance only for now.
+tokens live in `apps/sai_app/lib/theme/`. Functional text — task titles,
+body copy, the chat, inputs and controls — sets in the macOS system face,
+named to Flutter as `CupertinoSystemText` and never bundled (ADR 0020);
+the two families that ship as assets under `apps/sai_app/fonts/` beside
+their SIL OFL licences are Space Grotesk, for the brand and display roles,
+and JetBrains Mono, for metadata and code. Light appearance only for now.
 
 ## Chat
 
@@ -233,7 +236,12 @@ thinks before it answers (LM Studio's reasoning models do) is asked not
 to unless the reasoning switch is on — in Settings › Providers, View ›
 **Enable Reasoning** (⌘R), or `sai_tui reasoning on`; off is faster and
 the default. On, the thinking streams too, is recorded on the response
-line, and shows dimmed above the answer (`thinking…` while it waits).
+line, and shows dimmed above the answer. While an answer is awaited the
+app shows three dots breathing in turn (a still *Thinking* under Reduce
+Motion; the TUI keeps its `…`), then the answer with a thin cursor as
+it streams. The app's transcript selects like any text — drag with the
+mouse, ⌘C copies the words exactly, a fence's copy control takes the
+code alone.
 
 ## Importing from Things 3
 
@@ -296,8 +304,9 @@ gitleaks git . --config .gitleaks.toml   # no secret in any commit
 dependency.
 
 The app's widget tests compare goldens under `apps/sai_app/test/goldens/`
-(macOS only, where CI runs them; `test/flutter_test_config.dart` loads the
-bundled fonts first so the pixels are deterministic). A change that moves
+(macOS only, where CI runs them — on the `macos-26` image; `test/flutter_test_config.dart` loads the
+bundled fonts and the system face from `/System/Library/Fonts` first so
+the pixels are deterministic on that release, ADR 0020). A change that moves
 pixels re-records them deliberately, one file at a time, and the PNG diff is
 reviewed by eye — a regenerated golden asserts the new pixels are right, it
 is not a way to turn a red test green:

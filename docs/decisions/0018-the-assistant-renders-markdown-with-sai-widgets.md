@@ -1,6 +1,6 @@
 # 18. The assistant renders Markdown with Sai widgets
 
-Date: 2026-08-27 · Status: accepted · Issue: #39 · Builds on: [0007](0007-provider-traffic-is-three-events-per-call.md)
+Date: 2026-08-27 · Amended: 2026-08-30 (#99) · Status: accepted · Issue: #39 · Builds on: [0007](0007-provider-traffic-is-three-events-per-call.md)
 
 ## Context
 
@@ -39,9 +39,27 @@ workspace is deliberately dependency-lean.
   a trailing line of nothing but
   backticks or tildes is held back while the answer streams (it is
   the closing fence arriving, whatever its character and length); and the cursor is
-  appended to the rendered spans, never to the source, where ```▌
-  would become a fence's language. A finished turn parses once — the
-  AST lives in widget state.
+  appended to the rendered spans, never to the source, where a fence
+  line followed by it would become a fence's language. A finished turn
+  parses once — the AST lives in widget state.
+- **The cursor is a thin bar, and the transcript is selectable** (#99).
+  The streaming cursor is a hair space and a one-eighth block in the
+  mono face, in the accent, at the body's line height: it stands clear
+  of the last glyph and cannot change a line's height. It stays a span
+  — never a `WidgetSpan` — so the finders keep matching plain text.
+  The transcript sits under a `SelectionArea`: a mouse drag selects
+  across a person's plain text and the rendered spans alike and ⌘C
+  copies exactly that text; a fence's label and copy control are
+  chrome, excluded from selection. Flutter joins the selected pieces of
+  adjacent widgets back to back, so a `SelectionJoin` container (a
+  `StaticSelectionContainerDelegate` that joins with a separator) sits
+  around the rows inside the list — the scroll view is one selectable
+  to its parent — and around each turn, each Markdown body and each
+  list: a copy reads as the transcript does, a line break after an
+  eyebrow, a blank line between paragraphs and between turns, one
+  item per line after its marker. Between a question and its first
+  delta the band shows three dots that breathe in turn; under Reduce
+  Motion they hold still beside the word *Thinking*.
 - **What CommonMark itself reflows is accepted:** `**bo` is literal
   until the `**` closes, and a `---` under a paragraph turns it into a
   heading after the fact. Disabling setext headings would mean

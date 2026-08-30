@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sai_app/theme/sai_tokens.dart';
 
 /// Loads the bundled families before any test, so text lays out with the
 /// real glyphs and the goldens under `test/goldens/` are deterministic.
@@ -16,6 +17,13 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
     'fonts/JetBrainsMono-Medium.ttf',
     'fonts/JetBrainsMono-Bold.ttf',
   ]);
+  // The system face (#99, ADR 0020) is Apple's and never bundled: the
+  // tests read it from the OS, under the family the theme names, so
+  // functional text in a golden is the real thing. macOS only — CI's
+  // app job runs there.
+  if (Platform.isMacOS) {
+    await _load(SaiFonts.sans, ['/System/Library/Fonts/SFNS.ttf']);
+  }
   await testMain();
 }
 

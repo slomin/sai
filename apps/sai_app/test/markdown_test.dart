@@ -3,6 +3,7 @@
 /// pump [SaiMarkdown] directly — no app, no archive.
 library;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -116,19 +117,32 @@ void main() {
       'nothing else', (tester) async {
     await pumpMarkdown(tester, 'first\n\nsecond', caret: true);
     expect(find.text('first'), findsOneWidget);
-    expect(find.text('second▌'), findsOneWidget);
+    expect(find.text('second$caretGlyph'), findsOneWidget);
     final streaming = tester.getSize(find.byType(SaiMarkdown));
     await pumpMarkdown(tester, 'first\n\nsecond', caret: false);
     expect(find.text('second'), findsOneWidget);
-    expect(find.textContaining('▌'), findsNothing);
+    expect(find.textContaining(caretGlyph), findsNothing);
     expect(tester.getSize(find.byType(SaiMarkdown)).height, streaming.height);
+  });
+
+  testWidgets('the caret is a thin red bar set off from the last glyph', (
+    tester,
+  ) async {
+    await pumpMarkdown(tester, 'word', caret: true);
+    final spans = spansOf(tester, 'word$caretGlyph');
+    final caret = spans[caretGlyph]!;
+    expect(caretGlyph, startsWith('\u200a'));
+    expect(caret.fontFamily, SaiFonts.mono);
+    expect(caret.color, SaiColors.red);
+    expect(caret.height, _body.height);
+    expect(spans['word']!.fontFamily, _body.fontFamily);
   });
 
   testWidgets('the caret rides a list from inside its last item', (
     tester,
   ) async {
     await pumpMarkdown(tester, '- alpha\n- beta', caret: true);
-    expect(find.text('beta▌'), findsOneWidget);
+    expect(find.text('beta$caretGlyph'), findsOneWidget);
   });
 
   testWidgets('fenced code gets a card, a label and highlighting', (
@@ -212,7 +226,7 @@ void main() {
   ) async {
     await pumpMarkdown(tester, 'Here:\n\n```\nfoo', caret: true);
     expect(find.text('TEXT'), findsOneWidget);
-    expect(find.text('foo▌'), findsOneWidget);
+    expect(find.text('foo$caretGlyph'), findsOneWidget);
   });
 
   testWidgets('the reference sample matches its golden', (tester) async {
@@ -244,6 +258,166 @@ no language here
     );
   });
 
+  /// Sweeps the mouse from [first] to [last] under a [SelectionArea] around
+  /// [source] and returns what ⌘C put on the clipboard.
+  Future<String?> copySweep(
+    WidgetTester tester,
+    String source, {
+    required String first,
+    required String last,
+    bool caret = false,
+  }) async {
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        calls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: saiTheme(),
+        home: Scaffold(
+          body: SelectionArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: SaiMarkdown(source, style: _body, caret: caret),
+            ),
+          ),
+        ),
+      ),
+    );
+    final gesture = await tester.startGesture(
+      tester.getTopLeft(find.textContaining(first)) - const Offset(2, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(2, 0));
+    await tester.pump();
+    await gesture.moveTo(
+      tester.getBottomRight(find.textContaining(last)) + const Offset(4, 0),
+    );
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+    final copy = calls.where((c) => c.method == 'Clipboard.setData');
+    return copy.isEmpty ? null : (copy.last.arguments as Map)['text'] as String;
+  }
+
+  final macOS = TargetPlatformVariant.only(TargetPlatform.macOS);
+
+  testWidgets('a loose list item copies its blocks as paragraphs', (
+    tester,
+  ) async {
+    expect(
+      await copySweep(
+        tester,
+        '1. Install it:\n\n   ```sh\n   brew install sai\n   ```\n\n'
+        '2. Then run it\n\n> quoted\n>\n> twice',
+        first: 'Install',
+        last: 'twice',
+      ),
+      '1. Install it:\n\nbrew install sai\n2. Then run it\n\nquoted\n\ntwice',
+    );
+  }, variant: macOS);
+
+  testWidgets('a copy taken mid-answer carries no cursor', (tester) async {
+    expect(
+      await copySweep(
+        tester,
+        'One step so far',
+        first: 'One',
+        last: 'far',
+        caret: true,
+      ),
+      'One step so far',
+    );
+  }, variant: macOS);
+
+  testWidgets('a selection across blocks copies paragraphs and items', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        calls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: saiTheme(),
+        home: Scaffold(
+          body: SelectionArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: SaiMarkdown(
+                '# Plan\n\nOne **bold** step.\n\n1. first\n2. second\n\n'
+                '```\ncode\n```',
+                style: _body,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final gesture = await tester.startGesture(
+      tester.getTopLeft(find.text('Plan')) - const Offset(2, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(2, 0));
+    await tester.pump();
+    await gesture.moveTo(
+      tester.getBottomRight(find.text('code')) + const Offset(4, 0),
+    );
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+    final copy = calls.singleWhere((c) => c.method == 'Clipboard.setData');
+    expect(
+      (copy.arguments as Map)['text'],
+      'Plan\n\nOne bold step.\n\n1. first\n2. second\n\ncode',
+    );
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('a streaming turn matches its golden', (tester) async {
+    await pumpMarkdown(
+      tester,
+      '## Half an answer\n\nThe first paragraph is whole, the second is '
+      'still arriving with a `span` in it and the cursor after',
+      caret: true,
+    );
+    await expectLater(
+      find.byType(SaiMarkdown),
+      matchesGoldenFile('goldens/assistant-streaming.png'),
+    );
+  });
+
   testWidgets('a tilde fence holds its partial closing line too', (
     tester,
   ) async {
@@ -265,12 +439,12 @@ no language here
     tester,
   ) async {
     await pumpMarkdown(tester, 'text\n\n***', caret: true);
-    expect(find.text('text▌'), findsOneWidget);
+    expect(find.text('text$caretGlyph'), findsOneWidget);
   });
 
   testWidgets('a whitespace-only stream still shows the caret', (tester) async {
     await pumpMarkdown(tester, '\n', caret: true);
-    expect(find.text('▌'), findsOneWidget);
+    expect(find.text(caretGlyph), findsOneWidget);
   });
 
   testWidgets('an absurd fence tag ellipsises instead of overflowing', (

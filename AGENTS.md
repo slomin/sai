@@ -40,6 +40,9 @@ the layout and the toolchain; this file has the rules.
   screenshot per step; put the results, not the claim, in the PR. A fake
   provider with a dummy loopback `endpoint` gets the dialog's `Test`
   button without dialling anything.
+- The built-in `fake` streams at once; `SAI_FAKE_DELTA_MS=60` in the
+  app's environment makes it pause before each delta, so a smoke can
+  see the waiting state and the stream (#99).
 - Nothing in a smoke touches the login Keychain unless the ticket is
   about keys — and then say so before launching. An agent's smoke is
   keyless (the `fake` provider, `lan.py`); a smoke against a cloud

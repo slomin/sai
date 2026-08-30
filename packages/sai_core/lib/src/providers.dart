@@ -380,7 +380,10 @@ String credentialSuffix(CredentialStatus status, ProviderConfig? config) =>
 /// `llm/builtins.dart` lists them; the test harnesses override this with
 /// the fake alone.
 final builtinLlmsProvider = Provider<List<LlmProvider Function()>>(
-  (ref) => builtinLlms(ref.watch(secretStoreProvider)),
+  (ref) => builtinLlms(
+    ref.watch(secretStoreProvider),
+    fakeDelta: fakeDeltaFrom(ref.watch(environmentProvider)),
+  ),
 );
 
 /// What a first run selects (#23): LM Studio on this Mac. Applied only

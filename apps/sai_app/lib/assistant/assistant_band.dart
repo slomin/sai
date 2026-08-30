@@ -9,8 +9,19 @@ import '../theme/sai_tokens.dart';
 import 'chat_composer.dart';
 import 'chat_keys.dart';
 import 'markdown/sai_markdown.dart';
+import 'selection_join.dart';
+import 'waiting_dots.dart';
 
 export 'chat_keys.dart';
+
+/// The band's selection colours (#99): the transcript's highlight and
+/// the composer's caret in the band's own light, since the app theme's
+/// ink primary would vanish on the ink surface.
+final bandSelectionTheme = TextSelectionThemeData(
+  cursorColor: SaiColors.sheetText,
+  selectionColor: SaiColors.sheetText.withValues(alpha: 0.28),
+  selectionHandleColor: SaiColors.sheetText,
+);
 
 /// What the empty band says.
 const chatEmptyHint =
@@ -194,43 +205,85 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
     final state = ref.watch(chatProvider);
     final reasoningOn = ref.watch(reasoningProvider);
     final text = context.saiText;
-    return Column(
-      children: [
-        Expanded(
-          child: state.turns.isEmpty && !state.busy
-              ? Align(
-                  alignment: Alignment.topLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-                    child: Text(
-                      chatEmptyHint,
-                      style: text.small.copyWith(color: SaiColors.sheetDim),
+    // The band is ink on a light theme: the selection highlight and the
+    // caret take the band's own light, for the transcript and the
+    // composer alike.
+    return TextSelectionTheme(
+      data: bandSelectionTheme,
+      child: Column(
+        children: [
+          Expanded(
+            child: state.turns.isEmpty && !state.busy
+                ? Align(
+                    alignment: Alignment.topLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+                      child: Text(
+                        chatEmptyHint,
+                        style: text.small.copyWith(color: SaiColors.sheetDim),
+                      ),
+                    ),
+                  )
+                // The transcript is under the desktop selection system
+                // (#99): a mouse drag selects across a person's plain text
+                // and the rendered Markdown alike, ⌘C copies it; touch and
+                // the wheel still scroll.
+                : SelectionArea(
+                    child: ListView(
+                      key: chatTranscriptKey,
+                      controller: _scroll,
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      children: [
+                        SelectionJoin(
+                          separator: '\n\n',
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // One boundary per turn, as the list gave
+                              // each child: a delta repaints its row.
+                              for (final turn in state.turns)
+                                RepaintBoundary(
+                                  child: _TurnRow(
+                                    turn,
+                                    reasoningOn: reasoningOn,
+                                  ),
+                                ),
+                              if (state.busy)
+                                _Row(
+                                  who: 'sai',
+                                  reasoning: reasoningOn
+                                      ? state.reasoning
+                                      : null,
+                                  text: state.streaming!,
+                                  leading: state.streaming!.isEmpty
+                                      ? WaitingDots(
+                                          key: chatWaitingKey,
+                                          // Named after what is shown:
+                                          // thinking the setting hides
+                                          // stays unmentioned.
+                                          label:
+                                              reasoningOn &&
+                                                  state.reasoning != null
+                                              ? 'sai is thinking'
+                                              : 'Waiting for sai',
+                                        )
+                                      : null,
+                                  markdown: true,
+                                  caret: true,
+                                  note: state.tasksWithheld
+                                      ? tasksWithheldWord
+                                      : null,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                )
-              : ListView(
-                  key: chatTranscriptKey,
-                  controller: _scroll,
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  children: [
-                    for (final turn in state.turns)
-                      _TurnRow(turn, reasoningOn: reasoningOn),
-                    if (state.busy)
-                      _Row(
-                        who: 'sai',
-                        reasoning: reasoningOn ? state.reasoning : null,
-                        text: state.streaming!.isEmpty
-                            ? (state.reasoning == null ? '…' : 'thinking…')
-                            : state.streaming!,
-                        markdown: state.streaming!.isNotEmpty,
-                        caret: state.streaming!.isNotEmpty,
-                        note: state.tasksWithheld ? tasksWithheldWord : null,
-                      ),
-                  ],
-                ),
-        ),
-        const ChatComposer(),
-      ],
+          ),
+          const ChatComposer(),
+        ],
+      ),
     );
   }
 }
@@ -262,6 +315,7 @@ class _Row extends StatelessWidget {
     required this.text,
     this.markdown = false,
     this.caret = false,
+    this.leading,
     this.reasoning,
     this.note,
     this.error,
@@ -276,6 +330,9 @@ class _Row extends StatelessWidget {
 
   /// Whether the streaming cursor follows the last block.
   final bool caret;
+
+  /// What stands where the answer will: the waiting dots (#99).
+  final Widget? leading;
 
   /// The model's thinking, shown dimmed above the answer when the
   /// setting is on; null hides it.
@@ -296,32 +353,36 @@ class _Row extends StatelessWidget {
     final mine = who == 'you';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            (note == null ? who : '$who · $note'),
-            style: styles.eyebrowDim.copyWith(
-              color: mine ? SaiColors.sheetDim : SaiColors.red,
-            ),
-          ),
-          const SizedBox(height: 4),
-          if (reasoning case final reasoning?)
+      child: SelectionJoin(
+        separator: '\n',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Text(
-              reasoning,
-              key: chatReasoningKey,
-              style: styles.small.copyWith(
-                color: SaiColors.sheetDim,
-                fontStyle: FontStyle.italic,
+              (note == null ? who : '$who · $note'),
+              style: styles.eyebrowDim.copyWith(
+                color: mine ? SaiColors.sheetDim : SaiColors.red,
               ),
             ),
-          if (text.isNotEmpty)
-            markdown
-                ? SaiMarkdown(text, style: bodyStyle, caret: caret)
-                : Text(text, style: bodyStyle),
-          if (error case final error?)
-            Text(error, style: styles.small.copyWith(color: SaiColors.red)),
-        ],
+            const SizedBox(height: 4),
+            if (reasoning case final reasoning?)
+              Text(
+                reasoning,
+                key: chatReasoningKey,
+                style: styles.small.copyWith(
+                  color: SaiColors.sheetDim,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ?leading,
+            if (text.isNotEmpty)
+              markdown
+                  ? SaiMarkdown(text, style: bodyStyle, caret: caret)
+                  : Text(text, style: bodyStyle),
+            if (error case final error?)
+              Text(error, style: styles.small.copyWith(color: SaiColors.red)),
+          ],
+        ),
       ),
     );
   }

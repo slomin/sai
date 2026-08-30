@@ -36,7 +36,6 @@ class InspectorFieldRow extends StatelessWidget {
                 style: context.saiText.eyebrowDim.copyWith(
                   fontFamily: SaiFonts.sans,
                   fontWeight: FontWeight.w600,
-                  fontVariations: const [FontVariation.weight(600)],
                   letterSpacing: 1.4,
                 ),
                 softWrap: true,
@@ -82,12 +81,7 @@ class InspectorValueButton extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
             child: Text(
               value,
-              style:
-                  style ??
-                  text.body.copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontVariations: const [FontVariation.weight(600)],
-                  ),
+              style: style ?? text.body.copyWith(fontWeight: FontWeight.w600),
               softWrap: true,
             ),
           ),

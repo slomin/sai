@@ -23,9 +23,20 @@ const lanModel = 'sai-qwen38-27b-unsloth-q6k-fullctx-generic-mtp';
 /// A file that says `"llm": null` means none and is left alone.
 const defaultLlmId = lmStudioProviderId;
 
+/// How long the built-in fake pauses before each delta: `SAI_FAKE_DELTA_MS`
+/// in the environment, for a smoke that wants to see the wait and the
+/// stream (#99); zero — at once — when unset or not a count.
+Duration fakeDeltaFrom(Map<String, String> environment) {
+  final ms = int.tryParse(environment['SAI_FAKE_DELTA_MS'] ?? '') ?? 0;
+  return Duration(milliseconds: ms < 0 ? 0 : ms);
+}
+
 /// The built-ins as constructors, in the order the clients list them.
-List<LlmProvider Function()> builtinLlms(SecretStore secrets) => [
-  FakeLlmProvider.new,
+List<LlmProvider Function()> builtinLlms(
+  SecretStore secrets, {
+  Duration fakeDelta = Duration.zero,
+}) => [
+  () => FakeLlmProvider(delta: fakeDelta),
   () => OpenAiCompatibleProvider(
     id: lmStudioProviderId,
     endpoint: lmStudioEndpoint,

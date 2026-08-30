@@ -51,7 +51,7 @@ void main() {
   });
 
   group('the theme', () {
-    testWidgets('is light, in Space Grotesk, over the near-white ground', (
+    testWidgets('is light, in the system face, over the near-white ground', (
       tester,
     ) async {
       await pumpApp(tester);
@@ -64,9 +64,50 @@ void main() {
       expect(theme.extension<SaiText>(), isNotNull);
     });
 
-    testWidgets('the sans styles set the variable weight axis', (tester) async {
-      final bold = sans(14, weight: FontWeight.w700);
-      expect(bold.fontVariations, [const FontVariation.weight(700)]);
+    testWidgets('display roles keep Space Grotesk with its weight axis; '
+        'functional roles take the system face (#99)', (tester) async {
+      const text = SaiText();
+      for (final role in [text.title, text.emptyTitle, text.brand]) {
+        expect(role.fontFamily, SaiFonts.display);
+        expect(role.fontVariations, [const FontVariation.weight(700)]);
+      }
+      for (final role in [
+        text.taskTitle,
+        text.body,
+        text.bodyDim,
+        text.note,
+        text.small,
+        text.sidebar,
+        text.button,
+      ]) {
+        expect(role.fontFamily, SaiFonts.sans);
+        expect(role.fontVariations, isNull);
+      }
+      expect(SaiFonts.sans, 'CupertinoSystemText');
+      final theme = saiTheme();
+      expect(theme.textTheme.bodyMedium?.fontFamily, SaiFonts.sans);
+      expect(theme.inputDecorationTheme.hintStyle?.fontFamily, SaiFonts.sans);
+      expect(text.meta.fontFamily, SaiFonts.mono);
+    });
+
+    testWidgets('the loaded system face is the real one, not Ahem', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: saiTheme(),
+          home: Row(
+            children: [
+              Text('iiii', style: sans(40)),
+              Text('MMMM', style: sans(40)),
+            ],
+          ),
+        ),
+      );
+      expect(
+        tester.getSize(find.text('iiii')).width,
+        lessThan(tester.getSize(find.text('MMMM')).width),
+      );
     });
   });
 

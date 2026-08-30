@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'sai_tokens.dart';
 
-/// Space Grotesk at [weight]: the variable font needs the axis set as
-/// well as the weight, or every style renders at the default instance.
+/// The system sans at [weight]: functional text (#99, ADR 0020).
 TextStyle sans(
   double size, {
   FontWeight weight = FontWeight.w400,
@@ -12,6 +11,24 @@ TextStyle sans(
   Color color = SaiColors.ink,
 }) => TextStyle(
   fontFamily: SaiFonts.sans,
+  fontSize: size,
+  fontWeight: weight,
+  height: height,
+  letterSpacing: letterSpacing,
+  color: color,
+);
+
+/// Space Grotesk at [weight], for the brand and display roles: the
+/// variable font needs the axis set as well as the weight, or every
+/// style renders at the default instance.
+TextStyle display(
+  double size, {
+  FontWeight weight = FontWeight.w700,
+  double height = 1.3,
+  double? letterSpacing,
+  Color color = SaiColors.ink,
+}) => TextStyle(
+  fontFamily: SaiFonts.display,
   fontSize: size,
   fontWeight: weight,
   fontVariations: [FontVariation.weight(weight.value.toDouble())],
@@ -49,18 +66,22 @@ class SaiText extends ThemeExtension<SaiText> {
   TextStyle get meta => mono(11, letterSpacing: 0.9);
   TextStyle get chip => mono(10, letterSpacing: 0.8, color: SaiColors.inkDim);
 
-  TextStyle get title =>
-      sans(24, weight: FontWeight.w700, height: 1.1, letterSpacing: -0.5);
-  TextStyle get emptyTitle =>
-      sans(22, weight: FontWeight.w700, height: 1.15, letterSpacing: -0.4);
+  /// The display roles — a pane's headline, an empty state's, the
+  /// wordmark — keep Space Grotesk; everything functional is [sans].
+  TextStyle get title => display(24, height: 1.1, letterSpacing: -0.5);
+  TextStyle get emptyTitle => display(22, height: 1.15, letterSpacing: -0.4);
+
+  /// A task's title where it is edited — functional text at a
+  /// headline's size.
+  TextStyle get taskTitle =>
+      sans(24, weight: FontWeight.w700, height: 1.1, letterSpacing: -0.3);
   TextStyle get body => sans(14);
   TextStyle get bodyDim => sans(14, color: SaiColors.inkDim);
   TextStyle get note => sans(13, color: SaiColors.inkDim, height: 1.4);
   TextStyle get small => sans(13);
   TextStyle get sidebar => sans(14, weight: FontWeight.w500);
   TextStyle get button => sans(14, weight: FontWeight.w600);
-  TextStyle get brand =>
-      sans(20, weight: FontWeight.w700, height: 1, letterSpacing: -0.4);
+  TextStyle get brand => display(20, height: 1, letterSpacing: -0.4);
 
   @override
   SaiText copyWith() => const SaiText();

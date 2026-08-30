@@ -5,6 +5,7 @@ import 'package:flutter/painting.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import '../../theme/sai_tokens.dart';
+import 'caret.dart';
 
 /// The styles the renderer draws with, derived from the transcript's
 /// base body style. The rule that keeps streaming stable: no inline
@@ -18,10 +19,7 @@ class MarkdownStyles {
 
   /// Headings are stronger paragraphs, never larger ones: same size,
   /// heavier weight, so a `#` cannot reflow the lines under it.
-  late final TextStyle heading = body.copyWith(
-    fontWeight: FontWeight.w700,
-    fontVariations: const [FontVariation('wght', 700)],
-  );
+  late final TextStyle heading = body.copyWith(fontWeight: FontWeight.w700);
 
   /// The inline code chip: mono, one point smaller on the same line
   /// height, so its line box never exceeds the paragraph's.
@@ -39,12 +37,19 @@ class MarkdownStyles {
     fontSize: (body.fontSize ?? 14) - 1,
   );
 
-  /// Bold and italic, as deltas Flutter merges into the surround.
-  /// Space Grotesk is variable: weight needs the axis set too.
-  static const strong = TextStyle(
-    fontWeight: FontWeight.w700,
-    fontVariations: [FontVariation('wght', 700)],
+  /// The streaming cursor, [caretGlyph] in the accent: the body's line
+  /// height, so the bar never grows the line it ends.
+  late final TextSpan caret = TextSpan(
+    text: caretGlyph,
+    style: TextStyle(
+      fontFamily: SaiFonts.mono,
+      height: body.height,
+      color: SaiColors.red,
+    ),
   );
+
+  /// Bold and italic, as deltas Flutter merges into the surround.
+  static const strong = TextStyle(fontWeight: FontWeight.w700);
   static const em = TextStyle(fontStyle: FontStyle.italic);
 
   /// A link is named in the accent, not underlined — an underline

@@ -8,6 +8,8 @@ import 'package:flutter/widgets.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import 'markdown_blocks.dart';
+
+export 'caret.dart';
 import 'markdown_inline.dart';
 
 class SaiMarkdown extends StatefulWidget {
@@ -19,8 +21,9 @@ class SaiMarkdown extends StatefulWidget {
   });
 
   /// The Markdown exactly as the model wrote it. The streaming cursor
-  /// is drawn by the renderer, never appended here: ```▌ would parse
-  /// as a fence whose language is the cursor.
+  /// is drawn by the renderer, never appended here: a fence line with
+  /// the cursor after it would parse as a fence whose language is the
+  /// cursor.
   final String source;
 
   /// The base body style every block derives from.
@@ -51,14 +54,10 @@ class _SaiMarkdownState extends State<SaiMarkdown> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: markdownBlocks(
-        _nodes,
-        MarkdownStyles(widget.style),
-        caret: widget.caret,
-      ),
+    return markdownColumn(
+      _nodes,
+      MarkdownStyles(widget.style),
+      caret: widget.caret,
     );
   }
 }

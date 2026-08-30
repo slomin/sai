@@ -1,3 +1,4 @@
+import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
 
@@ -17,6 +18,36 @@ void main() {
     final result = await fake.start(ask('hello')).done;
     expect(result.text, 'Lorem ipsum dolor sit amet,');
     expect(loremIpsum(70).split(' '), hasLength(70));
+  });
+
+  group('the built-in fake (#99)', () {
+    test('streams at once unless the environment asks for a pause', () {
+      expect(fakeDeltaFrom(const {}), Duration.zero);
+      expect(
+        fakeDeltaFrom(const {'SAI_FAKE_DELTA_MS': '60'}),
+        const Duration(milliseconds: 60),
+      );
+      expect(fakeDeltaFrom(const {'SAI_FAKE_DELTA_MS': 'slow'}), Duration.zero);
+      expect(fakeDeltaFrom(const {'SAI_FAKE_DELTA_MS': '-5'}), Duration.zero);
+    });
+
+    test('is built with the delta the environment names', () {
+      final container = ProviderContainer(
+        overrides: [
+          environmentProvider.overrideWithValue(const {
+            'SAI_FAKE_DELTA_MS': '60',
+          }),
+          secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+        ],
+      );
+      addTearDown(container.dispose);
+      final fake =
+          container.read(builtinLlmsProvider).first() as FakeLlmProvider;
+      expect(fake.delta, const Duration(milliseconds: 60));
+      final plain =
+          builtinLlms(InMemorySecretStore()).first() as FakeLlmProvider;
+      expect(plain.delta, Duration.zero);
+    });
   });
 
   llmProviderContract(
