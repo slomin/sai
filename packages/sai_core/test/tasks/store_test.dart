@@ -453,6 +453,35 @@ void main() {
       expect(store.projection.areaOrder, before.areaOrder);
     });
 
+    test('a deleted anchor refuses each container reorder and appends '
+        'nothing (#98)', () async {
+      final area = await store.createArea(title: 'A');
+      final gone = await store.createArea(title: 'gone');
+      final p1 = await store.createProject(title: 'p1', area: area);
+      final p2 = await store.createProject(title: 'p2', area: area);
+      final h1 = await store.createHeading(project: p1, title: 'h1');
+      final h2 = await store.createHeading(project: p1, title: 'h2');
+      await store.deleteArea(gone);
+      await store.deleteProject(p2);
+      await store.deleteHeading(h2);
+      final before = store.projection.toJson();
+      final lines = logLines().length;
+      await expectLater(
+        store.reorderArea(area, after: gone),
+        throwsA(isA<TaskProjectionError>()),
+      );
+      await expectLater(
+        store.reorderProject(p1, after: p2),
+        throwsA(isA<TaskProjectionError>()),
+      );
+      await expectLater(
+        store.reorderHeading(h1, after: h2),
+        throwsA(isA<TaskProjectionError>()),
+      );
+      expect(logLines(), hasLength(lines));
+      expect(store.projection.toJson(), before);
+    });
+
     test('archiveProject appends exactly the minimal line and a create into '
         'an archived area appends nothing', () async {
       final area = await store.createArea(title: 'A');

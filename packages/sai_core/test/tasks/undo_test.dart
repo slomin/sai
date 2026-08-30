@@ -463,6 +463,21 @@ void main() {
       expect(task.notes, 'keep me');
     });
 
+    test(
+      'a schedule edit and its undo leave the deadline alone (#98)',
+      () async {
+        const deadline = CalendarDate(2026, 9, 1);
+        final id = await store.createTask(title: 'x', deadline: deadline);
+        await store.editTask(id, when: const Patch(TaskWhen.someday));
+        expect(store.projection.task(id)!.when, TaskWhen.someday);
+        expect(store.projection.task(id)!.deadline, deadline);
+        expect(logLines().last, isNot(contains('deadline')));
+        await store.undo();
+        expect(store.projection.task(id)!.when, TaskWhen.none);
+        expect(store.projection.task(id)!.deadline, deadline);
+      },
+    );
+
     test('undoing a move restores the prior placement', () async {
       final project = await store.createProject(title: 'P');
       final id = await store.createTask(title: 'x', project: project);
