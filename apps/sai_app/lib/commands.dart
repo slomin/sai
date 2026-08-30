@@ -7,7 +7,8 @@ import 'package:sai_core/sai_core.dart';
 import 'find/quick_find.dart';
 import 'settings/archive_page.dart' show revealArchiveInFinder;
 import 'settings/settings_screen.dart';
-import 'widgets/sai_dialog.dart';
+import 'workspace/move_sheet.dart';
+import 'workspace/task_menu.dart';
 import 'workspace/task_commands.dart';
 
 /// Focus for the quick-capture field: Cmd+N and File > New Task land
@@ -102,6 +103,9 @@ class AppCommands {
     required this.open,
     required this.select,
     required this.toggleInspector,
+    required this.moveSelected,
+    required this.moveSelectedUp,
+    required this.moveSelectedDown,
     required this.completeSelected,
     required this.cancelSelected,
     required this.deleteSelected,
@@ -128,6 +132,9 @@ class AppCommands {
       open: (result) => _open(container, result),
       select: container.read(selectedSectionProvider.notifier).select,
       toggleInspector: () => _toggleInspector(container),
+      moveSelected: () => _moveSelected(context, container),
+      moveSelectedUp: () => _nudgeSelected(container, -1),
+      moveSelectedDown: () => _nudgeSelected(container, 1),
       completeSelected: () => _completeSelected(container),
       cancelSelected: () => _cancelSelected(container),
       deleteSelected: () => _deleteSelected(context, container),
@@ -174,6 +181,14 @@ class AppCommands {
   /// Opens the inspector on the first row of the list when nothing is
   /// selected, or closes it (⌘I). Selection is the inspector's state.
   final VoidCallback toggleInspector;
+
+  /// Task › Move / Schedule… (#98): the sheet on the selected task.
+  final VoidCallback moveSelected;
+
+  /// Task › Move up / Move down (#98), ⌘↑ and ⌘↓: one step in the list
+  /// being shown, where it can be reordered.
+  final VoidCallback moveSelectedUp;
+  final VoidCallback moveSelectedDown;
 
   /// The Task menu (#74): the selected task, or nothing — and nothing
   /// while the assistant holds focus (#76), whichever way the command
@@ -265,6 +280,28 @@ class AppCommands {
     return id == null ? null : container.read(tasksProvider).value?.task(id);
   }
 
+  static Future<void> _moveSelected(
+    BuildContext context,
+    ProviderContainer container,
+  ) async {
+    final task = _selectedTask(container);
+    // A task in the Trash is restored first; it has no place to go.
+    if (task == null || task.deletedAt != null) return;
+    await showMoveSheet(context, task.id);
+  }
+
+  static Future<void> _nudgeSelected(
+    ProviderContainer container,
+    int by,
+  ) async {
+    final task = _selectedTask(container);
+    if (task == null || task.deletedAt != null) return;
+    final section = container.read(selectedSectionProvider);
+    final view = container.read(taskViewProvider(section)).value;
+    if (view == null) return;
+    await container.read(taskCommandsProvider).nudge(task.id, by, view: view);
+  }
+
   static Future<void> _completeSelected(ProviderContainer container) async {
     final task = _selectedTask(container);
     // A task in the Trash keeps its status until it is restored.
@@ -290,14 +327,7 @@ class AppCommands {
   ) async {
     final task = _selectedTask(container);
     if (task == null || task.deletedAt != null) return;
-    final answer = await confirmAction(
-      context,
-      eyebrow: 'Task',
-      title: 'Delete “${task.title}”?',
-      body: 'It moves to the Trash; the archive keeps its history.',
-      confirm: 'Delete',
-    );
-    if (!answer.confirmed) return;
+    if (!await confirmDeleteTask(context, task)) return;
     // The row below takes the selection (else the one above, else the row
     // standing where the task stood), so the keyboard stays in the list
     // rather than falling back to the sidebar — once the delete has

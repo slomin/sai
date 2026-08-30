@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
+import '../workspace/ordering.dart';
 import '../workspace/task_commands.dart';
 
 /// The organisation commands (#74): areas, projects, headings and tags —
@@ -77,12 +78,12 @@ class OrganiseCommands {
   /// false at either end.
   Future<bool> nudgeArea(AreaId area, int by) {
     final ids = [for (final a in _projection.liveAreas()) a.id];
-    final after = _anchor(ids, area, by);
-    if (after == _noMove) return Future.value(false);
+    final anchor = nudgeAnchor(ids, area, by);
+    if (!anchor.moves) return Future.value(false);
     return runStoreCommand(
       _ref,
       'reorder',
-      (store) => store.reorderArea(area, after: after),
+      (store) => store.reorderArea(area, after: anchor.after),
     );
   }
 
@@ -97,12 +98,12 @@ class OrganiseCommands {
       for (final p in projection.liveProjects())
         if (projection.groupOf(p) == group) p.id,
     ];
-    final after = _anchor(ids, project, by);
-    if (after == _noMove) return Future.value(false);
+    final anchor = nudgeAnchor(ids, project, by);
+    if (!anchor.moves) return Future.value(false);
     return runStoreCommand(
       _ref,
       'reorder',
-      (store) => store.reorderProject(project, after: after),
+      (store) => store.reorderProject(project, after: anchor.after),
     );
   }
 
@@ -111,12 +112,12 @@ class OrganiseCommands {
     final target = projection.headings[heading];
     if (target == null) return Future.value(false);
     final ids = [for (final h in projection.headingsOf(target.project)) h.id];
-    final after = _anchor(ids, heading, by);
-    if (after == _noMove) return Future.value(false);
+    final anchor = nudgeAnchor(ids, heading, by);
+    if (!anchor.moves) return Future.value(false);
     return runStoreCommand(
       _ref,
       'reorder',
-      (store) => store.reorderHeading(heading, after: after),
+      (store) => store.reorderHeading(heading, after: anchor.after),
     );
   }
 
@@ -219,18 +220,4 @@ class OrganiseCommands {
     });
     return ok ? id : null;
   }
-}
-
-/// A sentinel: the nudge would not move anything.
-final _noMove = BlobRef.sha256OfBytes(const [0]);
-
-/// The anchor for moving [id] by [by] steps inside [ids]: the id it lands
-/// after, null for first, or [_noMove] when it is already at that end.
-BlobRef? _anchor(List<BlobRef> ids, BlobRef id, int by) {
-  final index = ids.indexOf(id);
-  if (index < 0) return _noMove;
-  final to = index + by;
-  if (to < 0 || to >= ids.length) return _noMove;
-  final without = [...ids]..removeAt(index);
-  return to == 0 ? null : without[to - 1];
 }

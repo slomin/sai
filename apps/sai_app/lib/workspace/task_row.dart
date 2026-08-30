@@ -54,6 +54,8 @@ class TaskRow extends StatefulWidget {
     this.onCancel,
     this.onGone,
     this.gutter,
+    this.trailing,
+    this.onSecondaryTapDown,
   });
 
   final Task task;
@@ -73,6 +75,14 @@ class TaskRow extends StatefulWidget {
   /// Wraps the check gutter — a drag-start listener where the list can be
   /// reordered.
   final Widget Function(Widget child)? gutter;
+
+  /// The row's "…" button (#98), shown on hover and selection like the
+  /// cross and always in the tree for the keyboard and assistive tech.
+  final Widget? trailing;
+
+  /// A secondary click on the row, with its row-local position: the
+  /// row's menu opens there.
+  final void Function(Offset at)? onSecondaryTapDown;
 
   @override
   State<TaskRow> createState() => _TaskRowState();
@@ -200,6 +210,9 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onSelect,
+          onSecondaryTapDown: widget.onSecondaryTapDown == null
+              ? null
+              : (d) => widget.onSecondaryTapDown!(d.localPosition),
           child: Container(
             constraints: const BoxConstraints(minHeight: 56),
             padding: const EdgeInsets.fromLTRB(22, 10, 22, 10),
@@ -279,6 +292,17 @@ class _TaskRowState extends State<TaskRow> with TickerProviderStateMixin {
                         minSize: 30,
                         onPressed: widget.onCancel,
                       ),
+                    ),
+                  ),
+                if (widget.trailing case final trailing? when finishing == null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 2),
+                    child: Opacity(
+                      opacity: _hovered || widget.selected ? 1 : 0,
+                      // Hidden, not gone: assistive tech and the keyboard
+                      // reach the menu of every row.
+                      alwaysIncludeSemantics: true,
+                      child: trailing,
                     ),
                   ),
               ],

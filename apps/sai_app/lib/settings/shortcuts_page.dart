@@ -15,6 +15,8 @@ const shortcutRows = <(String, String)>[
   ('→', 'Into the list — or unfold a folded area'),
   ('←', 'Back to the sidebar — or fold the area'),
   ('⌘I', 'Open the inspector on the first row, or close it'),
+  ('⇧⌘M', 'Move / Schedule… the selected task'),
+  ('⌘↑ ⌘↓', 'Move the selected task up or down in its list'),
   ('⌘⏎', 'Complete the selected task (or reopen it)'),
   ('⌥⌘⏎', 'Cancel the selected task'),
   ('⌘⌫', 'Delete the selected task'),

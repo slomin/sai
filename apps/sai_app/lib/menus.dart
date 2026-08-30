@@ -97,6 +97,35 @@ List<PlatformMenuItem> saiMenus({
     label: 'Task',
     menus: [
       PlatformMenuItem(
+        label: 'Move / Schedule…',
+        shortcut: const SingleActivator(
+          LogicalKeyboardKey.keyM,
+          meta: true,
+          shift: true,
+        ),
+        onSelected: taskSelected ? commands.moveSelected : null,
+      ),
+      PlatformMenuItemGroup(
+        members: [
+          PlatformMenuItem(
+            label: 'Move up',
+            shortcut: const SingleActivator(
+              LogicalKeyboardKey.arrowUp,
+              meta: true,
+            ),
+            onSelected: taskSelected ? commands.moveSelectedUp : null,
+          ),
+          PlatformMenuItem(
+            label: 'Move down',
+            shortcut: const SingleActivator(
+              LogicalKeyboardKey.arrowDown,
+              meta: true,
+            ),
+            onSelected: taskSelected ? commands.moveSelectedDown : null,
+          ),
+        ],
+      ),
+      PlatformMenuItem(
         label: 'Complete',
         shortcut: const SingleActivator(LogicalKeyboardKey.enter, meta: true),
         onSelected: taskSelected ? commands.completeSelected : null,
@@ -379,6 +408,15 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
               commands.toggleReasoning,
           const SingleActivator(LogicalKeyboardKey.keyI, meta: true):
               commands.toggleInspector,
+          const SingleActivator(
+            LogicalKeyboardKey.keyM,
+            meta: true,
+            shift: true,
+          ): commands.moveSelected,
+          const SingleActivator(LogicalKeyboardKey.arrowUp, meta: true):
+              commands.moveSelectedUp,
+          const SingleActivator(LogicalKeyboardKey.arrowDown, meta: true):
+              commands.moveSelectedDown,
           const SingleActivator(LogicalKeyboardKey.enter, meta: true):
               commands.completeSelected,
           const SingleActivator(LogicalKeyboardKey.backspace, meta: true):

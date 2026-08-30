@@ -1,9 +1,11 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_app/assistant/assistant_band.dart';
+import 'package:sai_app/commands.dart';
 import 'package:sai_app/settings/settings_screen.dart';
 import 'package:sai_app/sidebar.dart';
 import 'package:sai_app/theme/sai_tokens.dart';
@@ -14,7 +16,9 @@ import 'package:sai_app/widgets/chip.dart';
 import 'package:sai_app/widgets/empty_state.dart';
 import 'package:sai_app/widgets/glyph_button.dart';
 import 'package:sai_app/widgets/sai_dialog.dart';
+import 'package:sai_app/workspace/move_sheet.dart';
 import 'package:sai_app/workspace/task_list.dart';
+import 'package:sai_app/workspace/task_menu.dart';
 import 'package:sai_app/workspace/task_row.dart';
 import 'package:sai_app/workspace/task_row_chips.dart';
 import 'package:sai_app/workspace/task_section_header.dart';
@@ -759,6 +763,209 @@ void main() {
       );
       await tester.pump();
       expect(rowTitles(tester), ['A', 'B', 'C']);
+    });
+  });
+
+  group('the row menu and Move up / Move down (#98)', () {
+    Future<void> chord(WidgetTester tester, LogicalKeyboardKey key) async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyDownEvent(key);
+      await tester.sendKeyUpEvent(key);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+      await tester.pump();
+    }
+
+    Future<List<TaskId>> three(
+      WidgetTester tester,
+      ProviderContainer container,
+    ) async {
+      await selectSection(tester, container, inbox);
+      for (final title in ['A', 'B', 'C']) {
+        await capture(tester, container, title);
+      }
+      return container.read(tasksProvider).value!.structuralOrder;
+    }
+
+    List<String> menuLabels(WidgetTester tester) => [
+      for (final e in find.byType(MenuItemButton).evaluate())
+        ((e.widget as MenuItemButton).child as Text).data!,
+    ];
+
+    testWidgets('the … button and a secondary click open the menu and '
+        'select the row; the Trash has neither', (tester) async {
+      final container = await pumpApp(tester);
+      final ids = await three(tester, container);
+      expect(
+        tester
+            .getSemantics(
+              find.descendant(
+                of: find.byKey(taskMenuKey(ids[1])),
+                matching: find.byType(InkWell),
+              ),
+            )
+            .label,
+        'Options for B',
+      );
+      await tester.tap(find.byKey(taskMenuKey(ids[1])));
+      await tester.pump();
+      expect(container.read(selectedTaskProvider), ids[1]);
+      expect(menuLabels(tester), [
+        'Move / Schedule…',
+        'Move up',
+        'Move down',
+        'Complete',
+        'Cancel',
+        'Delete…',
+      ]);
+      await tester.tap(find.byKey(taskMenuKey(ids[1])));
+      await tester.pump();
+      expect(find.byType(MenuItemButton), findsNothing);
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(row(ids[2])),
+        kind: PointerDeviceKind.mouse,
+        buttons: kSecondaryMouseButton,
+      );
+      await gesture.up();
+      await tester.pump();
+      expect(container.read(selectedTaskProvider), ids[2]);
+      expect(find.widgetWithText(MenuItemButton, 'Move up'), findsOneWidget);
+      await tester.tap(find.widgetWithText(MenuItemButton, 'Move / Schedule…'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(moveSheetKey), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // A finished row offers Reopen and no Cancel; the Trash no menu.
+      await settleEvents(tester, container, () => tester.tap(check(ids[0])));
+      await tester.tap(find.byKey(taskMenuKey(ids[0])));
+      await tester.pump();
+      expect(menuLabels(tester), ['Move / Schedule…', 'Reopen', 'Delete…']);
+      await tester.tap(find.byKey(taskMenuKey(ids[0])));
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => container.read(tasksProvider.notifier).store.deleteTask(ids[0]),
+      );
+      await selectSection(tester, container, const TrashSection());
+      expect(find.byKey(taskMenuKey(ids[0])), findsNothing);
+    });
+
+    testWidgets('Move down writes one reorder with the right anchor; the '
+        'ends and a kept view write nothing', (tester) async {
+      final container = await pumpApp(tester);
+      final ids = await three(tester, container);
+      final store = container.read(tasksProvider.notifier).store;
+      await tester.tap(find.byKey(taskMenuKey(ids[0])));
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => tapMenuItem(tester, 'Move down'),
+      );
+      var line = archiveLines(container.read(archiveRootProvider)).last;
+      expect(line, contains('"task.move"'));
+      expect(line, contains('"after":"${ids[1]}"'));
+      expect(rowTitles(tester), ['B', 'A', 'C']);
+      expect(container.read(selectedTaskProvider), ids[0]);
+
+      // ⌘↓ again, then ⌘↑ twice: the last press is at the top.
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.arrowDown),
+      );
+      expect(rowTitles(tester), ['B', 'C', 'A']);
+      var count = store.projection.eventCount;
+      await chord(tester, LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.arrowUp),
+        count: 1,
+      );
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.arrowUp),
+        count: 1,
+      );
+      line = archiveLines(container.read(archiveRootProvider)).last;
+      expect(line, contains('"after":null'));
+      expect(rowTitles(tester), ['A', 'B', 'C']);
+
+      // Today has its own order and its own event.
+      await settleEvents(
+        tester,
+        container,
+        () => store.editTask(
+          ids[1],
+          when: Patch(TaskWhen.date(container.read(todayProvider))),
+        ),
+      );
+      await settleEvents(
+        tester,
+        container,
+        () => store.editTask(
+          ids[2],
+          when: Patch(TaskWhen.date(container.read(todayProvider))),
+        ),
+      );
+      await selectSection(tester, container, today);
+      expect(rowTitles(tester), ['B', 'C']);
+      container.read(selectedTaskProvider.notifier).select(ids[2]);
+      await tester.pump();
+      await settleEvents(
+        tester,
+        container,
+        () => chord(tester, LogicalKeyboardKey.arrowUp),
+      );
+      line = archiveLines(container.read(archiveRootProvider)).last;
+      expect(line, contains('"task.reorder"'));
+      expect(rowTitles(tester), ['C', 'B']);
+      expect(store.projection.structuralOrder, ids);
+
+      // Upcoming keeps its order: no items, and the chord is inert.
+      await settleEvents(
+        tester,
+        container,
+        () => store.editTask(
+          ids[1],
+          when: Patch(TaskWhen.date(container.read(todayProvider).addDays(1))),
+        ),
+      );
+      await selectSection(tester, container, upcoming);
+      container.read(selectedTaskProvider.notifier).select(ids[1]);
+      await tester.pump();
+      count = store.projection.eventCount;
+      await chord(tester, LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      await tester.tap(find.byKey(taskMenuKey(ids[1])));
+      await tester.pump();
+      expect(find.widgetWithText(MenuItemButton, 'Move up'), findsNothing);
+      expect(find.widgetWithText(MenuItemButton, 'Move down'), findsNothing);
+      await tester.tap(find.byKey(taskMenuKey(ids[1])));
+      await tester.pump();
+    });
+
+    testWidgets('a plain arrow still moves the selection', (tester) async {
+      final container = await pumpApp(tester);
+      final ids = await three(tester, container);
+      container.read(captureFocusProvider).unfocus();
+      container.read(selectedTaskProvider.notifier).select(ids[0]);
+      await tester.pump();
+      final count = container.read(tasksProvider).value!.eventCount;
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(container.read(selectedTaskProvider), ids[1]);
+      expect(container.read(tasksProvider).value!.eventCount, count);
     });
   });
 

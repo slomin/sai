@@ -8,24 +8,14 @@ import '../theme/sai_tokens.dart';
 import '../widgets/empty_state.dart';
 import 'dates.dart';
 import 'empty_states.dart';
+import 'ordering.dart';
 import 'task_commands.dart';
+import 'task_menu.dart';
 import 'task_row.dart';
 import 'task_row_chips.dart';
 import 'task_section_header.dart';
 
-/// Whether the rows of [section] in [view] can be dragged into a new
-/// order: Today (its own order) and every structural group shown on its
-/// own — the Inbox, a project's unheaded tasks, a heading, an area's
-/// direct tasks. Chronological and hierarchical views keep their order.
-bool reorderable(TaskView view, TaskViewSection section) =>
-    switch (view.section) {
-      ListSection(list: TaskList.today || TaskList.inbox) => true,
-      ProjectSection() || AreaSection() =>
-        section.kind == TaskViewSectionKind.project ||
-            section.kind == TaskViewSectionKind.heading ||
-            section.kind == TaskViewSectionKind.area,
-      _ => false,
-    };
+export 'ordering.dart' show reorderable;
 
 /// What names a section across rebuilds: the day, the container, the
 /// heading — never its position, which shifts when a group empties.
@@ -336,6 +326,38 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         final item = items[i];
         final task = item.task;
         final ghost = item.ghost;
+        // A live row outside the Trash carries its menu (#98).
+        if (ghost == null && !trash) {
+          return TaskMenu(
+            key: ValueKey('menu-${task.id}'),
+            task: task,
+            view: view,
+            builder: (context, open, button) => TaskRow(
+              key: taskRowKey(task.id),
+              task: task,
+              chips: taskRowChips(
+                task,
+                today: widget.today,
+                section: view.section,
+                container: containerLabel(widget.projection, task),
+                tags: tagLabels(widget.projection, task),
+              ),
+              selected: selected == task.id,
+              entering: _entering.contains(task.id),
+              onSelect: () => select(task.id),
+              onCheck: () => _finish(task, s, at, i, RowFinish.completed),
+              onCancel: task.status == TaskStatus.open
+                  ? () => _finish(task, s, at, i, RowFinish.cancelled)
+                  : null,
+              gutter: canDrag
+                  ? (child) =>
+                        ReorderableDragStartListener(index: i, child: child)
+                  : null,
+              trailing: button,
+              onSecondaryTapDown: (at) => open(at),
+            ),
+          );
+        }
         return TaskRow(
           key: ghost == null
               ? taskRowKey(task.id)
