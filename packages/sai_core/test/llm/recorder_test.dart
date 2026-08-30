@@ -213,6 +213,60 @@ void main() {
       ]);
     });
 
+    test('sharing on keeps compact history but never catalog turns', () async {
+      policy = const PrivacyPolicy(shareTasksWithCloud: true);
+      final call = await recorder.start(
+        cloud(),
+        LlmRequest(
+          messages: const [
+            LlmMessage(LlmRole.user, 'due?'),
+            LlmMessage(
+              LlmRole.assistant,
+              'Call mom @today',
+              provenance: TaskProvenance.compact,
+            ),
+            LlmMessage(LlmRole.user, 'and the trash?'),
+            LlmMessage(
+              LlmRole.assistant,
+              'Old secret plan',
+              provenance: TaskProvenance.catalog,
+            ),
+            LlmMessage(LlmRole.user, 'now?'),
+          ],
+          taskContext: 'Today: buy milk',
+        ),
+      );
+      final result = await call.done;
+      expect(result.text, contains('Call mom'));
+      expect(result.text, contains('Today: buy milk'));
+      expect(result.text, isNot(contains('Old secret plan')));
+      expect(jsonEncode(lines()), isNot(contains('Old secret plan')));
+    });
+
+    test('sharing off drops task-bearing history without a context', () async {
+      policy = const PrivacyPolicy();
+      final call = await recorder.start(
+        cloud(),
+        LlmRequest(
+          messages: const [
+            LlmMessage(LlmRole.user, 'due?'),
+            LlmMessage(
+              LlmRole.assistant,
+              'Call mom @today',
+              provenance: TaskProvenance.compact,
+            ),
+            LlmMessage(LlmRole.user, 'now?'),
+          ],
+        ),
+      );
+      final result = await call.done;
+      expect(result.text, 'user:due? user:now?');
+      expect(jsonEncode(lines()), isNot(contains('Call mom')));
+      // Nothing was withheld — the request carried no context — but the
+      // history still went without its task-bearing turns.
+      expect(call.taskContextWithheld, isFalse);
+    });
+
     test('the policy is read when the call starts, not before', () async {
       final first = await recorder.start(cloud(), withTasks('a'));
       await first.done;
@@ -456,7 +510,11 @@ void main() {
       LlmRequest(
         messages: const [
           LlmMessage(LlmRole.user, 'due?'),
-          LlmMessage(LlmRole.assistant, 'Call mom @today', taskData: true),
+          LlmMessage(
+            LlmRole.assistant,
+            'Call mom @today',
+            provenance: TaskProvenance.compact,
+          ),
           LlmMessage(LlmRole.user, 'and?'),
         ],
         taskContext: 'Today: Call mom',

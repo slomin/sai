@@ -37,6 +37,19 @@ void main() {
       });
     });
 
+    test('a catalog context to cloud is withheld even with sharing on', () {
+      final catalog = LlmRequest(
+        messages: [const LlmMessage(LlmRole.user, 'what is due?')],
+        taskContext: 'the whole collection',
+        taskContextProvenance: TaskProvenance.catalog,
+      );
+      for (final policy in [off, on]) {
+        final decision = policy.decide(LlmPrivacy.cloud, catalog)!;
+        expect(decision.withheld, isTrue);
+        expect(decision.taskContext, TaskContextOutcome.withheld);
+      }
+    });
+
     test('cloud without context has nothing to withhold', () {
       for (final policy in [off, on]) {
         final decision = policy.decide(LlmPrivacy.cloud, ask())!;
@@ -98,8 +111,97 @@ void main() {
     test('without it, the messages go as they are', () {
       final request = ask();
       expect(request.sent, same(request.messages));
-      expect(request.withoutTaskContext().taskContext, isNull);
-      expect(ask(context: 'x').withoutTaskContext().messages, request.messages);
+    });
+
+    test('carries its provenance: compact by default, none without', () {
+      expect(ask(context: 'x').taskContextProvenance, TaskProvenance.compact);
+      expect(ask().taskContextProvenance, TaskProvenance.none);
+      expect(
+        () => LlmRequest(
+          messages: const [LlmMessage(LlmRole.user, 'q')],
+          taskContextProvenance: TaskProvenance.compact,
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => LlmRequest(
+          messages: const [LlmMessage(LlmRole.user, 'q')],
+          taskContext: 'x',
+          taskContextProvenance: TaskProvenance.none,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('the provenance never reaches the wire or the hash', () {
+      const flagged = LlmMessage(
+        LlmRole.assistant,
+        'Call mom @today',
+        provenance: TaskProvenance.catalog,
+      );
+      expect(flagged.toJson(), {
+        'role': 'assistant',
+        'text': 'Call mom @today',
+      });
+    });
+  });
+
+  group('LlmRequest.forCloud', () {
+    LlmRequest conversation({String? context, TaskProvenance? provenance}) =>
+        LlmRequest(
+          messages: const [
+            LlmMessage(LlmRole.user, 'due?'),
+            LlmMessage(
+              LlmRole.assistant,
+              'Call mom @today',
+              provenance: TaskProvenance.compact,
+            ),
+            LlmMessage(LlmRole.user, 'and the trash?'),
+            LlmMessage(
+              LlmRole.assistant,
+              'Old secret plan',
+              provenance: TaskProvenance.catalog,
+            ),
+            LlmMessage(LlmRole.user, 'now?'),
+          ],
+          taskContext: context,
+          taskContextProvenance: provenance,
+        );
+
+    test('always drops catalog-flagged history', () {
+      final kept = conversation(context: 'Today: x')
+          .forCloud(sendTaskContext: true, keepCompactHistory: true);
+      expect(kept.messages.map((m) => m.text), [
+        'due?',
+        'Call mom @today',
+        'and the trash?',
+        'now?',
+      ]);
+      expect(kept.taskContext, 'Today: x');
+    });
+
+    test('withholding drops the context and compact history too', () {
+      final bare = conversation(context: 'Today: x')
+          .forCloud(sendTaskContext: false, keepCompactHistory: false);
+      expect(bare.messages.map((m) => m.text), [
+        'due?',
+        'and the trash?',
+        'now?',
+      ]);
+      expect(bare.taskContext, isNull);
+      expect(bare.taskContextProvenance, TaskProvenance.none);
+    });
+
+    test('never sends a catalog context, whatever the switch says', () {
+      final governed = conversation(
+        context: 'the whole collection',
+        provenance: TaskProvenance.catalog,
+      ).forCloud(sendTaskContext: true, keepCompactHistory: true);
+      expect(governed.taskContext, isNull);
+      expect(
+        governed.messages.map((m) => m.text),
+        isNot(contains('Old secret plan')),
+      );
     });
   });
 

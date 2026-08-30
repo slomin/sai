@@ -28,6 +28,7 @@ final class ChatTurn {
     this.finish,
     this.failure,
     this.tasksWithheld = false,
+    this.provenance = TaskProvenance.none,
     this.dropped = const [],
   });
 
@@ -49,15 +50,17 @@ final class ChatTurn {
   /// Whether the assistant answered this turn without the list.
   final bool tasksWithheld;
 
+  /// What task data an assistant turn's call carried (#105): its words
+  /// may quote what it saw, so this is what a later request's history
+  /// inherits — and what the recorder drops from a cloud call. None for
+  /// user turns and for answers given with the context withheld.
+  final TaskProvenance provenance;
+
   /// What the budget left out of this turn's request
   /// ([AssembledContext.dropped]); empty when nothing was cut.
   final List<String> dropped;
 
   bool get failed => failure != null;
-
-  /// An assistant turn whose call carried the list: its words may quote
-  /// task titles, so it is history a withholding provider must not see.
-  bool get sawTasks => role == ChatRole.assistant && !tasksWithheld;
 
   @override
   String toString() => 'ChatTurn(${role.name}, ${text.length} chars)';
@@ -279,6 +282,9 @@ class ChatNotifier extends Notifier<ChatState> {
         finish: result.finish,
         failure: result.failure,
         tasksWithheld: call.taskContextWithheld,
+        provenance: call.taskContextWithheld
+            ? TaskProvenance.none
+            : assembled.request.taskContextProvenance,
         dropped: assembled.dropped,
       );
     } else {
@@ -305,6 +311,9 @@ class ChatNotifier extends Notifier<ChatState> {
         event: event,
         finish: result.finish,
         tasksWithheld: call.taskContextWithheld,
+        provenance: call.taskContextWithheld
+            ? TaskProvenance.none
+            : assembled.request.taskContextProvenance,
         dropped: assembled.dropped,
       );
     }
@@ -325,8 +334,8 @@ class ChatNotifier extends Notifier<ChatState> {
   /// in pairs, so a template that insists on alternation is never given
   /// two user lines in a row. A pair goes as a whole — an answer that
   /// never came (cancelled before its first token, failed) takes its
-  /// question with it — and an answer given with the list in view is
-  /// flagged as task data for the recorder to withhold (ADR 0011).
+  /// question with it — and an answer given with task data in view
+  /// carries its provenance for the recorder to govern (ADR 0011, #105).
   List<LlmMessage> _history() {
     final turns = state.turns;
     final out = <LlmMessage>[];
@@ -341,7 +350,11 @@ class ChatNotifier extends Notifier<ChatState> {
       out
         ..add(LlmMessage(LlmRole.user, question.text))
         ..add(
-          LlmMessage(LlmRole.assistant, answer.text, taskData: answer.sawTasks),
+          LlmMessage(
+            LlmRole.assistant,
+            answer.text,
+            provenance: answer.provenance,
+          ),
         );
     }
     return out;

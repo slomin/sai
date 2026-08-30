@@ -26,18 +26,21 @@ final class PrivacyPolicy {
 
   /// The decision for [request] going to a provider tagged [privacy], or
   /// null for a local provider — nothing is at stake, nothing is
-  /// recorded.
+  /// recorded. A catalog context (#105) is withheld from the cloud even
+  /// with sharing on: the switch covers the compact lists only.
   PolicyDecision? decide(LlmPrivacy privacy, LlmRequest request) {
     if (privacy == LlmPrivacy.local) return null;
-    final carried = request.taskContext != null;
     return PolicyDecision(
       privacy: privacy,
       shareTasks: shareTasksWithCloud,
-      taskContext: !carried
-          ? TaskContextOutcome.none
-          : shareTasksWithCloud
-          ? TaskContextOutcome.sent
-          : TaskContextOutcome.withheld,
+      taskContext: switch (request.taskContextProvenance) {
+        TaskProvenance.none => TaskContextOutcome.none,
+        TaskProvenance.catalog => TaskContextOutcome.withheld,
+        TaskProvenance.compact =>
+          shareTasksWithCloud
+              ? TaskContextOutcome.sent
+              : TaskContextOutcome.withheld,
+      },
     );
   }
 

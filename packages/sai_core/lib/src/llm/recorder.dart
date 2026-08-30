@@ -59,9 +59,15 @@ final class LlmRecorder {
   /// request is too large to record: what cannot be recorded is not sent.
   Future<RecordedCall> start(LlmProvider provider, LlmRequest request) async {
     final decision = policy().decide(provider.privacy, request);
-    final governed = decision != null && decision.withheld
-        ? request.withoutTaskContext()
-        : request;
+    // Local goes untouched; a cloud request is governed even when there
+    // is nothing to withhold — task-bearing history follows the switch,
+    // and catalog turns never go to the cloud at all (#105).
+    final governed = decision == null
+        ? request
+        : request.forCloud(
+            sendTaskContext: !decision.withheld,
+            keepCompactHistory: decision.shareTasks,
+          );
     final sent = governed.assembled();
     final hash = contextHash(sent.messages);
     final payload = _requestPayload(sent, hash);

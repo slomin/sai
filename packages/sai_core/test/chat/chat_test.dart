@@ -417,7 +417,10 @@ void main() {
       settings.selectLlm('homely');
       final chat = container.read(chatProvider.notifier);
       await chat.send('due?');
-      expect(container.read(chatProvider).turns.last.sawTasks, isTrue);
+      expect(
+        container.read(chatProvider).turns.last.provenance,
+        isNot(TaskProvenance.none),
+      );
       expect(
         container.read(chatProvider).turns.last.text,
         contains('Call mom'),
