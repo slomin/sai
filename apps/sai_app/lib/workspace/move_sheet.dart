@@ -63,14 +63,23 @@ class _MoveSheetState extends ConsumerState<_MoveSheet> {
   Future<void> _schedule(TaskWhen when) =>
       _commit((commands) => commands.trySchedule(widget.task, when));
 
-  Future<void> _place(Placement to) => _commit(
-    (commands) => commands.tryMove(
-      widget.task,
-      project: to.project,
-      area: to.area,
-      heading: to.heading,
-    ),
-  );
+  /// The marked place is where the task already is: nothing to write —
+  /// a move without an anchor would append it to its group's end and
+  /// undo a drag — so the sheet just closes.
+  Future<void> _place(Placement to, {required bool current}) {
+    if (current) {
+      Navigator.of(context).pop();
+      return Future.value();
+    }
+    return _commit(
+      (commands) => commands.tryMove(
+        widget.task,
+        project: to.project,
+        area: to.area,
+        heading: to.heading,
+      ),
+    );
+  }
 
   Future<void> _pickDate(Task task, CalendarDate today) async {
     final picked = await pickDate(
@@ -185,7 +194,10 @@ class _MoveSheetState extends ConsumerState<_MoveSheet> {
                         depth: option.depth,
                         selected: option.placement == current,
                         enabled: !_pending,
-                        onPressed: () => _place(option.placement),
+                        onPressed: () => _place(
+                          option.placement,
+                          current: option.placement == current,
+                        ),
                       ),
                   ],
                 ),

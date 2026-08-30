@@ -298,6 +298,31 @@ void main() {
       expect(task.heading, ids.demolition);
     }, variant: macOS);
 
+    testWidgets('the marked place writes nothing and closes — a move without '
+        'an anchor would send the task to the end of its group', (
+      tester,
+    ) async {
+      final container = await pumpApp(tester);
+      final ids = await seed(tester, container);
+      final store = storeOf(container);
+      // Two more Inbox tasks, so the task is not last already.
+      await capture(tester, container, 'Second');
+      await capture(tester, container, 'Third');
+      final order = store.projection.structuralOrder;
+      expect(order.first, ids.task);
+      container.read(selectedTaskProvider.notifier).select(ids.task);
+      await tester.pump();
+      final count = store.projection.eventCount;
+      await chord(tester, LogicalKeyboardKey.keyM);
+      await tester.tap(
+        find.byKey(moveOptionKey((project: null, area: null, heading: null))),
+      );
+      await faded(tester);
+      expect(find.byKey(moveSheetKey), findsNothing);
+      expect(store.projection.eventCount, count);
+      expect(store.projection.structuralOrder, order);
+    }, variant: macOS);
+
     testWidgets('a refused destination keeps the sheet up with the reason '
         'and writes nothing', (tester) async {
       // A fresh projection never offers a destination the store would
