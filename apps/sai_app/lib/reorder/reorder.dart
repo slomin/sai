@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../theme/motion.dart';
@@ -103,6 +105,18 @@ class ReorderController<T extends Object> extends ChangeNotifier {
   void refuse() => _refused = refusal;
 
   static void unrefuse() => _refused = null;
+
+  /// A foreign target was left. The drop leaves every target in the
+  /// same call that tells the source it was cancelled, so the reason
+  /// survives that; a drag that genuinely moves on has it cleared once
+  /// this event is over.
+  static void unrefuseAfterLeave() {
+    final reason = _refused;
+    if (reason == null) return;
+    scheduleMicrotask(() {
+      if (identical(_refused, reason)) _refused = null;
+    });
+  }
 
   /// The source's drag ended without a target taking it: a foreign
   /// group's refusal is what happened, if one was over it.
@@ -271,9 +285,12 @@ class _ReorderRowState<T extends Object> extends State<ReorderRow<T>> {
           proxy: proxy,
         );
       },
-      // A foreign refusal is not forgotten on leave: the drop itself
-      // leaves every target before the source hears it was cancelled.
-      onLeave: (_) => controller.leave(widget.id),
+      onLeave: (data) {
+        if (data != null && data.group != controller.group) {
+          ReorderController.unrefuseAfterLeave();
+        }
+        controller.leave(widget.id);
+      },
       onAcceptWithDetails: (_) => controller.drop(),
       builder: (context, _, _) => ListenableBuilder(
         listenable: controller,

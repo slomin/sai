@@ -401,6 +401,10 @@ void main() {
       );
       await selectSection(tester, container, inbox);
       await capture(tester, container, 'One');
+      // Let the first row grow in: a list whose first child is still at
+      // height zero puts the next row at offset zero, off stage.
+      await tester.pump(SaiDurations.enter);
+      await tester.pump();
       await capture(tester, container, 'Two');
       final ids = container.read(tasksProvider).value!.structuralOrder;
       // The second row entered after the first frame: it is still growing.
@@ -1109,6 +1113,9 @@ void main() {
         await selectSection(tester, container, inbox);
         for (final title in ['A', 'B', 'C']) {
           await capture(tester, container, title);
+          // Grown in, so every row is on stage under full motion too.
+          await tester.pump(SaiDurations.enter);
+          await tester.pump();
         }
         final ids = container.read(tasksProvider).value!.structuralOrder;
         await dragRow(
@@ -1184,6 +1191,46 @@ void main() {
       expect(rowTitles(tester), ['A', 'B', 'C']);
     });
 
+    testWidgets('a heading with one task is still a target: a foreign drag '
+        'onto it is refused, and that row carries no handle', (tester) async {
+      final container = await pumpApp(tester);
+      final store = container.read(tasksProvider.notifier).store;
+      final ids = await tester.runAsync(() async {
+        final project = await store.createProject(title: 'Kitchen');
+        final prep = await store.createHeading(project: project, title: 'Prep');
+        final fit = await store.createHeading(project: project, title: 'Fit');
+        final a = await store.createTask(
+          title: 'A',
+          project: project,
+          heading: prep,
+        );
+        await store.createTask(title: 'B', project: project, heading: prep);
+        final c = await store.createTask(
+          title: 'C',
+          project: project,
+          heading: fit,
+        );
+        return (project: project, a: a, c: c);
+      });
+      container.read(chatVisibleProvider.notifier).toggle();
+      await selectSection(tester, container, ProjectSection(ids!.project));
+      expect(handle(ids.c), findsNothing);
+      final count = store.projection.eventCount;
+      final gesture = await dragRow(
+        tester,
+        handle: handle(ids.a),
+        source: row(ids.a),
+        target: row(ids.c),
+        release: false,
+      );
+      expect(openGap(), findsNothing);
+      await gesture.up();
+      await tester.pump();
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      expect(container.read(noticeProvider), startsWith('reorder failed:'));
+    });
+
     testWidgets('a task dragged onto another heading is refused with a '
         'notice, nothing written', (tester) async {
       final container = await pumpApp(tester);
@@ -1234,6 +1281,27 @@ void main() {
       expect(container.read(noticeProvider), startsWith('reorder failed:'));
       expect(container.read(noticeProvider), contains('Move / Schedule…'));
       expect(rowTitles(tester), ['A', 'B', 'C', 'D']);
+      // A drag that crossed the foreign heading and was let go over the
+      // blank padding below the list is a plain cancel: no notice.
+      container.read(noticeProvider.notifier).clear();
+      final wander = await dragRow(
+        tester,
+        handle: handle(ids.a),
+        source: row(ids.a),
+        target: row(ids.d),
+        release: false,
+      );
+      await wander.moveTo(
+        tester.getBottomLeft(row(ids.d)) + const Offset(200, 60),
+      );
+      await tester.pump();
+      await tester.runAsync(() async {});
+      await wander.up();
+      await tester.pump();
+      await tester.pump();
+      expect(store.projection.eventCount, count);
+      expect(container.read(noticeProvider), '');
+
       // Within the heading it works.
       await settleEvents(
         tester,

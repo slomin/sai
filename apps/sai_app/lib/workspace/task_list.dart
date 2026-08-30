@@ -363,7 +363,11 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
           slivers.add(SliverToBoxAdapter(child: header(null)));
         }
       }
-      final canDrag = reorderable(view, section) && items.length > 1;
+      // A reorderable section is a drag target even with one row — a
+      // drag from another section must find it, to be refused — while
+      // its own handles need a sibling to change places with.
+      final canDrag = reorderable(view, section);
+      final siblings = items.length > 1;
       ReorderController<TaskId>? group;
       if (canDrag) {
         group = _group(s)
@@ -416,7 +420,7 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
             controller: group,
             id: task.id,
             title: task.title,
-            enabled: task.status == TaskStatus.open,
+            enabled: siblings && task.status == TaskStatus.open,
             builder: live,
           );
         }
