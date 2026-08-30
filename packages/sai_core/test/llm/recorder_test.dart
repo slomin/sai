@@ -240,6 +240,8 @@ void main() {
       expect(result.text, contains('Call mom'));
       expect(result.text, contains('Today: buy milk'));
       expect(result.text, isNot(contains('Old secret plan')));
+      // The dropped answer takes its question with it (ADR 0011).
+      expect(result.text, isNot(contains('and the trash?')));
       expect(jsonEncode(lines()), isNot(contains('Old secret plan')));
     });
 
@@ -260,7 +262,7 @@ void main() {
         ),
       );
       final result = await call.done;
-      expect(result.text, 'user:due? user:now?');
+      expect(result.text, 'user:now?');
       expect(jsonEncode(lines()), isNot(contains('Call mom')));
       // Nothing was withheld — the request carried no context — but the
       // history still went without its task-bearing turns.
@@ -535,7 +537,8 @@ void main() {
       ),
     );
     final result = await call.done;
-    expect(result.text, 'user:due? user:and?');
+    // The answer's question goes with it, keeping the roles alternating.
+    expect(result.text, 'user:and?');
     expect(jsonEncode(lines()), isNot(contains('Call mom')));
     expect(call.taskContextWithheld, isTrue);
   });

@@ -125,10 +125,17 @@ Two context shapes now exist, and the follow-ups above landed:
   context are always dropped — the sharing switch covers the compact
   lists only — while compact-flagged history and context follow the
   switch, now also when the request happens to carry no context of its
-  own.
+  own. A dropped answer takes its user question with it, so the "pairs
+  go as a whole" rule above holds on the governed request too — the
+  wire never carries two user lines in a row.
 - **The budget follows the probed window.** The `Connection` notifier's
   periodic probe files each endpoint's reported context window in a
-  retained per-provider map; `chatBudgetProvider` gives a turn the
+  retained per-provider map — retained no further than its own truth:
+  a healthy probe that reports no window clears the entry, and editing
+  or removing a provider's configuration clears it too, so an id
+  re-pointed at another backend falls back to the conservative default
+  instead of riding the old number (only a failed probe leaves the last
+  report standing); `chatBudgetProvider` gives a turn the
   active local provider's window with the standing 4 096-token reserve,
   or the conservative 8 000-token default (no report yet, an
   unprobeable provider, any cloud provider). A send reads it

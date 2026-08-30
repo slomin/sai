@@ -103,23 +103,33 @@ final class LlmRequest {
   /// history are dropped whatever the arguments say. With
   /// [sendTaskContext] false the (compact) context is dropped too; with
   /// [keepCompactHistory] false, compact-flagged history goes with it.
-  /// The recorder is the only production caller (ADR 0010).
+  /// A dropped answer takes the user question just before it along — a
+  /// pair goes as a whole (ADR 0011), so the governed history never
+  /// carries two user lines in a row. The recorder is the only
+  /// production caller (ADR 0010).
   LlmRequest forCloud({
     required bool sendTaskContext,
     required bool keepCompactHistory,
   }) {
     final context =
         sendTaskContext && taskContextProvenance == TaskProvenance.compact;
+    final kept = <LlmMessage>[];
+    for (final m in messages) {
+      final keep = switch (m.provenance) {
+        TaskProvenance.none => true,
+        TaskProvenance.compact => keepCompactHistory,
+        TaskProvenance.catalog => false,
+      };
+      if (keep) {
+        kept.add(m);
+      } else if (m.role == LlmRole.assistant &&
+          kept.isNotEmpty &&
+          kept.last.role == LlmRole.user) {
+        kept.removeLast();
+      }
+    }
     return LlmRequest(
-      messages: [
-        for (final m in messages)
-          if (switch (m.provenance) {
-            TaskProvenance.none => true,
-            TaskProvenance.compact => keepCompactHistory,
-            TaskProvenance.catalog => false,
-          })
-            m,
-      ],
+      messages: kept,
       model: model,
       maxTokens: maxTokens,
       temperature: temperature,

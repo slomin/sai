@@ -168,28 +168,40 @@ void main() {
           taskContextProvenance: provenance,
         );
 
-    test('always drops catalog-flagged history', () {
+    test('drops catalog-flagged history, question and answer together', () {
       final kept = conversation(context: 'Today: x')
           .forCloud(sendTaskContext: true, keepCompactHistory: true);
       expect(kept.messages.map((m) => m.text), [
         'due?',
         'Call mom @today',
-        'and the trash?',
         'now?',
       ]);
       expect(kept.taskContext, 'Today: x');
     });
 
-    test('withholding drops the context and compact history too', () {
+    test('withholding drops the context and compact pairs too', () {
       final bare = conversation(context: 'Today: x')
           .forCloud(sendTaskContext: false, keepCompactHistory: false);
-      expect(bare.messages.map((m) => m.text), [
-        'due?',
-        'and the trash?',
-        'now?',
-      ]);
+      expect(bare.messages.map((m) => m.text), ['now?']);
       expect(bare.taskContext, isNull);
       expect(bare.taskContextProvenance, TaskProvenance.none);
+    });
+
+    test('the governed history still alternates roles', () {
+      // A dropped answer takes its question with it (ADR 0011): a
+      // template that insists on user/assistant alternation must never
+      // be given two user lines in a row.
+      for (final keep in [true, false]) {
+        final governed = conversation(context: 'Today: x')
+            .forCloud(sendTaskContext: keep, keepCompactHistory: keep);
+        final roles = [
+          for (final m in governed.messages)
+            if (m.role != LlmRole.system) m.role,
+        ];
+        for (var i = 1; i < roles.length; i++) {
+          expect(roles[i], isNot(roles[i - 1]));
+        }
+      }
     });
 
     test('never sends a catalog context, whatever the switch says', () {

@@ -468,7 +468,9 @@ void main() {
       await chat.send('and then?');
       final answer = container.read(chatProvider).turns.last;
       expect(answer.tasksWithheld, isTrue);
-      expect(answer.text, contains('user:due?'));
+      // The catalog answer's question goes with it — the withheld
+      // request keeps its roles alternating.
+      expect(answer.text, isNot(contains('user:due?')));
       expect(answer.text, contains('user:and then?'));
       expect(answer.text, isNot(contains('Call mom')));
       expect(
@@ -484,7 +486,8 @@ void main() {
       settings.setShareTasksWithCloud(true);
       await chat.send('again?');
       final again = container.read(chatProvider).turns.last.text;
-      expect(again, contains('user:due?'));
+      expect(again, isNot(contains('user:due?')));
+      expect(again, contains('user:and then?'));
       expect(again, isNot(contains('TASK CATALOG')));
     });
 
