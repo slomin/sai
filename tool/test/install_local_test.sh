@@ -79,8 +79,21 @@ EOF
     echo "$kind" > "$dir/tui/bundle/flavor"
     echo "$kind" > "$dir/flavor"
   fi
-  repack "$dir" "$version"
   echo "$commit" > "$dir/commit"
+  repack "$dir" "$version"
+}
+
+# seal <dir> <signer>: the release seal tool/release.sh writes (#95) —
+# who signed, over checksums.txt, flavor and commit. A legacy fixture
+# (pre-#95) carries none.
+seal() {
+  dir=$1
+  {
+    echo "signer $2"
+    echo "checksums $(shasum -a 256 "$dir/checksums.txt" | cut -d' ' -f1)"
+    echo "flavor $(cat "$dir/flavor" 2>/dev/null || echo stable)"
+    echo "commit $(cat "$dir/commit")"
+  } > "$dir/seal"
 }
 
 # repack <dir> <version>: zip, tar and checksum a fixture's stage/ and
@@ -93,6 +106,12 @@ repack() {
   (cd "$dir/stage" && ditto -c -k --keepParent "$slug.app" "../$slug-v$version-macos-arm64.zip")
   tar -C "$dir/tui" -czf "$dir/$tui-v$version-macos-arm64.tar.gz" bundle
   (cd "$dir" && shasum -a 256 *.zip *.tar.gz > checksums.txt)
+  # The seal follows the contents, as `sign` and `prepare dev` write it;
+  # a legacy fixture stays unsealed.
+  if [ -f "$dir/flavor" ]; then
+    signer=$(sed -n 's/^signer //p' "$dir/seal" 2>/dev/null || true)
+    seal "$dir" "${signer:-$(cat "$dir/flavor")}"
+  fi
 }
 
 # snapshot: one line per installed file with its hash, for "unchanged" checks.
@@ -174,6 +193,7 @@ pass "a corrupt checksum is refused"
 
 fixture "$work/bad" 0.0.1-test.3 "$c2"
 echo 3333333333333333333333333333333333333333 > "$work/bad/commit"
+seal "$work/bad" stable
 tool/install-local.sh "$work/bad" >"$work/err" 2>&1 && fail "commit mismatch accepted"
 grep -q "was built from $c2, not 3333333" "$work/err" || fail "wrong message: $(cat "$work/err")"
 unchanged "a commit mismatch"
@@ -396,6 +416,47 @@ unchanged "a failed dev swap"
 stable_unchanged "a failed dev swap"
 [ "$(installed_version sai_tui-dev)" = "sai_tui-dev 0.0.1-test.2" ] || fail "the dev pair mismatches after the failed swap"
 pass "a failed dev swap restores dev and leaves stable alone"
+
+# --- the seal (#95) ------------------------------------------------------
+# A stable release must be sealed by the signing phase; a dev one as dev;
+# a seal that no longer matches the checksums is refused.
+fixture "$work/sealed" 0.0.1-test.9 "$c1"
+sed -i '' 's/^signer stable$/signer dev/' "$work/sealed/seal"
+if out=$(tool/install-local.sh "$work/sealed" 2>&1); then fail "a stable release sealed as dev installed"; fi
+echo "$out" | grep -q "sealed by the signing phase" || fail "wrong refusal: $out"
+sed -i '' 's/^signer dev$/signer stable/' "$work/sealed/seal"
+sed -i '' 's/^commit .*/commit 3333333333333333333333333333333333333333/' "$work/sealed/seal"
+if out=$(tool/install-local.sh "$work/sealed" 2>&1); then fail "a seal for another commit installed"; fi
+echo "$out" | grep -q "seal was made for commit" || fail "wrong refusal: $out"
+fixture "$work/sealed" 0.0.1-test.9 "$c1"
+sed -i '' 's/^checksums .*/checksums 0000/' "$work/sealed/seal"
+if out=$(tool/install-local.sh "$work/sealed" 2>&1); then fail "a release changed after sealing installed"; fi
+echo "$out" | grep -q "changed after it was sealed" || fail "wrong refusal: $out"
+pass "a stable release installs only with the signing phase's seal"
+
+fixture "$work/devseal" 0.0.1-test.9 "$c1" dev
+sed -i '' 's/^signer dev$/signer stable/' "$work/devseal/seal"
+if out=$(tool/install-local.sh "$work/devseal" 2>&1); then fail "a dev release sealed as stable installed"; fi
+echo "$out" | grep -q "sealed as dev" || fail "wrong refusal: $out"
+rm -f "$work/devseal/seal"
+if out=$(tool/install-local.sh "$work/devseal" 2>&1); then fail "a dev release without a seal installed"; fi
+echo "$out" | grep -q "without a seal" || fail "wrong refusal: $out"
+pass "a dev release needs its own seal"
+
+# --- a rotated dev signature installs; a rotated stable one does not -----
+unset SAI_INSTALL_ALLOW_RESIGN
+fixture "$work/devA" 0.0.1-test.10 "$c1" dev
+fixture "$work/devB" 0.0.1-test.11 "$c2" dev
+tool/install-local.sh "$work/devA" >/dev/null 2>&1 || fail "dev A did not install"
+# Every ad-hoc fixture has its own designated requirement: B is "signed
+# differently" from A, which a dev copy — holding no credentials — accepts.
+tool/install-local.sh "$work/devB" >"$work/outB" 2>&1 || { cat "$work/outB"; fail "a rotated dev signature was refused"; }
+[ "$(installed_version sai_tui-dev)" = "sai_tui-dev 0.0.1-test.11" ] || fail "dev B not installed"
+fixture "$work/stB" 0.0.1-test.11 "$c2"
+if out=$(tool/install-local.sh "$work/stB" 2>&1); then fail "a rotated stable signature installed without SAI_INSTALL_ALLOW_RESIGN"; fi
+echo "$out" | grep -q "signed differently" || fail "wrong refusal: $out"
+export SAI_INSTALL_ALLOW_RESIGN=1
+pass "a rotated dev signature installs; stable still needs SAI_INSTALL_ALLOW_RESIGN"
 
 rm "$SAI_INSTALL_BIN_DIR/sai_tui"
 echo stray > "$SAI_INSTALL_BIN_DIR/sai_tui"
