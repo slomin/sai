@@ -537,9 +537,13 @@ final endpointInfoProvider = FutureProvider.autoDispose
     });
 
 /// The context window each provider's endpoint last reported, by id
-/// (#105). Retained for the process: a selection change or a probe that
-/// did not say (null) leaves the last report standing. Fed by
-/// [Connection]'s probe — a send only reads, it never asks the network.
+/// (#105). Retained across selection changes, but never past its own
+/// truth: a healthy probe that reports no window clears the entry (the
+/// endpoint does not say), and editing or removing a provider's config
+/// clears it too — a re-pointed id must fall back to the conservative
+/// default, not ride the old backend's number. Only a failed probe
+/// leaves the last report standing. Fed by [Connection]'s probe and the
+/// settings mutators — a send only reads, it never asks the network.
 final contextWindowsProvider =
     NotifierProvider<ContextWindows, Map<String, int>>(ContextWindows.new);
 
@@ -553,6 +557,13 @@ class ContextWindows extends Notifier<Map<String, int>> {
     if (contextWindow == null || contextWindow < 1) return;
     if (state[providerId] == contextWindow) return;
     state = Map.unmodifiable({...state, providerId: contextWindow});
+  }
+
+  /// Forgets [providerId]'s report — its endpoint said it has none, or
+  /// its configuration changed under it.
+  void clear(String providerId) {
+    if (!state.containsKey(providerId)) return;
+    state = Map.unmodifiable({...state}..remove(providerId));
   }
 }
 
@@ -635,15 +646,22 @@ class SettingsNotifier extends Notifier<Settings> {
   /// to a newer sai and must not be overwritten.
   void selectLlm(String? id) => _commit(state.withLlm(id));
 
-  /// Adds [config], or replaces the provider with its id in place.
-  void upsertProvider(ProviderConfig config) =>
-      _commit(state.withProvider(config));
+  /// Adds [config], or replaces the provider with its id in place. The
+  /// id's reported context window is forgotten either way: a changed
+  /// endpoint or model makes the old number another backend's (#105).
+  void upsertProvider(ProviderConfig config) {
+    ref.read(contextWindowsProvider.notifier).clear(config.id);
+    _commit(state.withProvider(config));
+  }
 
   /// Removes the provider [id], clearing its selection if it was active.
   /// The credential, if any, stays in the secret store — removing a
   /// configuration is not revoking a key; [CredentialsNotifier.clear]
   /// is.
-  void removeProvider(String id) => _commit(state.withoutProvider(id));
+  void removeProvider(String id) {
+    ref.read(contextWindowsProvider.notifier).clear(id);
+    _commit(state.withoutProvider(id));
+  }
 
   /// Sets the cloud-sharing switch (#27).
   void setShareTasksWithCloud(bool share) =>
@@ -1129,9 +1147,22 @@ class Connection extends Notifier<ConnectionStatus> {
     }
     if (epoch != _epoch || request != _request || !ref.mounted) return;
     // The probe's other answer: what window the endpoint reports, kept
-    // for the chat budget (#105).
+    // for the chat budget (#105). A healthy endpoint's word is final —
+    // silence means it has no window to report, so a stale one from a
+    // previous backend behind the same id is cleared. A failed probe
+    // says nothing either way.
     if (_id case final id?) {
-      ref.read(contextWindowsProvider.notifier).report(id, info.contextWindow);
+      final windows = ref.read(contextWindowsProvider.notifier);
+      switch (info.health) {
+        case EndpointHealth.ok || EndpointHealth.loading:
+          if (info.contextWindow case final window?) {
+            windows.report(id, window);
+          } else {
+            windows.clear(id);
+          }
+        case EndpointHealth.unavailable || EndpointHealth.unknown:
+          break;
+      }
     }
     state = switch (info.health) {
       EndpointHealth.ok => const ConnectionStatus.ready('ready'),

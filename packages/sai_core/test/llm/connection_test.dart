@@ -288,7 +288,7 @@ void main() {
       expect(c.read(contextWindowsProvider), {'probed': 262144});
     });
 
-    test('a probe without a window keeps the last report', () async {
+    test('a failed probe keeps the last report; a healthy one rules', () async {
       final probed = _Probed(
         const EndpointInfo(health: EndpointHealth.ok, contextWindow: 8192),
       );
@@ -297,10 +297,20 @@ void main() {
       c.read(connectionProvider);
       await settle();
       expect(c.read(contextWindowsProvider), {'probed': 8192});
-      probed.answer = const EndpointInfo(health: EndpointHealth.ok);
+      // Down: transient — what the endpoint last said stands.
+      probed.answer = const EndpointInfo(
+        health: EndpointHealth.unavailable,
+        failure: LlmFailure(LlmFailureKind.unreachable, 'refused'),
+      );
       c.read(connectionProvider.notifier).refresh();
       await settle();
       expect(c.read(contextWindowsProvider), {'probed': 8192});
+      // Healthy without a window: this endpoint does not say — the old
+      // report would be another backend's number, so it goes.
+      probed.answer = const EndpointInfo(health: EndpointHealth.ok);
+      c.read(connectionProvider.notifier).refresh();
+      await settle();
+      expect(c.read(contextWindowsProvider), isEmpty);
       probed.answer = const EndpointInfo(
         health: EndpointHealth.ok,
         contextWindow: 4096,
@@ -308,6 +318,27 @@ void main() {
       c.read(connectionProvider.notifier).refresh();
       await settle();
       expect(c.read(contextWindowsProvider), {'probed': 4096});
+    });
+
+    test('editing or removing a provider config clears its report', () async {
+      final c = make();
+      c.read(contextWindowsProvider.notifier).report('mine', 262144);
+      c.read(contextWindowsProvider.notifier).report('other', 8192);
+      c
+          .read(settingsProvider.notifier)
+          .upsertProvider(
+            ProviderConfig(
+              id: 'mine',
+              kind: 'openai_compatible',
+              endpoint: 'http://10.0.0.9:8080/v1',
+              defaultModel: 'm',
+            ),
+          );
+      // Re-pointed under the same id: the old backend's window would be
+      // the wrong ceiling for the new one.
+      expect(c.read(contextWindowsProvider), {'other': 8192});
+      c.read(settingsProvider.notifier).removeProvider('other');
+      expect(c.read(contextWindowsProvider), isEmpty);
     });
   });
 
