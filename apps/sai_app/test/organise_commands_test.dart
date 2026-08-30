@@ -6,7 +6,7 @@ import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
 
-/// `OrganiseCommands.createHeading` at the provider level (#96): no
+/// `OrganiseCommands.tryCreateHeading` at the provider level (#96): no
 /// widgets, a real archive in a temp dir — what the store accepts, what it
 /// refuses, and what a refusal leaves in the notice.
 void main() {
@@ -29,11 +29,9 @@ void main() {
     await store.createTask(title: 'Tiles', project: full);
     final before = store.projection.eventCount;
 
-    final first = await organise.createHeading(empty, 'Prep');
-    final second = await organise.createHeading(full, 'Build');
+    expect(await organise.tryCreateHeading(empty, 'Prep'), isNull);
+    expect(await organise.tryCreateHeading(full, ' Build '), isNull);
 
-    expect(first, isNotNull);
-    expect(second, isNotNull);
     expect(store.projection.headingsOf(empty).map((h) => h.title), ['Prep']);
     expect(store.projection.headingsOf(full).map((h) => h.title), ['Build']);
     expect(store.projection.eventCount, before + 2);
@@ -44,8 +42,7 @@ void main() {
     final project = await store.createProject(title: 'P');
     final before = store.projection.eventCount;
 
-    expect(await organise.createHeading(project, ''), isNull);
-    expect(await organise.createHeading(project, '   '), isNull);
+    expect(await organise.tryCreateHeading(project, ''), contains('empty'));
     expect(await organise.tryCreateHeading(project, ' \t'), contains('empty'));
 
     expect(store.projection.eventCount, before);
@@ -54,47 +51,42 @@ void main() {
 
   test('a duplicate title is a second heading, not a refusal', () async {
     final project = await store.createProject(title: 'P');
-    final one = await organise.createHeading(project, 'Prep');
-    final two = await organise.createHeading(project, 'Prep');
-    expect(one, isNotNull);
-    expect(two, isNotNull);
-    expect(one, isNot(two));
-    expect(store.projection.headingsOf(project).map((h) => h.title), [
-      'Prep',
-      'Prep',
-    ]);
+    expect(await organise.tryCreateHeading(project, 'Prep'), isNull);
+    expect(await organise.tryCreateHeading(project, 'Prep'), isNull);
+    final headings = store.projection.headingsOf(project).toList();
+    expect(headings.map((h) => h.title), ['Prep', 'Prep']);
+    expect(headings.first.id, isNot(headings.last.id));
   });
 
-  test('an archived project refuses and the notice names why', () async {
+  test('an archived project refuses and the reason says so', () async {
     final project = await store.createProject(title: 'P');
     await store.archiveProject(project);
     final before = store.projection.eventCount;
 
-    expect(await organise.createHeading(project, 'Prep'), isNull);
+    final reason = await organise.tryCreateHeading(project, 'Prep');
+    expect(reason, contains('archived'));
     expect(store.projection.eventCount, before);
-    expect(notice(), startsWith('new heading failed: '));
-    expect(notice(), contains('archived'));
-    expect(
-      await organise.tryCreateHeading(project, 'Prep'),
-      contains('archived'),
-    );
+    expect(notice(), 'new heading failed: $reason');
   });
 
-  test('a deleted project refuses and the notice names why', () async {
+  test('a deleted project refuses and the reason says so', () async {
     final project = await store.createProject(title: 'P');
     await store.deleteProject(project);
     final before = store.projection.eventCount;
 
-    expect(await organise.createHeading(project, 'Prep'), isNull);
+    expect(
+      await organise.tryCreateHeading(project, 'Prep'),
+      contains('deleted'),
+    );
     expect(store.projection.eventCount, before);
     expect(notice(), contains('deleted'));
   });
 
   test('a success clears the notice a refusal left', () async {
     final project = await store.createProject(title: 'P');
-    await organise.createHeading(project, '');
+    await organise.tryCreateHeading(project, '');
     expect(notice(), isNotEmpty);
-    await organise.createHeading(project, 'Prep');
+    await organise.tryCreateHeading(project, 'Prep');
     expect(notice(), isEmpty);
   });
 
@@ -113,8 +105,10 @@ void main() {
     expect(store.projection.projects[project]!.archivedAt, isNotNull);
     final before = store.projection.eventCount;
 
-    expect(await organise.createHeading(project, 'Prep'), isNull);
+    expect(
+      await organise.tryCreateHeading(project, 'Prep'),
+      contains('archived'),
+    );
     expect(store.projection.eventCount, before);
-    expect(notice(), contains('archived'));
   });
 }
