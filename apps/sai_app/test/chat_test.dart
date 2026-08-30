@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +9,7 @@ import 'package:sai_app/assistant/assistant_band.dart';
 import 'package:sai_app/commands.dart';
 import 'package:sai_app/workspace/task_list_pane.dart';
 import 'package:sai_app/sidebar.dart';
+import 'package:sai_app/theme/sai_tokens.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
@@ -450,6 +452,176 @@ void main() {
         await tester.pump();
         // No RenderFlex overflow is the assertion; the field scrolls.
         expect(find.byKey(chatFieldKey), findsOneWidget);
+      });
+    });
+
+    group('selection (#99)', () {
+      late List<MethodCall> calls;
+
+      setUp(() {
+        calls = [];
+        TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+              calls.add(call);
+              return null;
+            });
+      });
+
+      tearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+
+      /// What ⌘C put on the clipboard, or null when nothing was copied.
+      String? copied() {
+        final copy = calls.where((c) => c.method == 'Clipboard.setData');
+        return copy.isEmpty
+            ? null
+            : (copy.last.arguments as Map)['text'] as String;
+      }
+
+      /// A mouse drag from [from] to [to], the way a person selects.
+      Future<void> selectByMouse(
+        WidgetTester tester,
+        Offset from,
+        Offset to,
+      ) async {
+        final gesture = await tester.startGesture(
+          from,
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await gesture.moveTo(from + const Offset(2, 0));
+        await tester.pump();
+        await gesture.moveTo(to);
+        await tester.pump();
+        await gesture.up();
+        await tester.pump();
+      }
+
+      testWidgets('the transcript is a selection area on the band theme', (
+        tester,
+      ) async {
+        final container = await ready(tester);
+        await ask(tester, 'hello');
+        await until(
+          tester,
+          () => container.read(chatProvider).turns.length == 2,
+        );
+        expect(
+          find.ancestor(
+            of: find.byKey(chatTranscriptKey),
+            matching: find.byType(SelectionArea),
+          ),
+          findsOneWidget,
+        );
+        final selection = tester.widget<TextSelectionTheme>(
+          find
+              .ancestor(
+                of: find.byKey(chatFieldKey),
+                matching: find.byType(TextSelectionTheme),
+              )
+              .first,
+        );
+        expect(selection.data.cursorColor, SaiColors.sheetText);
+        expect(selection.data.selectionColor?.a, closeTo(0.28, 0.01));
+        expect(
+          find.ancestor(
+            of: find.byKey(chatTranscriptKey),
+            matching: find.byType(TextSelectionTheme),
+          ),
+          findsWidgets,
+        );
+      });
+
+      testWidgets('a mouse drag and ⌘C copy a person\'s turn exactly', (
+        tester,
+      ) async {
+        final container = await ready(tester);
+        await ask(tester, 'what is due?');
+        await until(
+          tester,
+          () => container.read(chatProvider).turns.length == 2,
+        );
+        await tester.ensureVisible(
+          find.text('what is due?', skipOffstage: false),
+        );
+        await tester.pump();
+        final line = find.text('what is due?');
+        await selectByMouse(
+          tester,
+          tester.getTopLeft(line) - const Offset(4, 0),
+          tester.getBottomRight(line) + const Offset(4, 0),
+        );
+        await chord(tester, LogicalKeyboardKey.keyC);
+        expect(copied(), 'what is due?');
+      }, variant: macOS);
+
+      testWidgets('a selection across rendered Markdown copies its text', (
+        tester,
+      ) async {
+        fake = FakeLlmProvider(script: (_) => '**bold** and `code` here');
+        final container = await ready(tester);
+        await ask(tester, 'go');
+        await until(
+          tester,
+          () => container.read(chatProvider).turns.length == 2,
+        );
+        final line = find.text('bold and code here');
+        expect(line, findsOneWidget, reason: screen());
+        await selectByMouse(
+          tester,
+          tester.getTopLeft(line) - const Offset(4, 0),
+          tester.getBottomRight(line) + const Offset(4, 0),
+        );
+        await chord(tester, LogicalKeyboardKey.keyC);
+        expect(copied(), 'bold and code here');
+      }, variant: macOS);
+
+      testWidgets('a fence copies its code; its label and button stay out', (
+        tester,
+      ) async {
+        fake = FakeLlmProvider(script: (_) => '```dart\nvoid main() {}\n```');
+        final container = await ready(tester);
+        await ask(tester, 'go');
+        await until(
+          tester,
+          () => container.read(chatProvider).turns.length == 2,
+        );
+        final code = find.text('void main() {}');
+        expect(code, findsOneWidget, reason: screen());
+        final transcript = find.byKey(chatTranscriptKey);
+        await selectByMouse(
+          tester,
+          tester.getTopLeft(transcript) + const Offset(2, 2),
+          tester.getBottomRight(code) + const Offset(4, 0),
+        );
+        await chord(tester, LogicalKeyboardKey.keyC);
+        final text = copied();
+        expect(text, contains('void main() {}'));
+        expect(text, isNot(contains('DART')));
+        expect(text, isNot(contains('⧉')));
+        // The copy control still hands over the fence alone.
+        await tester.tap(find.text('⧉'));
+        await tester.pump();
+        expect(copied(), 'void main() {}');
+      }, variant: macOS);
+
+      testWidgets('a touch drag still scrolls the transcript', (tester) async {
+        fake = FakeLlmProvider(
+          script: (_) => List.generate(60, (i) => 'line $i').join('\n\n'),
+        );
+        final container = await ready(tester);
+        await ask(tester, 'go');
+        await until(
+          tester,
+          () => container.read(chatProvider).turns.length == 2,
+        );
+        final before = tester.getTopLeft(find.text('line 59')).dy;
+        await tester.drag(find.byKey(chatTranscriptKey), const Offset(0, 200));
+        await tester.pump();
+        expect(tester.getTopLeft(find.text('line 59')).dy, greaterThan(before));
+        expect(copied(), isNull);
       });
     });
   });

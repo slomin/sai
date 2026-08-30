@@ -12,6 +12,15 @@ import 'markdown/sai_markdown.dart';
 
 export 'chat_keys.dart';
 
+/// The band's selection colours (#99): the transcript's highlight and
+/// the composer's caret in the band's own light, since the app theme's
+/// ink primary would vanish on the ink surface.
+final bandSelectionTheme = TextSelectionThemeData(
+  cursorColor: SaiColors.sheetText,
+  selectionColor: SaiColors.sheetText.withValues(alpha: 0.28),
+  selectionHandleColor: SaiColors.sheetText,
+);
+
 /// What the empty band says.
 const chatEmptyHint =
     'Ask about your list — what is due, what is coming up, how the day '
@@ -194,43 +203,57 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
     final state = ref.watch(chatProvider);
     final reasoningOn = ref.watch(reasoningProvider);
     final text = context.saiText;
-    return Column(
-      children: [
-        Expanded(
-          child: state.turns.isEmpty && !state.busy
-              ? Align(
-                  alignment: Alignment.topLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-                    child: Text(
-                      chatEmptyHint,
-                      style: text.small.copyWith(color: SaiColors.sheetDim),
+    // The band is ink on a light theme: the selection highlight and the
+    // caret take the band's own light, for the transcript and the
+    // composer alike.
+    return TextSelectionTheme(
+      data: bandSelectionTheme,
+      child: Column(
+        children: [
+          Expanded(
+            child: state.turns.isEmpty && !state.busy
+                ? Align(
+                    alignment: Alignment.topLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+                      child: Text(
+                        chatEmptyHint,
+                        style: text.small.copyWith(color: SaiColors.sheetDim),
+                      ),
+                    ),
+                  )
+                // The transcript is under the desktop selection system
+                // (#99): a mouse drag selects across a person's plain text
+                // and the rendered Markdown alike, ⌘C copies it; touch and
+                // the wheel still scroll.
+                : SelectionArea(
+                    child: ListView(
+                      key: chatTranscriptKey,
+                      controller: _scroll,
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      children: [
+                        for (final turn in state.turns)
+                          _TurnRow(turn, reasoningOn: reasoningOn),
+                        if (state.busy)
+                          _Row(
+                            who: 'sai',
+                            reasoning: reasoningOn ? state.reasoning : null,
+                            text: state.streaming!.isEmpty
+                                ? (state.reasoning == null ? '…' : 'thinking…')
+                                : state.streaming!,
+                            markdown: state.streaming!.isNotEmpty,
+                            caret: state.streaming!.isNotEmpty,
+                            note: state.tasksWithheld
+                                ? tasksWithheldWord
+                                : null,
+                          ),
+                      ],
                     ),
                   ),
-                )
-              : ListView(
-                  key: chatTranscriptKey,
-                  controller: _scroll,
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  children: [
-                    for (final turn in state.turns)
-                      _TurnRow(turn, reasoningOn: reasoningOn),
-                    if (state.busy)
-                      _Row(
-                        who: 'sai',
-                        reasoning: reasoningOn ? state.reasoning : null,
-                        text: state.streaming!.isEmpty
-                            ? (state.reasoning == null ? '…' : 'thinking…')
-                            : state.streaming!,
-                        markdown: state.streaming!.isNotEmpty,
-                        caret: state.streaming!.isNotEmpty,
-                        note: state.tasksWithheld ? tasksWithheldWord : null,
-                      ),
-                  ],
-                ),
-        ),
-        const ChatComposer(),
-      ],
+          ),
+          const ChatComposer(),
+        ],
+      ),
     );
   }
 }

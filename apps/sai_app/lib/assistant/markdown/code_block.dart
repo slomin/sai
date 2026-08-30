@@ -84,36 +84,40 @@ class _CodeBlockState extends State<CodeBlock> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            height: 28,
-            padding: const EdgeInsets.only(left: 10, right: 4),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: SaiColors.sheetRule)),
-            ),
-            child: Row(
-              children: [
-                // Flexible: the fence's tag is the model's to write,
-                // and an absurd one must ellipsise, not overflow.
-                Flexible(
-                  child: Text(
-                    (widget.language ?? 'text').toUpperCase(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: context.saiText.chip.copyWith(
-                      color: SaiColors.sheetDim,
+          // The label and the copy control are chrome: a selection
+          // sweeping the transcript (#99) takes the code, never them.
+          SelectionContainer.disabled(
+            child: Container(
+              height: 28,
+              padding: const EdgeInsets.only(left: 10, right: 4),
+              decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: SaiColors.sheetRule)),
+              ),
+              child: Row(
+                children: [
+                  // Flexible: the fence's tag is the model's to write,
+                  // and an absurd one must ellipsise, not overflow.
+                  Flexible(
+                    child: Text(
+                      (widget.language ?? 'text').toUpperCase(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.saiText.chip.copyWith(
+                        color: SaiColors.sheetDim,
+                      ),
                     ),
                   ),
-                ),
-                const Spacer(),
-                GlyphButton(
-                  glyph: copied ? '✓' : '⧉',
-                  label: copied ? 'Copied' : 'Copy the code',
-                  onPressed: _copy,
-                  color: SaiColors.sheetDim,
-                  size: 12,
-                  minSize: 24,
-                ),
-              ],
+                  const Spacer(),
+                  GlyphButton(
+                    glyph: copied ? '✓' : '⧉',
+                    label: copied ? 'Copied' : 'Copy the code',
+                    onPressed: _copy,
+                    color: SaiColors.sheetDim,
+                    size: 12,
+                    minSize: 24,
+                  ),
+                ],
+              ),
             ),
           ),
           SingleChildScrollView(
