@@ -15,6 +15,22 @@ const _headings = {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'};
 final _partialFence = RegExp(r'^(`+|~+)$');
 const _blockTags = {'p', 'ul', 'ol', 'pre', 'blockquote', 'hr', ..._headings};
 
+/// The blocks for [nodes] as one column that copies as paragraphs: a
+/// blank line between blocks (#99), wherever blocks nest — a turn, a
+/// loose list item, a quote.
+Widget markdownColumn(
+  List<md.Node> nodes,
+  MarkdownStyles styles, {
+  bool caret = false,
+}) => SelectionJoin(
+  separator: '\n\n',
+  child: Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: markdownBlocks(nodes, styles, caret: caret),
+  ),
+);
+
 /// The widgets for [nodes]. With [caret] the streaming cursor follows
 /// the last block — appended to the rendered spans, never to the
 /// source, so the cursor cannot change a parse.
@@ -77,11 +93,7 @@ Widget? _block(md.Node node, MarkdownStyles styles, {required bool caret}) {
     'ol' => _list(node, styles, ordered: true, caret: caret),
     'pre' => _pre(node, styles, caret: caret),
     // Flattened by decision: the band is already a quoted surface.
-    'blockquote' => Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: markdownBlocks(children, styles, caret: caret),
-    ),
+    'blockquote' => markdownColumn(children, styles, caret: caret),
     'hr' => null,
     // Anything unexpected keeps its text; nothing is dropped.
     _ => _paragraph(children, styles, styles.body, caret: caret),
@@ -154,11 +166,7 @@ Widget _listItem(md.Element li, MarkdownStyles styles, {required bool caret}) {
     (child) => child is md.Element && _blockTags.contains(child.tag),
   );
   if (!loose) return _paragraph(children, styles, styles.body, caret: caret);
-  return Column(
-    mainAxisSize: MainAxisSize.min,
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: markdownBlocks(children, styles, caret: caret),
-  );
+  return markdownColumn(children, styles, caret: caret);
 }
 
 /// A fenced or indented code block, as the labelled card. The fence's

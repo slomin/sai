@@ -70,6 +70,11 @@ class SaiText extends ThemeExtension<SaiText> {
   /// wordmark — keep Space Grotesk; everything functional is [sans].
   TextStyle get title => display(24, height: 1.1, letterSpacing: -0.5);
   TextStyle get emptyTitle => display(22, height: 1.15, letterSpacing: -0.4);
+
+  /// A task's title where it is edited — functional text at a
+  /// headline's size.
+  TextStyle get taskTitle =>
+      sans(24, weight: FontWeight.w700, height: 1.1, letterSpacing: -0.3);
   TextStyle get body => sans(14);
   TextStyle get bodyDim => sans(14, color: SaiColors.inkDim);
   TextStyle get note => sans(13, color: SaiColors.inkDim, height: 1.4);

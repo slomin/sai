@@ -5,7 +5,7 @@ import 'package:flutter/painting.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import '../../theme/sai_tokens.dart';
-import 'sai_markdown.dart';
+import 'caret.dart';
 
 /// The styles the renderer draws with, derived from the transcript's
 /// base body style. The rule that keeps streaming stable: no inline

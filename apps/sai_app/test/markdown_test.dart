@@ -258,6 +258,94 @@ no language here
     );
   });
 
+  /// Sweeps the mouse from [first] to [last] under a [SelectionArea] around
+  /// [source] and returns what ⌘C put on the clipboard.
+  Future<String?> copySweep(
+    WidgetTester tester,
+    String source, {
+    required String first,
+    required String last,
+    bool caret = false,
+  }) async {
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        calls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: saiTheme(),
+        home: Scaffold(
+          body: SelectionArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: SaiMarkdown(source, style: _body, caret: caret),
+            ),
+          ),
+        ),
+      ),
+    );
+    final gesture = await tester.startGesture(
+      tester.getTopLeft(find.textContaining(first)) - const Offset(2, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(2, 0));
+    await tester.pump();
+    await gesture.moveTo(
+      tester.getBottomRight(find.textContaining(last)) + const Offset(4, 0),
+    );
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+    final copy = calls.where((c) => c.method == 'Clipboard.setData');
+    return copy.isEmpty ? null : (copy.last.arguments as Map)['text'] as String;
+  }
+
+  final macOS = TargetPlatformVariant.only(TargetPlatform.macOS);
+
+  testWidgets('a loose list item copies its blocks as paragraphs', (
+    tester,
+  ) async {
+    expect(
+      await copySweep(
+        tester,
+        '1. Install it:\n\n   ```sh\n   brew install sai\n   ```\n\n'
+        '2. Then run it\n\n> quoted\n>\n> twice',
+        first: 'Install',
+        last: 'twice',
+      ),
+      '1. Install it:\n\nbrew install sai\n2. Then run it\n\nquoted\n\ntwice',
+    );
+  }, variant: macOS);
+
+  testWidgets('a copy taken mid-answer carries no cursor', (tester) async {
+    expect(
+      await copySweep(
+        tester,
+        'One step so far',
+        first: 'One',
+        last: 'far',
+        caret: true,
+      ),
+      'One step so far',
+    );
+  }, variant: macOS);
+
   testWidgets('a selection across blocks copies paragraphs and items', (
     tester,
   ) async {

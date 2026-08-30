@@ -8,6 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/assistant/assistant_band.dart';
 import 'package:sai_app/assistant/markdown/code_block.dart';
 import 'package:sai_app/assistant/waiting_dots.dart';
+import 'package:sai_app/theme/motion.dart';
+import 'package:sai_app/theme/sai_theme.dart';
 import 'package:sai_app/commands.dart';
 import 'package:sai_app/workspace/task_list_pane.dart';
 import 'package:sai_app/sidebar.dart';
@@ -577,6 +579,104 @@ void main() {
         expect(painter(tester).alphaOf(0), first);
         expect(painter(tester).alphaOf(2), first);
         await drain(tester, container);
+      });
+
+      testWidgets('thinking the setting hides is not announced', (
+        tester,
+      ) async {
+        fake = slow(reasoning: (_) => 'hmm');
+        final container = await ready(tester);
+        final semantics = tester.ensureSemantics();
+        await chord(tester, LogicalKeyboardKey.keyR);
+        await ask(tester, 'go');
+        await waiting(tester);
+        await until(tester, () => find.text('hmm').evaluate().isNotEmpty);
+        // The setting goes off while the thinking is still arriving.
+        await chord(tester, LogicalKeyboardKey.keyR);
+        expect(find.text('hmm'), findsNothing);
+        expect(container.read(chatProvider).reasoning, isNotNull);
+        expect(
+          tester.getSemantics(find.byKey(chatWaitingKey)).label,
+          'Waiting for sai',
+        );
+        await drain(tester, container);
+        semantics.dispose();
+      }, variant: macOS);
+
+      testWidgets('the dots take the body line at the reader\'s scale', (
+        tester,
+      ) async {
+        tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        fake = slow();
+        final container = await ready(tester);
+        await ask(tester, 'go');
+        await waiting(tester);
+        expect(
+          tester.getSize(find.byKey(chatWaitingKey)).height,
+          closeTo(1.3 * WaitingDotsPainter.lineHeight, 0.01),
+        );
+        await drain(tester, container);
+      });
+
+      testWidgets('the word Thinking is chrome, not copy', (tester) async {
+        final calls = <MethodCall>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          (call) async {
+            calls.add(call);
+            return null;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            SystemChannels.platform,
+            null,
+          ),
+        );
+        fake = slow();
+        final container = await ready(tester);
+        await ask(tester, 'go');
+        await waiting(tester);
+        final word = find.text('Thinking');
+        final gesture = await tester.startGesture(
+          tester.getTopLeft(word) - const Offset(4, 0),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await gesture.moveBy(const Offset(2, 0));
+        await tester.pump();
+        await gesture.moveTo(tester.getBottomRight(word) + const Offset(4, 0));
+        await tester.pump();
+        await gesture.up();
+        await tester.pump();
+        await chord(tester, LogicalKeyboardKey.keyC);
+        final copies = calls.where((c) => c.method == 'Clipboard.setData');
+        expect(
+          copies.map((c) => (c.arguments as Map)['text']),
+          isNot(contains(contains('Thinking'))),
+        );
+        await drain(tester, container);
+      }, variant: macOS);
+
+      testWidgets('Reduce Motion can come and go while the dots show', (
+        tester,
+      ) async {
+        for (final reduce in [false, true, false, true]) {
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: saiTheme(),
+              home: SaiMotion(
+                reduce: reduce,
+                child: const Scaffold(body: WaitingDots(label: 'Waiting')),
+              ),
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(tester.takeException(), isNull);
+          expect(find.text('Thinking'), reduce ? findsOneWidget : findsNothing);
+        }
+        await tester.pumpWidget(const SizedBox());
       });
 
       testWidgets('reasoning names the state as thinking', (tester) async {

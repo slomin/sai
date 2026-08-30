@@ -4,6 +4,8 @@ library;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
+import 'markdown/caret.dart';
+
 /// Flutter's selection system copies the selected pieces of adjacent
 /// widgets back to back — a turn's eyebrow and its body, or two
 /// paragraphs, would land on the clipboard as one run of characters.
@@ -52,7 +54,11 @@ class _JoiningDelegate extends StaticSelectionContainerDelegate {
         // A selectable at the selection's edge reports an empty piece;
         // it earns no separator.
         if (selectable.getSelectedContent() case final content?)
-          if (content.plainText.isNotEmpty) content.plainText,
+          // The streaming cursor is drawn as a span, so a copy taken
+          // mid-answer would carry it; it is not text.
+          if (content.plainText.replaceAll(caretGlyph, '') case final text
+              when text.isNotEmpty)
+            text,
     ];
     if (parts.isEmpty) return null;
     return SelectedContent(plainText: parts.join(separator));

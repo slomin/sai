@@ -7,16 +7,10 @@ library;
 import 'package:flutter/widgets.dart';
 import 'package:markdown/markdown.dart' as md;
 
-import '../selection_join.dart';
 import 'markdown_blocks.dart';
-import 'markdown_inline.dart';
 
-/// The streaming cursor (#99): a hair space, then a one-eighth block —
-/// a thin bar that stands clear of the last glyph instead of crowding
-/// it. It is drawn as a span in the mono face (which has the glyph, so
-/// no fallback font can change the line's height), never a widget, so
-/// the test finders keep matching plain text (ADR 0018).
-const caretGlyph = '\u200a▏';
+export 'caret.dart';
+import 'markdown_inline.dart';
 
 class SaiMarkdown extends StatefulWidget {
   const SaiMarkdown(
@@ -60,18 +54,10 @@ class _SaiMarkdownState extends State<SaiMarkdown> {
 
   @override
   Widget build(BuildContext context) {
-    // Blocks copy as paragraphs: a blank line between them (#99).
-    return SelectionJoin(
-      separator: '\n\n',
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: markdownBlocks(
-          _nodes,
-          MarkdownStyles(widget.style),
-          caret: widget.caret,
-        ),
-      ),
+    return markdownColumn(
+      _nodes,
+      MarkdownStyles(widget.style),
+      caret: widget.caret,
     );
   }
 }

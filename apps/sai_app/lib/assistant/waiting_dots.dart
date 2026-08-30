@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../theme/motion.dart';
+import '../theme/sai_theme.dart';
 import '../theme/sai_tokens.dart';
 
 /// Three dots that breathe in turn — restrained, one cycle of
@@ -23,8 +24,10 @@ class WaitingDots extends StatefulWidget {
   State<WaitingDots> createState() => _WaitingDotsState();
 }
 
+// A full ticker provider: the controller is dropped and made again as
+// Reduce Motion goes on and off, and the single-ticker mixin allows one.
 class _WaitingDotsState extends State<WaitingDots>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   AnimationController? _pulse;
 
   @override
@@ -48,6 +51,12 @@ class _WaitingDotsState extends State<WaitingDots>
   @override
   Widget build(BuildContext context) {
     final pulse = _pulse;
+    // The body line's height at the reader's text scale, so the first
+    // delta replacing the dots moves nothing.
+    final size = Size(
+      WaitingDotsPainter.width,
+      MediaQuery.textScalerOf(context).scale(WaitingDotsPainter.lineHeight),
+    );
     return Semantics(
       container: true,
       liveRegion: true,
@@ -57,27 +66,24 @@ class _WaitingDotsState extends State<WaitingDots>
         mainAxisSize: MainAxisSize.min,
         children: [
           if (pulse == null)
-            const CustomPaint(
-              size: WaitingDotsPainter.size,
-              painter: WaitingDotsPainter(),
-            )
+            CustomPaint(size: size, painter: const WaitingDotsPainter())
           else
             AnimatedBuilder(
               animation: pulse,
               builder: (_, _) => CustomPaint(
-                size: WaitingDotsPainter.size,
+                size: size,
                 painter: WaitingDotsPainter(phase: pulse.value),
               ),
             ),
           if (pulse == null) ...[
             const SizedBox(width: 8),
-            Text(
-              'Thinking',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.3,
-                color: SaiColors.sheetDim,
-                fontFamily: DefaultTextStyle.of(context).style.fontFamily,
+            // Chrome, like a fence's label: never part of a copy.
+            SelectionContainer.disabled(
+              child: Text(
+                'Thinking',
+                style: context.saiText.small.copyWith(
+                  color: SaiColors.sheetDim,
+                ),
               ),
             ),
           ],
@@ -94,9 +100,10 @@ class WaitingDotsPainter extends CustomPainter {
 
   final double? phase;
 
-  /// The row's box: the body line's height, so the first delta replacing
-  /// the dots moves nothing.
-  static const size = Size(30, 22);
+  /// The row's box at text scale 1: the transcript body's line
+  /// (15 × 1.5), scaled by the widget with the reader's text.
+  static const width = 30.0;
+  static const lineHeight = 22.5;
 
   static const _dots = 3;
   static const _radius = 2.5;

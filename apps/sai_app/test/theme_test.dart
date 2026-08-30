@@ -72,6 +72,7 @@ void main() {
         expect(role.fontVariations, [const FontVariation.weight(700)]);
       }
       for (final role in [
+        text.taskTitle,
         text.body,
         text.bodyDim,
         text.note,

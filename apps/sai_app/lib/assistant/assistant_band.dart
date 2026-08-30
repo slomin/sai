@@ -239,8 +239,15 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
+                              // One boundary per turn, as the list gave
+                              // each child: a delta repaints its row.
                               for (final turn in state.turns)
-                                _TurnRow(turn, reasoningOn: reasoningOn),
+                                RepaintBoundary(
+                                  child: _TurnRow(
+                                    turn,
+                                    reasoningOn: reasoningOn,
+                                  ),
+                                ),
                               if (state.busy)
                                 _Row(
                                   who: 'sai',
@@ -251,9 +258,14 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
                                   leading: state.streaming!.isEmpty
                                       ? WaitingDots(
                                           key: chatWaitingKey,
-                                          label: state.reasoning == null
-                                              ? 'Waiting for sai'
-                                              : 'sai is thinking',
+                                          // Named after what is shown:
+                                          // thinking the setting hides
+                                          // stays unmentioned.
+                                          label:
+                                              reasoningOn &&
+                                                  state.reasoning != null
+                                              ? 'sai is thinking'
+                                              : 'Waiting for sai',
                                         )
                                       : null,
                                   markdown: true,

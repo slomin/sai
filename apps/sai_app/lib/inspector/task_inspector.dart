@@ -90,7 +90,7 @@ class TaskInspector extends ConsumerWidget {
                     key: inspectorTitleKey,
                     value: task.title,
                     semanticsLabel: 'Title',
-                    style: text.title,
+                    style: text.taskTitle,
                     onCommit: (v) => commands.edit(task.id, title: Patch(v)),
                   ),
                   const SizedBox(height: 12),
