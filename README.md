@@ -79,7 +79,10 @@ two seconds); the app picks up the terminal's when it opens.
 
 In the terminal client, the top line captures (Enter saves, `@today`,
 `!2026-09-01`), `↑`/`↓` move the cursor over the tasks below, `^D`
-completes the selected one and `^U` undoes; the last two rows name the
+completes the selected one (a task finished today stays in its list
+with a tick until midnight and `^D` reopens it — Settings › General,
+or `sai_tui finished-tasks immediate`, drops it into the Logbook at
+once) and `^U` undoes; the last two rows name the
 active provider with its `local`/`cloud` tag and the keys. It ships as
 a bundle, the binary beside the SQLite it bundles — `dart build cli -t
 apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui` puts
