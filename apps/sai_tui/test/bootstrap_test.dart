@@ -21,6 +21,9 @@ final class _Probed implements LlmProvider, LlmEndpointProbe {
   @override
   LlmCall start(LlmRequest request) => throw UnimplementedError();
   @override
+  void releaseIdle() {}
+
+  @override
   Future<void> close() async {}
   @override
   Future<EndpointInfo> probe() async {

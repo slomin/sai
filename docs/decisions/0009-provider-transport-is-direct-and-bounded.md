@@ -60,6 +60,12 @@ Every outbound provider request goes through one transport, in
   are capped at 1 MiB.
 - **Cancellation** finishes the call first (the controller's rule), then
   aborts the socket, so the recorder's three lines are always written.
+  Cancellation is client-side only: OpenAI-compatible servers expose no
+  cancel endpoint, so a server may keep ingesting the prompt bytes it
+  already received until it notices the disconnect — a cancelled warm
+  can look busy on the old endpoint for a while after a provider switch.
+  Intended (#109); the transport's whole obligation is that the abort
+  reaches the wire promptly.
 - **Fixed failure text.** A failure names its kind, a message from a
   fixed set (`policy.dart`), the endpoint's *origin*, and an HTTP status
   where there was one — never an exception's text, a response body, a

@@ -34,13 +34,16 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     HttpClient Function()? clientFactory,
   }) : _endpoint = _trimSlash(endpoint),
        origin = endpointOrigin(endpoint),
-       _client = (clientFactory ?? HttpClient.new)() {
-    _client
-      ..connectionTimeout = deadlines.connect
-      // Direct connections only: `HTTP(S)_PROXY` in the environment would
-      // otherwise route a LAN key through whatever it names.
-      ..findProxy = (_) => 'DIRECT';
+       _clientFactory = clientFactory ?? HttpClient.new {
+    _client = _newClient();
   }
+
+  /// A configured transport client. Direct connections only:
+  /// `HTTP(S)_PROXY` in the environment would otherwise route a LAN key
+  /// through whatever it names.
+  HttpClient _newClient() => _clientFactory()
+    ..connectionTimeout = deadlines.connect
+    ..findProxy = (_) => 'DIRECT';
 
   static Uri _trimSlash(Uri uri) => uri.path.endsWith('/')
       ? uri.replace(path: uri.path.substring(0, uri.path.length - 1))
@@ -94,7 +97,8 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   Uri get endpoint => _endpoint;
 
   final SecretStore _secrets;
-  final HttpClient _client;
+  final HttpClient Function() _clientFactory;
+  late HttpClient _client;
   final _running = <LlmCallController>{};
   var _closed = false;
 
@@ -633,6 +637,18 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
 
   /// Whether [close] has been called.
   bool get isClosed => _closed;
+
+  /// Retires the current client so its idle keep-alive sockets close
+  /// now; a fresh client serves the next call. Requests already running
+  /// (an aborting warm, a probe) finish on the old client, which tears
+  /// itself down when the last of them ends (#109).
+  @override
+  void releaseIdle() {
+    if (_closed) return;
+    final old = _client;
+    _client = _newClient();
+    old.close();
+  }
 
   @override
   Future<void> close() async {

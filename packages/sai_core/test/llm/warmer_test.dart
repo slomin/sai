@@ -30,6 +30,9 @@ final class _Warmy implements LlmProvider, LlmEndpointProbe {
   @override
   LlmCall start(LlmRequest request) => _delegate.start(request);
   @override
+  void releaseIdle() {}
+
+  @override
   Future<void> close() => _delegate.close();
   @override
   Future<EndpointInfo> probe() async {
