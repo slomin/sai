@@ -167,6 +167,24 @@ final class _Sum {
   double? cost;
 }
 
+/// One row's numbers the way both clients say them:
+/// `3 calls (1 failed) · 1,234 tokens · 42s · $0.0042`. Every piece
+/// appears only when it is known; cost keeps four decimals under a
+/// cent, two above.
+String usageWords(DailyUsage row) {
+  final calls = '${row.calls} ${row.calls == 1 ? 'call' : 'calls'}';
+  final failed = row.failed == 0 ? '' : ' (${row.failed} failed)';
+  final tokens = row.tokens == null
+      ? ''
+      : ' · ${thousands(row.tokens!)} tokens';
+  final cost = switch (row.cost) {
+    null => '',
+    final c when c < 0.01 => ' · \$${c.toStringAsFixed(4)}',
+    final c => ' · \$${c.toStringAsFixed(2)}',
+  };
+  return '$calls$failed$tokens · ${elapsedWords(row.duration)}$cost';
+}
+
 /// `18402` as `18,402`.
 String thousands(int n) {
   final digits = n.toString();

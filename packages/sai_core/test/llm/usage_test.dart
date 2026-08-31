@@ -219,6 +219,46 @@ void main() {
   });
 
   group('the words', () {
+    test('usageWords says only what is known', () {
+      DailyUsage row({
+        int calls = 1,
+        int failed = 0,
+        int? totalTokens,
+        Duration duration = const Duration(seconds: 12),
+        double? cost,
+      }) => DailyUsage(
+        day: const CalendarDate(2026, 8, 25),
+        provider: 'fake',
+        calls: calls,
+        failed: failed,
+        promptTokens: null,
+        completionTokens: null,
+        totalTokens: totalTokens,
+        duration: duration,
+        cost: cost,
+      );
+      expect(usageWords(row(duration: Duration.zero)), '1 call · 0s');
+      expect(
+        usageWords(
+          row(
+            calls: 3,
+            failed: 1,
+            totalTokens: 1234,
+            duration: const Duration(seconds: 42),
+          ),
+        ),
+        '3 calls (1 failed) · 1,234 tokens · 42s',
+      );
+      expect(
+        usageWords(row(totalTokens: 135, cost: 0.0042)),
+        '1 call · 135 tokens · 12s · \$0.0042',
+      );
+      expect(
+        usageWords(row(totalTokens: 135, cost: 1.234)),
+        '1 call · 135 tokens · 12s · \$1.23',
+      );
+    });
+
     test('thousands', () {
       expect(thousands(0), '0');
       expect(thousands(999), '999');
