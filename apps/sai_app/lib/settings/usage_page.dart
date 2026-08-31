@@ -20,9 +20,12 @@ class UsagePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final usage = ref.watch(dailyUsageProvider).value;
     final today = ref.watch(todayProvider);
+    // The promised window, not the seven most recent active days: a
+    // lone call from a month ago stays out of "recent".
+    final oldest = today.addDays(-7);
     final earlier = usage == null
         ? const <CalendarDate>[]
-        : usage.days.where((d) => d < today).take(7).toList();
+        : usage.days.where((d) => d < today && oldest <= d).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

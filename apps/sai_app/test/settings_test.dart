@@ -421,6 +421,11 @@ void main() {
               ts: ts,
             ),
           );
+          // A month-old call: real in the log, outside the shown window.
+          await line('old', now.subtract(const Duration(days: 30)), {
+            'duration_ms': 9000,
+            'total_tokens': 9000,
+          });
           final yesterday = now.subtract(const Duration(days: 1));
           await line('lan', yesterday, {
             'duration_ms': 3000,
@@ -463,6 +468,11 @@ void main() {
         expect(
           find.text('LAN · 1 CALL · 500 TOKENS · 3S · \$0.0042'),
           findsOneWidget,
+        );
+        expect(
+          find.byKey(usageDayKey(today.addDays(-30))),
+          findsNothing,
+          reason: 'a month-old call stays outside the seven-day window',
         );
       });
 
