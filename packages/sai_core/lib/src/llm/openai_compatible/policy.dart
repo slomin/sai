@@ -27,6 +27,7 @@ abstract final class TransportText {
   static const tls = 'TLS handshake failed';
   static const dns = 'DNS lookup failed';
   static const rejectedKey = 'the endpoint rejected the key';
+  static const schemaRefused = 'the endpoint refused the response schema';
   static String answered(int status) => 'the endpoint answered $status';
   static const notAStream = 'the endpoint did not answer with a stream';
   static const badChunk = 'a chunk could not be read';
@@ -55,6 +56,7 @@ abstract final class TransportText {
     tls,
     dns,
     rejectedKey,
+    schemaRefused,
     notAStream,
     badChunk,
     endedEarly,

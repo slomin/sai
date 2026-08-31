@@ -46,6 +46,7 @@ final class LlmRequest {
     this.taskContext,
     TaskProvenance? taskContextProvenance,
     this.reasoning,
+    this.responseSchema,
   }) : messages = List.unmodifiable(messages),
        taskContextProvenance =
            taskContextProvenance ??
@@ -98,6 +99,10 @@ final class LlmRequest {
   /// wire); null leaves it to the backend's default.
   final bool? reasoning;
 
+  /// A schema the answer must take (#35), or null for free text; see
+  /// [ResponseSchema].
+  final ResponseSchema? responseSchema;
+
   /// The request as a cloud provider may receive it (#105). Catalog data
   /// never goes to the cloud: a catalog [taskContext] and catalog-flagged
   /// history are dropped whatever the arguments say. With
@@ -138,6 +143,7 @@ final class LlmRequest {
           ? taskContextProvenance
           : TaskProvenance.none,
       reasoning: reasoning,
+      responseSchema: responseSchema,
     );
   }
 
@@ -150,6 +156,7 @@ final class LlmRequest {
     temperature: temperature,
     taskContext: taskContext,
     taskContextProvenance: taskContextProvenance,
+    responseSchema: responseSchema,
   );
 
   /// The messages as they go on the wire: [taskContext], when present, as
@@ -177,7 +184,26 @@ final class LlmRequest {
     maxTokens: maxTokens,
     temperature: temperature,
     reasoning: reasoning,
+    responseSchema: responseSchema,
   );
+}
+
+/// A JSON schema the backend must shape its answer to (#35), carried
+/// apart from the messages. It goes on the wire as OpenAI's
+/// `response_format` object — the nesting llama-server and LM Studio
+/// both read — and onto the `provider.request` line raw; it never
+/// enters `context_hash`, which names the prompt alone.
+final class ResponseSchema {
+  const ResponseSchema({required this.name, required this.schema});
+
+  final String name;
+  final Map<String, Object?> schema;
+
+  /// The `response_format` object as sent and as recorded.
+  Map<String, Object?> toWire() => {
+    'type': 'json_schema',
+    'json_schema': {'name': name, 'strict': true, 'schema': schema},
+  };
 }
 
 /// One streamed piece of the answer. A class, not a string: later

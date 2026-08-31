@@ -192,6 +192,41 @@ void main() {
     );
   });
 
+  group('ResponseSchema (#35)', () {
+    const schema = ResponseSchema(
+      name: 'sai_proposal_v0',
+      schema: {'type': 'object'},
+    );
+
+    test('goes on the wire in the OpenAI nesting', () {
+      expect(schema.toWire(), {
+        'type': 'json_schema',
+        'json_schema': {
+          'name': 'sai_proposal_v0',
+          'strict': true,
+          'schema': {'type': 'object'},
+        },
+      });
+    });
+
+    test('survives every request copy', () {
+      final request = LlmRequest(
+        messages: const [LlmMessage(LlmRole.user, 'q')],
+        taskContext: 'Today (0): none',
+        reasoning: false,
+        responseSchema: schema,
+      );
+      expect(request.assembled().responseSchema, same(schema));
+      expect(request.withoutReasoning().responseSchema, same(schema));
+      expect(
+        request
+            .forCloud(sendTaskContext: true, keepCompactHistory: true)
+            .responseSchema,
+        same(schema),
+      );
+    });
+  });
+
   group('LlmResult', () {
     test('a failure is present exactly when the finish is failed', () {
       const failure = LlmFailure(LlmFailureKind.timeout, 'x');

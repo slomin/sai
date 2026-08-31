@@ -26,6 +26,8 @@ Map<String, Object?> recordedRequestPayload(LlmRequest request, BlobRef hash) =>
       if (request.maxTokens != null) 'max_tokens': request.maxTokens,
       if (request.temperature != null) 'temperature': request.temperature,
       if (request.reasoning != null) 'reasoning': request.reasoning,
+      if (request.responseSchema case final schema?)
+        'response_format': schema.toWire(),
       'context_hash': hash.toString(),
     };
 

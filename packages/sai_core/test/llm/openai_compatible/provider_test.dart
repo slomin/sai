@@ -610,6 +610,57 @@ void main() {
     await provider.close();
   });
 
+  test('a response schema goes on the wire; a 400 rejects it (#35)', () async {
+    refuse({'response_format'});
+    final provider = make();
+    final request = LlmRequest(
+      messages: const [LlmMessage(LlmRole.user, 'a')],
+      responseSchema: const ResponseSchema(
+        name: 'p',
+        schema: {'type': 'object'},
+      ),
+    );
+    final result = await provider.start(request).done;
+    expect(result.failure!.kind, LlmFailureKind.rejected);
+    expect(result.failure!.message, TransportText.schemaRefused);
+    expect(result.failure!.status, 400);
+    expect(stub.requests, hasLength(1), reason: 'no retry without the schema');
+    final body = jsonDecode(stub.requests.single.body) as Map;
+    expect(body['response_format'], {
+      'type': 'json_schema',
+      'json_schema': {
+        'name': 'p',
+        'strict': true,
+        'schema': {'type': 'object'},
+      },
+    });
+    await provider.close();
+  });
+
+  test('the reasoning ladder still negotiates under a schema', () async {
+    refuse({'reasoning_effort', 'chat_template_kwargs'});
+    final provider = make();
+    final request = LlmRequest(
+      messages: const [LlmMessage(LlmRole.user, 'a')],
+      reasoning: false,
+      responseSchema: const ResponseSchema(
+        name: 'p',
+        schema: {'type': 'object'},
+      ),
+    );
+    final result = await provider.start(request).done;
+    expect(result.text, 'ok', reason: '${result.failure}');
+    expect(switchesSent(), ['et', 'e', '']);
+    for (final r in stub.requests) {
+      expect(
+        (jsonDecode(r.body) as Map).containsKey('response_format'),
+        isTrue,
+        reason: 'the schema is never dropped',
+      );
+    }
+    await provider.close();
+  });
+
   test('a 400 with no switch sent is a rejection, not a retry', () async {
     refuse({'messages'});
     final provider = make();

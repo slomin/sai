@@ -289,6 +289,30 @@ void main() {
     });
   });
 
+  test('a response schema is recorded raw, outside the hash (#35)', () async {
+    final request = LlmRequest(
+      messages: const [LlmMessage(LlmRole.user, 'hello world')],
+      temperature: 0.2,
+      responseSchema: const ResponseSchema(
+        name: 'x',
+        schema: {'type': 'object'},
+      ),
+    );
+    final call = await recorder.start(FakeLlmProvider(), request);
+    await call.done;
+    final payload = lines().first['payload'] as Map<String, Object?>;
+    expect(payload['response_format'], {
+      'type': 'json_schema',
+      'json_schema': {
+        'name': 'x',
+        'strict': true,
+        'schema': {'type': 'object'},
+      },
+    });
+    // The hash names the prompt; the schema rides beside it on the line.
+    expect(call.contextHash, contextHash(request.messages));
+  });
+
   test('done resolves after the archive has the lines', () async {
     final call = await recorder.start(FakeLlmProvider(), ask('x'));
     await call.done;
