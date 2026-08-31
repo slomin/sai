@@ -34,6 +34,12 @@ const chatProposeKey = Key('chat-propose');
 /// The suggestion lane (#35) and its per-card controls.
 const suggestionLaneKey = Key('suggestion-lane');
 
+/// The repaint boundaries that pin a scroll tick's repaint to the pane
+/// that scrolled (#109) — scrollbar chrome and hover repaints originate
+/// above the viewport, and these keep them out of the rest of the band.
+const chatTranscriptBoundaryKey = Key('chat-transcript-boundary');
+const suggestionLaneBoundaryKey = Key('suggestion-lane-boundary');
+
 Key suggestionCardKey(int index) => Key('suggestion-card-$index');
 Key suggestionAcceptKey(int index) => Key('suggestion-accept-$index');
 Key suggestionRejectKey(int index) => Key('suggestion-reject-$index');

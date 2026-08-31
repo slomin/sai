@@ -248,6 +248,29 @@ void main() {
       return refusal;
     }
 
+    testWidgets('each scrollable sits under its own repaint boundary', (
+      tester,
+    ) async {
+      // #109: the macOS scrollbar paints above the viewport; without a
+      // boundary per pane a scroll tick repaints the whole window.
+      final container = await ready(tester);
+      await proposeSettled(tester, container);
+      expect(
+        find.ancestor(
+          of: find.byKey(chatTranscriptKey),
+          matching: find.byKey(chatTranscriptBoundaryKey),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.ancestor(
+          of: find.byKey(suggestionLaneKey),
+          matching: find.byKey(suggestionLaneBoundaryKey),
+        ),
+        findsOneWidget,
+      );
+    }, timeout: laneTimeout);
+
     testWidgets('a task mutation elsewhere moves neither scroll nor lane', (
       tester,
     ) async {

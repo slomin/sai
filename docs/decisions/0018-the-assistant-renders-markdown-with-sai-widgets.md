@@ -75,4 +75,15 @@ workspace is deliberately dependency-lean.
 - One net-new package in the lockfile (`highlight`); `markdown` was
   already there.
 - The transcript's `ListView` stays non-lazy: auto-follow jumps to
-  `maxScrollExtent`, which a builder only estimates.
+  `maxScrollExtent`, which a builder only estimates. Measured with the
+  repaint rainbow at a dozen turns plus the lane (#109), the layer tree
+  stays modest and the per-turn boundaries hold — rows are not
+  re-rasterized by scrolling.
+- Each scrollable in the band sits under its own `RepaintBoundary`
+  (#109), pinning a scroll tick's repaint to the pane that scrolled —
+  scrollbar chrome and hover repaints originate above the viewport, and
+  the boundary keeps them out of the rest of the band. The flicker
+  itself traced to two rebuild defects, both fixed with it: every task
+  commit rebuilt the whole transcript (the chat body watched the
+  suggestion list by identity, not presence), and auto-follow re-jumped
+  to an unchanged extent, fighting the wheel over the last 48px.

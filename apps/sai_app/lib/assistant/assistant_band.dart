@@ -234,10 +234,24 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(child: _transcript(state, reasoningOn)),
+                // One boundary per scrollable (#109): scrollbar chrome
+                // and hover repaints originate above the viewport, and
+                // this pins a scroll tick's repaint to the pane that
+                // scrolled — measured with the repaint rainbow, which
+                // put the per-tick repaint here and nowhere else.
+                Expanded(
+                  child: RepaintBoundary(
+                    key: chatTranscriptBoundaryKey,
+                    child: _transcript(state, reasoningOn),
+                  ),
+                ),
                 // The lane (#35): the latest proposal's cards, beside
                 // the talk, only while there is one.
-                if (lane) const SizedBox(width: 300, child: SuggestionLane()),
+                if (lane)
+                  const RepaintBoundary(
+                    key: suggestionLaneBoundaryKey,
+                    child: SizedBox(width: 300, child: SuggestionLane()),
+                  ),
               ],
             ),
           ),
