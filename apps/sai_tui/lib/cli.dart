@@ -18,6 +18,8 @@ usage: sai_tui                       open the terminal client
        sai_tui reasoning [on|off]    let the model think before answering
        sai_tui finished-tasks [end-of-day|immediate]
                                     when a finished task leaves its list
+       sai_tui usage [--day YYYY-MM-DD]
+                                    what the models did that day
        sai_tui secret set <id>       read the key from a hidden prompt
                                     (or from stdin when piped)
        sai_tui secret clear <id>
@@ -75,6 +77,9 @@ String usageFor(String program) {
         '$shift$line',
   ].join('\n');
 }
+
+/// What `usage` prints per provider: the shared words after the name.
+String usageLine(DailyUsage row) => '${row.provider} · ${usageWords(row)}';
 
 /// What `privacy` prints for each position of the switch.
 String privacyLine(PrivacyPolicy policy) => policy.shareTasksWithCloud
@@ -380,6 +385,32 @@ Future<int> runCli(
         out.writeln(
           finishedTasksLine(container.read(finishedTaskVisibilityProvider)),
         );
+        return cliOk;
+
+      case ['usage', ...final rest]:
+        final day = switch (rest) {
+          [] => container.read(todayProvider),
+          ['--day'] => throw _Usage('--day needs a day (YYYY-MM-DD)'),
+          ['--day', final word] =>
+            CalendarDate.tryParse(word) ??
+                (throw _Usage('--day takes a day as YYYY-MM-DD')),
+          _ => throw _Usage('usage takes only --day YYYY-MM-DD'),
+        };
+        // An unlistened future provider is disposed mid-load; hold it.
+        final sub = container.listen(dailyUsageProvider, (_, _) {});
+        final List<DailyUsage> rows;
+        try {
+          rows = (await container.read(dailyUsageProvider.future)).onDay(day);
+        } finally {
+          sub.close();
+        }
+        if (rows.isEmpty) {
+          out.writeln('no calls on $day');
+          return cliOk;
+        }
+        for (final row in rows) {
+          out.writeln(usageLine(row));
+        }
         return cliOk;
 
       case ['secret', final verb, final id]

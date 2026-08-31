@@ -39,6 +39,37 @@ void main() {
 
   File settingsFile() => container.read(settingsFileProvider);
 
+  group('usage (#30)', () {
+    test('a quiet day says so', () async {
+      expect(await run('usage'), cliOk);
+      expect(out.toString(), startsWith('no calls on '));
+    });
+
+    test('a turn shows up as a per-provider line', () async {
+      await run('provider use fake');
+      await container.read(tasksProvider.future);
+      await container.read(chatProvider.notifier).send('hello?');
+      out.clear();
+      expect(await run('usage'), cliOk);
+      expect(out.toString(), contains('fake · 1 call'));
+      expect(out.toString(), contains('tokens'));
+      // Another day holds nothing.
+      out.clear();
+      expect(await run('usage --day 1999-01-01'), cliOk);
+      expect(out.toString(), 'no calls on 1999-01-01\n');
+    });
+
+    test('--day is strict', () async {
+      expect(await run('usage --day'), cliUsageError);
+      expect(err.toString(), contains('--day needs a day'));
+      err.clear();
+      expect(await run('usage --day yesterday'), cliUsageError);
+      expect(err.toString(), contains('--day takes a day as YYYY-MM-DD'));
+      err.clear();
+      expect(await run('usage extra'), cliUsageError);
+    });
+  });
+
   test('the built-in endpoints are listed and selectable (#23)', () async {
     container = testContainer(builtins: builtinLlms(InMemorySecretStore()));
     expect(await run('provider list'), cliOk);
