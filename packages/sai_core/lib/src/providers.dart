@@ -783,7 +783,11 @@ class CacheWarmer extends Notifier<WarmState> {
       }
       _call = call;
       final result = await call.done;
-      if (epoch != _epoch || !ref.mounted) return;
+      if (!ref.mounted) return;
+      // The recorder just wrote lines no other watcher can see — the
+      // same reason the Providers page bumps after its test (#30).
+      container.read(archiveRevisionProvider.notifier).bump();
+      if (epoch != _epoch) return;
       _tick?.cancel();
       _call = null;
       _inFlight = null;

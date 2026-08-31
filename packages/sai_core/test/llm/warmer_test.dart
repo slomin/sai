@@ -173,6 +173,27 @@ void main() {
     },
   );
 
+  test('a finished warm lands in the daily totals', () async {
+    // The warm's usage line is written by the recorder behind every
+    // watcher's back; the warmer bumps the revision so Settings › Usage
+    // does not sit stale until an unrelated change (review, #107).
+    final warmy = _Warmy();
+    final c = await make(warmy);
+    final store = c.read(tasksProvider.notifier).store;
+    await store.createTask(title: 'One');
+    c.read(settingsProvider.notifier).selectLlm('warmy');
+    final sub = c.listen(cacheWarmerProvider, (_, _) {});
+    final usageSub = c.listen(dailyUsageProvider, (_, _) {});
+    await settle();
+    expect(c.read(cacheWarmerProvider).phase, WarmPhase.warm);
+    final usage = await c.read(dailyUsageProvider.future);
+    final today = CalendarDate.fromLocal(DateTime.now());
+    expect(usage.onDay(today).single.provider, 'warmy');
+    expect(usage.onDay(today).single.calls, 1);
+    usageSub.close();
+    sub.close();
+  });
+
   test('a re-read of the same archive keeps the warm running', () async {
     // The warm's own lines make the TUI poll and reload every two
     // seconds; a content-identical projection must not cancel it, or
