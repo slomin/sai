@@ -6,6 +6,7 @@ import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'chat_pane.dart';
+import 'suggestion_lane.dart';
 import 'task_list.dart';
 
 final _listStateProvider = Provider(
@@ -16,6 +17,8 @@ final _chatViewProvider = Provider(
   (ref) => (
     chat: ref.watch(chatProvider),
     reasoningOn: ref.watch(reasoningProvider),
+    views: ref.watch(suggestionViewsProvider),
+    note: ref.watch(proposalsProvider.select((s) => s.current?.note ?? '')),
   ),
 );
 
@@ -45,7 +48,7 @@ class TuiApp extends StatefulComponent {
   State<TuiApp> createState() => _TuiAppState();
 }
 
-enum _Pane { capture, chat }
+enum _Pane { capture, chat, lane }
 
 class _TuiAppState extends State<TuiApp> {
   final _controller = TextEditingController();
@@ -53,6 +56,10 @@ class _TuiAppState extends State<TuiApp> {
   final _chatScroll = AutoScrollController();
   final _listScroll = ScrollController();
   var _pane = _Pane.capture;
+
+  /// The lane's cursor (#35); clamped against the shown suggestions
+  /// whenever it is used.
+  var _laneCursor = 0;
 
   /// The cursor over the task rows; clamped against the current list
   /// whenever it is read, so it never points past a shrunken list.
@@ -110,22 +117,88 @@ class _TuiAppState extends State<TuiApp> {
       _move(event.logicalKey == LogicalKey.arrowDown ? 1 : -1);
       return true;
     }
+    // The proposal trigger (#35): the chat draft — or, empty, the
+    // default request — as a schema-constrained turn. Anywhere: a
+    // control chord carries no character, so no field swallows it.
+    if (event.logicalKey == LogicalKey.keyP && event.isControlPressed) {
+      _propose(_chatInput.text);
+      return true;
+    }
+    // The lane's own keys (#35): plain letters are safe here — no
+    // field is focused while the lane is.
+    if (_pane == _Pane.lane) {
+      final views = context.container.read(suggestionViewsProvider);
+      final max = views.length - 1;
+      if (views.isEmpty) {
+        setState(() => _pane = _Pane.chat);
+      } else if (event.logicalKey == LogicalKey.arrowUp ||
+          event.logicalKey == LogicalKey.arrowDown) {
+        final step = event.logicalKey == LogicalKey.arrowDown ? 1 : -1;
+        setState(() => _laneCursor = (_laneCursor + step).clamp(0, max));
+        return true;
+      } else if (event.logicalKey == LogicalKey.keyY ||
+          event.logicalKey == LogicalKey.enter) {
+        unawaited(_verdict(_laneCursor.clamp(0, max), accept: true));
+        return true;
+      } else if (event.logicalKey == LogicalKey.keyN) {
+        unawaited(_verdict(_laneCursor.clamp(0, max), accept: false));
+        return true;
+      }
+    }
     // Directional, not toggles: a real terminal can deliver a key twice
     // (see tool/smoke/tui.py), and a toggle fired twice goes nowhere.
     if (event.logicalKey == LogicalKey.tab) {
-      if (_pane != _Pane.chat) setState(() => _pane = _Pane.chat);
+      if (_pane == _Pane.capture) {
+        setState(() => _pane = _Pane.chat);
+      } else if (_pane == _Pane.chat &&
+          context.container.read(suggestionViewsProvider).isNotEmpty) {
+        setState(() {
+          _pane = _Pane.lane;
+          _laneCursor = 0;
+        });
+      }
       return true;
     }
     if (event.logicalKey == LogicalKey.escape) {
       final chat = context.container.read(chatProvider);
       if (chat.busy) {
         context.container.read(chatProvider.notifier).cancel();
+      } else if (_pane == _Pane.lane) {
+        setState(() => _pane = _Pane.chat);
       } else if (_pane != _Pane.capture) {
         setState(() => _pane = _Pane.capture);
       }
       return true;
     }
     return false;
+  }
+
+  /// Sends [line] — or, blank, the default request — as a proposal
+  /// turn; the lane shows what comes back. Mirrors [_ask]'s
+  /// draft-keeping.
+  void _propose(String line) {
+    final chat = context.container.read(chatProvider.notifier);
+    final sending = chat.propose(line);
+    if (context.container.read(chatProvider).error != null) return;
+    setState(_chatInput.clear);
+    unawaited(
+      sending.then((sent) {
+        if (!mounted) return;
+        if (!sent && _chatInput.text.isEmpty) {
+          setState(() => _chatInput.text = line);
+        }
+      }),
+    );
+  }
+
+  /// The lane's verdict on one suggestion; a refusal lands on the
+  /// notice line.
+  Future<void> _verdict(int index, {required bool accept}) async {
+    final proposals = context.container.read(proposalsProvider.notifier);
+    final refusal = accept
+        ? await proposals.accept(index)
+        : await proposals.reject(index);
+    _setNotice(refusal ?? '');
   }
 
   void _ask(String line) {
@@ -314,6 +387,15 @@ class _TuiAppState extends State<TuiApp> {
                   Expanded(child: pane)
                 else
                   pane,
+                // The lane (#35): the latest proposal, while there is
+                // one; at most a header and eight rows.
+                if (view.views.isNotEmpty)
+                  SuggestionLaneTui(
+                    views: view.views,
+                    note: view.note,
+                    cursor: _laneCursor,
+                    focused: _pane == _Pane.lane,
+                  ),
                 if (_notice.isNotEmpty)
                   Text(_notice, style: TextStyle(color: Colors.yellow)),
                 // One row, whatever the provider is called: a wrapped
@@ -335,7 +417,8 @@ class _TuiAppState extends State<TuiApp> {
                   ),
                 ),
                 Text(
-                  '^C quit · ^U undo · ^D done · ↑↓ select · Tab chat · Esc stop/back',
+                  '^C quit · ^U undo · ^D done · ↑↓ select · Tab chat/lane '
+                  '· ^P propose · y/n · Esc back',
                   style: TextStyle(color: Colors.gray),
                 ),
               ],
