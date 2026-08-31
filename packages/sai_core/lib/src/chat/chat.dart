@@ -6,12 +6,17 @@ import '../archive/archive.dart';
 import '../archive/blobref.dart';
 import '../archive/event.dart';
 import '../context/assemble.dart';
+import '../context/catalog.dart';
+import '../context/marker.dart';
 import '../llm/call.dart';
 import '../llm/failure.dart';
 import '../llm/privacy.dart';
 import '../llm/provider.dart';
 import '../llm/recorder.dart';
 import '../llm/status.dart';
+import '../proposals/events.dart';
+import '../proposals/parse.dart';
+import '../proposals/proposal.dart';
 import '../providers.dart';
 
 /// Who said a [ChatTurn].
@@ -31,6 +36,8 @@ final class ChatTurn {
     this.tasksWithheld = false,
     this.provenance = TaskProvenance.none,
     this.dropped = const [],
+    this.proposal,
+    this.proposed = false,
   });
 
   final ChatRole role;
@@ -61,6 +68,29 @@ final class ChatTurn {
   /// ([AssembledContext.dropped]); empty when nothing was cut.
   final List<String> dropped;
 
+  /// How this turn's proposal call ended (#35): set on the assistant
+  /// turn of an explicit request, or on the answer whose marker
+  /// triggered the follow-up; null when no proposal belongs here.
+  final ProposalOutcome? proposal;
+
+  /// Whether a user turn asked for a proposal (the explicit trigger).
+  final bool proposed;
+
+  /// This turn with its proposal call's [outcome] attached.
+  ChatTurn withProposal(ProposalOutcome outcome) => ChatTurn(
+    role: role,
+    text: text,
+    reasoning: reasoning,
+    event: event,
+    finish: finish,
+    failure: failure,
+    tasksWithheld: tasksWithheld,
+    provenance: provenance,
+    dropped: dropped,
+    proposal: outcome,
+    proposed: proposed,
+  );
+
   bool get failed => failure != null;
 
   @override
@@ -74,6 +104,12 @@ List<String> turnNotes(ChatTurn turn) => [
   if (turn.finish == LlmFinish.length) 'cut short',
   if (turn.tasksWithheld) tasksWithheldWord,
   ?AssembledContext.cutNote(turn.dropped),
+  ?switch (turn.proposal) {
+    null => null,
+    ProposalMade(:final count) => proposalMadeNote(count),
+    ProposalRefused(reason: proposalCancelledReason) => proposalCancelledNote,
+    ProposalRefused(:final reason) => 'proposal failed: $reason',
+  },
 ];
 
 /// The failed turn's line, the same words in every client and the
@@ -81,6 +117,10 @@ List<String> turnNotes(ChatTurn turn) => [
 String chatFailureLine(LlmFailure failure) =>
     'failed: ${failure.kind.name} — ${failure.message}'
     '${failure.endpoint == null ? '' : ' (${failure.endpoint})'}';
+
+/// What kind of call is running, for the waiting words the clients
+/// show: an ordinary answer streams, a proposal call never does (#35).
+enum ChatPhase { idle, answering, proposing }
 
 /// The transcript and what is happening to it.
 final class ChatState {
@@ -90,6 +130,7 @@ final class ChatState {
     this.reasoning,
     this.tasksWithheld = false,
     this.error,
+    this.phase = ChatPhase.idle,
   }) : turns = List.unmodifiable(turns);
 
   static final empty = ChatState(turns: const []);
@@ -110,6 +151,9 @@ final class ChatState {
   /// next send or the running turn ends.
   final String? error;
 
+  /// What the running call is doing; [ChatPhase.idle] while none runs.
+  final ChatPhase phase;
+
   bool get busy => streaming != null;
 
   ChatState copyWith({
@@ -120,12 +164,14 @@ final class ChatState {
     bool? tasksWithheld,
     String? error,
     bool clearError = false,
+    ChatPhase? phase,
   }) => ChatState(
     turns: turns ?? this.turns,
     streaming: clearStreaming ? null : (streaming ?? this.streaming),
     reasoning: clearStreaming ? null : (reasoning ?? this.reasoning),
     tasksWithheld: tasksWithheld ?? this.tasksWithheld,
     error: clearError ? null : (error ?? this.error),
+    phase: phase ?? (clearStreaming ? ChatPhase.idle : this.phase),
   );
 }
 
@@ -134,6 +180,23 @@ const chatBusyError = 'still answering — Esc stops it';
 
 /// What [ChatNotifier.send] says before the archive has opened.
 const chatNotReadyError = 'opening the archive…';
+
+/// What [ChatNotifier.propose] says on a `cloud` provider: handles live
+/// only in the catalog, which never leaves the machine (#35).
+const proposalsNeedLocal = 'proposals need a local provider';
+
+/// The TUI's word while a proposal call runs.
+const proposingWord = 'proposing…';
+
+/// A [ProposalRefused] reason when the person stopped the call.
+const proposalCancelledReason = 'cancelled';
+
+/// The turn note for a cancelled proposal call.
+const proposalCancelledNote = 'proposal cancelled';
+
+/// The turn note for a recorded proposal.
+String proposalMadeNote(int count) =>
+    'proposed $count change${count == 1 ? '' : 's'}';
 
 /// Holds the conversation and runs each turn: assemble (ADR 0011),
 /// record the user's line, call through the recorder (ADR 0007, 0010),
@@ -213,7 +276,14 @@ class ChatNotifier extends Notifier<ChatState> {
     // Busy from here, before the first await: a second Enter in the same
     // tick is refused rather than racing this one to the recorder. The
     // withheld flag belongs to this call, not the last one.
-    _set(state.copyWith(streaming: '', tasksWithheld: false, clearError: true));
+    _set(
+      state.copyWith(
+        streaming: '',
+        tasksWithheld: false,
+        clearError: true,
+        phase: ChatPhase.answering,
+      ),
+    );
     final Archive archive;
     final LlmRecorder recorder;
     final StoredEvent said;
@@ -269,7 +339,9 @@ class ChatNotifier extends Notifier<ChatState> {
       _set(
         delta.reasoning
             ? state.copyWith(reasoning: call.reasoning)
-            : state.copyWith(streaming: call.text),
+            // A trailing line that is the marker (or its beginning) is
+            // held back from display while the answer streams (#35).
+            : state.copyWith(streaming: shownText(call.text, streaming: true)),
       );
     });
     final result = await call.done;
@@ -279,6 +351,7 @@ class ChatNotifier extends Notifier<ChatState> {
 
     ChatTurn turn;
     String? error;
+    var proposes = false;
     if (result.finish == LlmFinish.failed) {
       // The header's light learns of it now, not on its next timer.
       container.read(connectionProvider.notifier).callFailed(result.failure!);
@@ -295,6 +368,11 @@ class ChatNotifier extends Notifier<ChatState> {
         dropped: assembled.dropped,
       );
     } else {
+      // A complete answer ending on the marker line asks for a proposal
+      // turn (#35); the raw text stays on provider.response, the person
+      // reads — and history carries — the stripped text.
+      proposes = result.finish == LlmFinish.stop && endsWithMarker(result.text);
+      final shown = shownText(result.text);
       BlobRef? event;
       try {
         final stored = await archive.append(
@@ -302,7 +380,11 @@ class ChatNotifier extends Notifier<ChatState> {
             type: EventTypes.chatMessage,
             actor: Actor.assistant,
             source: container.read(eventSourceProvider),
-            payload: {'text': result.text, 'finish': result.finish.name},
+            payload: {
+              'text': shown,
+              'finish': result.finish.name,
+              if (proposes) 'proposes': true,
+            },
             model: result.model,
             refs: [call.response!],
           ),
@@ -313,7 +395,7 @@ class ChatNotifier extends Notifier<ChatState> {
       }
       turn = ChatTurn(
         role: ChatRole.assistant,
-        text: result.text,
+        text: shown,
         reasoning: result.reasoning,
         event: event,
         finish: result.finish,
@@ -325,6 +407,30 @@ class ChatNotifier extends Notifier<ChatState> {
       );
     }
     if (!current()) return true;
+    if (proposes && error == null) {
+      // Stay busy and run the schema-constrained follow-up on this same
+      // generation; its outcome hangs on the answer turn. Esc cancels
+      // it like any call.
+      final at = state.turns.length;
+      _set(
+        state.copyWith(
+          turns: [...state.turns, turn],
+          streaming: '',
+          phase: ChatPhase.proposing,
+        ),
+      );
+      final outcome = await _proposalCall(
+        provider: provider,
+        request: autoProposalRequest,
+        current: current,
+        triggerRefs: [?turn.event],
+      );
+      if (!current()) return true;
+      final turns = [...state.turns];
+      turns[at] = turns[at].withProposal(outcome);
+      _set(state.copyWith(turns: turns, clearStreaming: true));
+      return true;
+    }
     _set(
       state.copyWith(
         turns: [...state.turns, turn],
@@ -335,6 +441,218 @@ class ChatNotifier extends Notifier<ChatState> {
       ),
     );
     return true;
+  }
+
+  /// Sends [draft] as an explicit proposal request (#35): the same
+  /// profile-and-catalog prefix as any catalog turn, the schema on the
+  /// request, the validated result in the lane. An empty draft asks for
+  /// [defaultProposalRequest]; refusals land on [ChatState.error].
+  Future<bool> propose(String draft) async {
+    final container = ref.container;
+    if (state.busy) return _refuse(chatBusyError);
+    final request = draft.trim().isEmpty
+        ? defaultProposalRequest
+        : draft.trim();
+    final provider = container.read(activeLlmProvider);
+    if (provider == null) return _refuse(noProviderStatus);
+    if (provider.privacy != LlmPrivacy.local) {
+      return _refuse(proposalsNeedLocal);
+    }
+    if (container.read(tasksProvider).value == null) {
+      return _refuse(chatNotReadyError);
+    }
+
+    final generation = ++_generation;
+    bool current() => generation == _generation && !_disposed;
+    _cancelRequested = false;
+    _set(
+      state.copyWith(
+        streaming: '',
+        tasksWithheld: false,
+        clearError: true,
+        phase: ChatPhase.proposing,
+      ),
+    );
+
+    final StoredEvent said;
+    try {
+      final archive = await container.read(archiveProvider.future);
+      if (_cancelRequested) return _abandon(current);
+      said = await archive.append(
+        EventDraft(
+          type: EventTypes.chatMessage,
+          actor: Actor.user,
+          source: container.read(eventSourceProvider),
+          payload: {'text': request, 'mode': 'propose'},
+        ),
+      );
+    } on Object catch (error) {
+      if (current()) {
+        _set(state.copyWith(clearStreaming: true));
+        _refuse('could not record the message: $error');
+      }
+      return false;
+    }
+    if (!current()) return false;
+    _set(
+      state.copyWith(
+        turns: [
+          ...state.turns,
+          ChatTurn(
+            role: ChatRole.user,
+            text: request,
+            event: said.id,
+            proposed: true,
+          ),
+        ],
+      ),
+    );
+    if (_cancelRequested) return _abandon(current);
+
+    final outcome = await _proposalCall(
+      provider: provider,
+      request: request,
+      current: current,
+      triggerRefs: [said.id],
+    );
+    if (!current()) return true;
+    _set(
+      state.copyWith(
+        turns: [
+          ...state.turns,
+          ChatTurn(role: ChatRole.assistant, text: '', proposal: outcome),
+        ],
+        clearStreaming: true,
+        clearError: true,
+      ),
+    );
+    return true;
+  }
+
+  /// One schema-constrained proposal call, validated into the lane. No
+  /// partial display: deltas never reach [ChatState.streaming]; the
+  /// clients show the proposing words instead. The handle map lives in
+  /// this call's locals and nowhere else — a handle cannot outlive its
+  /// turn.
+  Future<ProposalOutcome> _proposalCall({
+    required LlmProvider provider,
+    required String request,
+    required bool Function() current,
+    required List<BlobRef> triggerRefs,
+  }) async {
+    final container = ref.container;
+    final projection = container.read(tasksProvider).value;
+    if (projection == null) return const ProposalRefused(chatNotReadyError);
+    final today = container.read(todayProvider);
+    final handles = renderCatalog(projection, today: today).handles;
+
+    final AssembledContext assembled;
+    try {
+      assembled = assembleProposal(
+        profile: defaultProfile,
+        projection: projection,
+        today: today,
+        history: _history(),
+        request: request,
+        budget: container.read(chatBudgetProvider),
+        reasoning: container.read(reasoningProvider) ? null : false,
+      );
+    } on ContextBudgetError catch (error) {
+      return ProposalRefused(error.toString());
+    } on ContextSizeError catch (error) {
+      return ProposalRefused(error.toString());
+    }
+
+    final RecordedCall call;
+    try {
+      final recorder = await container.read(llmRecorderProvider.future);
+      if (_cancelRequested) {
+        return const ProposalRefused(proposalCancelledReason);
+      }
+      call = await recorder.start(provider, assembled.request);
+    } on Object catch (error) {
+      return ProposalRefused('the call could not start: $error');
+    }
+    if (!current()) {
+      call.cancel();
+      return const ProposalRefused(proposalCancelledReason);
+    }
+    _call = call;
+    if (_cancelRequested) call.cancel();
+    final result = await call.done;
+    _call = null;
+    if (!current()) return const ProposalRefused(proposalCancelledReason);
+
+    if (result.finish == LlmFinish.failed) {
+      container.read(connectionProvider.notifier).callFailed(result.failure!);
+      return ProposalRefused(chatFailureLine(result.failure!));
+    }
+    if (result.finish == LlmFinish.cancelled) {
+      return const ProposalRefused(proposalCancelledReason);
+    }
+    if (result.finish == LlmFinish.length) {
+      return const ProposalRefused('cut short');
+    }
+
+    final Archive archive;
+    try {
+      archive = await container.read(archiveProvider.future);
+    } on Object catch (error) {
+      return ProposalRefused('could not open the archive: $error');
+    }
+    final ParsedProposal parsed;
+    try {
+      parsed = parseProposalText(
+        result.text,
+        handles: handles,
+        projection: projection,
+        today: today,
+      );
+    } on ProposalFormatError catch (error) {
+      try {
+        await archive.append(
+          proposalRefusedDraft(
+            reason: error.reason,
+            response: call.response!,
+            source: container.read(eventSourceProvider),
+          ),
+        );
+        container.read(archiveRevisionProvider.notifier).bump();
+      } on Object {
+        // The provider.response line still holds the raw output.
+      }
+      return ProposalRefused(error.reason);
+    }
+    final StoredEvent made;
+    try {
+      made = await archive.append(
+        proposalMadeDraft(
+          note: parsed.note,
+          items: parsed.items,
+          model: result.model,
+          source: container.read(eventSourceProvider),
+          refs: [call.response!, ...triggerRefs],
+        ),
+      );
+    } on Object catch (error) {
+      return ProposalRefused('could not record the proposal: $error');
+    }
+    container.read(archiveRevisionProvider.notifier).bump();
+    container
+        .read(proposalsProvider.notifier)
+        .offer(
+          Proposal(
+            event: made.id,
+            model: result.model,
+            note: parsed.note,
+            items: parsed.items,
+          ),
+        );
+    return ProposalMade(
+      event: made.id,
+      count: parsed.items.length,
+      note: parsed.note,
+    );
   }
 
   /// The conversation as the model may see it: user and assistant turns

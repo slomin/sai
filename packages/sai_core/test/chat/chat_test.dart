@@ -503,6 +503,197 @@ void main() {
     });
   });
 
+  group('the propose lane (#35)', () {
+    Future<void> until(bool Function() ready) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (!ready()) {
+        if (DateTime.now().isAfter(deadline)) fail('timed out waiting');
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+    }
+
+    test('an explicit request records, validates, fills the lane', () async {
+      fake = FakeLlmProvider();
+      final container = await make();
+      final chat = container.read(chatProvider.notifier);
+      expect(await chat.propose('   '), isTrue);
+
+      final state = container.read(chatProvider);
+      expect(state.busy, isFalse);
+      expect(state.phase, ChatPhase.idle);
+      expect(state.turns.map((t) => t.role), [
+        ChatRole.user,
+        ChatRole.assistant,
+      ]);
+      expect(state.turns[0].text, defaultProposalRequest);
+      expect(state.turns[0].proposed, isTrue);
+      expect(state.turns[1].text, isEmpty);
+      expect(state.turns[1].proposal, isA<ProposalMade>());
+      expect(turnNotes(state.turns[1]), ['proposed 2 changes']);
+
+      final views = container.read(suggestionViewsProvider);
+      expect(views, hasLength(2));
+      expect(views[0].item.headline, 'Move to Someday');
+      expect(views[0].item.targetTitle, 'Call mom');
+      expect(views.any((v) => v.stale), isFalse);
+
+      final log = lines().where((l) => l['type'] != 'task.create').toList();
+      expect(log.map((l) => l['type']), [
+        'chat.message',
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+        'proposal.made',
+      ]);
+      expect(log[0]['payload'], {
+        'text': defaultProposalRequest,
+        'mode': 'propose',
+      });
+      final payload = log[1]['payload'] as Map;
+      expect(payload['response_format'], isNotNull);
+      final messages = (payload['messages'] as List).cast<Map>();
+      expect(messages[1]['text'], contains('- [t1] Call mom @today'));
+      expect(
+        messages.last['text'],
+        contains('Request: $defaultProposalRequest'),
+      );
+      final made = log[4];
+      expect(made['actor'], 'assistant');
+      expect(made['refs'], hasLength(2));
+    });
+
+    test('accepting applies through the store as the assistant', () async {
+      fake = FakeLlmProvider();
+      final container = await make();
+      await container.read(chatProvider.notifier).propose('tidy up');
+      expect(
+        await container.read(proposalsProvider.notifier).accept(0),
+        isNull,
+      );
+      final store = container.read(tasksProvider.notifier).store;
+      final mom = store.projection.tasks.values.firstWhere(
+        (t) => t.title == 'Call mom',
+      );
+      expect(mom.when, TaskWhen.someday);
+      final edit = lines().lastWhere((l) => l['type'] == 'task.edit');
+      expect(edit['actor'], 'assistant');
+      expect(store.canUndo, isTrue);
+    });
+
+    test('bad output is a failed proposal turn, the lane empty', () async {
+      fake = FakeLlmProvider(script: (_) => 'not json');
+      final container = await make();
+      await container.read(chatProvider.notifier).propose('x');
+      final turn = container.read(chatProvider).turns[1];
+      expect(turn.proposal, isA<ProposalRefused>());
+      expect(turnNotes(turn), ['proposal failed: not JSON']);
+      expect(container.read(suggestionViewsProvider), isEmpty);
+      final types = lines().map((l) => l['type']).toList();
+      expect(types, contains('proposal.refused'));
+      expect(types, isNot(contains('proposal.made')));
+    });
+
+    test('a cloud provider is refused before anything is written', () async {
+      final container = await make(
+        extraLlms: [FakeLlmProvider(id: 'cloudy', privacy: LlmPrivacy.cloud)],
+      );
+      container.read(settingsProvider.notifier).selectLlm('cloudy');
+      expect(await container.read(chatProvider.notifier).propose('x'), isFalse);
+      expect(container.read(chatProvider).error, proposalsNeedLocal);
+      expect(lines().where((l) => l['type'] == 'chat.message'), isEmpty);
+    });
+
+    test('a marker-ended answer strips, records and proposes', () async {
+      fake = FakeLlmProvider(
+        script: (r) => r.responseSchema != null
+            ? fakeProposal(r)
+            : 'Do less.\n$proposeMarker',
+      );
+      final container = await make();
+      await container.read(chatProvider.notifier).send('what should change?');
+
+      final state = container.read(chatProvider);
+      expect(state.busy, isFalse);
+      final answer = state.turns[1];
+      expect(answer.text, 'Do less.');
+      expect(answer.proposal, isA<ProposalMade>());
+      expect(container.read(suggestionViewsProvider), hasLength(2));
+
+      final log = lines().where((l) => l['type'] != 'task.create').toList();
+      expect(log.map((l) => l['type']), [
+        'chat.message',
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+        'chat.message',
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+        'proposal.made',
+      ]);
+      // The wire record keeps the marker; the conversation line is
+      // what the person read, flagged.
+      expect((log[2]['payload'] as Map)['text'], endsWith(proposeMarker));
+      final said = log[4]['payload'] as Map;
+      expect(said['text'], 'Do less.');
+      expect(said['proposes'], true);
+      final followup = ((log[5]['payload'] as Map)['messages'] as List)
+          .cast<Map>();
+      expect(followup.last['text'], contains(autoProposalRequest));
+      expect(followup.map((m) => m['text']), contains('Do less.'));
+      expect(log[8]['refs'], hasLength(2));
+    });
+
+    test('the streaming state never shows a partial marker', () async {
+      final container = await make(extraLlms: [_Drip('Ok.\n$proposeMarker')]);
+      container.read(settingsProvider.notifier).selectLlm('drip');
+      final seen = <String>[];
+      container.listen(chatProvider, (_, next) {
+        if (next.streaming case final text?) seen.add(text);
+      });
+      await container.read(chatProvider.notifier).send('q');
+      expect(seen.where((t) => t.contains('<sai')), isEmpty);
+      expect(container.read(chatProvider).turns[1].text, 'Ok.');
+    });
+
+    test('Esc during the follow-up cancels it, keeps the answer', () async {
+      fake = FakeLlmProvider(
+        script: (r) => r.responseSchema != null
+            ? fakeProposal(r)
+            : 'Hold on.\n$proposeMarker',
+        delta: const Duration(milliseconds: 15),
+      );
+      final container = await make();
+      final chat = container.read(chatProvider.notifier);
+      final done = chat.send('q');
+      await until(
+        () => container.read(chatProvider).phase == ChatPhase.proposing,
+      );
+      chat.cancel();
+      await done;
+      final turn = container.read(chatProvider).turns[1];
+      expect(turn.text, 'Hold on.');
+      expect(turn.proposal, isA<ProposalRefused>());
+      expect(turnNotes(turn), ['proposal cancelled']);
+      expect(container.read(suggestionViewsProvider), isEmpty);
+      expect(lines().map((l) => l['type']), isNot(contains('proposal.made')));
+    });
+
+    test('proposal turns stay out of later history', () async {
+      fake = FakeLlmProvider(
+        script: (r) => r.responseSchema != null ? fakeProposal(r) : echo(r),
+      );
+      final container = await make();
+      final chat = container.read(chatProvider.notifier);
+      await chat.propose('tidy up');
+      await chat.send('and now?');
+      final answer = container.read(chatProvider).turns.last.text;
+      expect(answer, isNot(contains('Request:')));
+      expect(answer, isNot(contains('suggestions')));
+      expect(answer, endsWith('user:and now?'));
+    });
+  });
+
   group('refuses', () {
     test('a second send while one runs', () async {
       fake = FakeLlmProvider(
@@ -574,4 +765,49 @@ List<String> _rawLines(Directory tmp) {
 class _FixedToday extends TodayNotifier {
   @override
   CalendarDate build() => const CalendarDate(2026, 8, 25);
+}
+
+/// Streams rune by rune, so a partial marker can be on screen between
+/// deltas; answers a schema request with the fake's canned proposal.
+final class _Drip implements LlmProvider {
+  _Drip(this.reply);
+
+  final String reply;
+
+  @override
+  String get id => 'drip';
+  @override
+  String get displayName => 'drip';
+  @override
+  LlmPrivacy get privacy => LlmPrivacy.local;
+  @override
+  String get defaultModel => 'drip-1';
+
+  @override
+  LlmCall start(LlmRequest request) {
+    final controller = LlmCallController(
+      model: const ModelRef(provider: 'drip', id: 'drip-1'),
+    );
+    controller.run(() async {
+      final text = request.responseSchema != null
+          ? fakeProposal(request)
+          : reply;
+      for (final rune in text.runes) {
+        await Future<void>.delayed(Duration.zero);
+        if (controller.isDone) return;
+        controller.add(String.fromCharCode(rune));
+      }
+      controller.finish(
+        LlmResult(
+          text: controller.text,
+          finish: LlmFinish.stop,
+          model: controller.model,
+        ),
+      );
+    });
+    return controller.call;
+  }
+
+  @override
+  Future<void> close() async {}
 }

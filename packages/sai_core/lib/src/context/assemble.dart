@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../llm/call.dart';
 import '../llm/recorder.dart';
+import '../proposals/schema.dart';
 import '../tasks/capture.dart';
 import '../tasks/date.dart';
 import '../tasks/lists.dart';
@@ -10,6 +11,7 @@ import '../tasks/projection.dart';
 import '../tasks/sidebar.dart';
 import '../tasks/views.dart';
 import 'catalog.dart';
+import 'marker.dart';
 
 /// Which task context a turn carries (#105): compact — Today and
 /// Upcoming, what a cloud provider may see; catalog — the complete
@@ -25,8 +27,13 @@ const defaultProfile =
     'what is due, what is coming up, what the day looks like. Quote task '
     'titles as they appear. Be brief and concrete; when you are unsure, '
     'say so rather than guess.\n'
-    'You cannot change the list. If the task context is missing, say that '
-    'you cannot see the list right now.';
+    'You never change the list yourself. When a change would clearly '
+    'help — moving a task to Someday or a date, setting a deadline, '
+    'splitting a task — finish your answer, then write $proposeMarker '
+    'alone on the last line, and sai will ask you for the details '
+    'separately; never mention handles or that line otherwise. If the '
+    'task context is missing, say that you cannot see the list right '
+    'now.';
 
 /// What one call may take, in estimated tokens.
 final class ContextBudget {
@@ -198,6 +205,56 @@ LlmRequest assembleWarmup({
   );
 }
 
+/// The explicit trigger's request when the person asks with an empty
+/// draft. Directive on purpose: asked with the generic wording, the
+/// LAN Qwen answered an honest empty list.
+const defaultProposalRequest =
+    'Look over my list and suggest the most useful changes';
+
+/// What a model-triggered follow-up call asks for (#35).
+const autoProposalRequest = 'Propose the changes you have in mind.';
+
+/// The proposal turn's user message: the request wrapped in the rules
+/// the schema cannot carry. Rides as the last user message — never a
+/// leading system message, which would push the catalog splice and
+/// break the warmed prefix.
+String proposalInstruction(String request) =>
+    'Propose changes to the task list as structured suggestions.\n'
+    'Rules: reference a task only by its handle from the catalog '
+    '(t1, t2, …); only Open tasks carry handles. Kinds: "schedule" sets '
+    'when (today, tomorrow, someday, anytime or YYYY-MM-DD); "deadline" '
+    'sets deadline (today, tomorrow, none or YYYY-MM-DD); "split" '
+    'replaces one task with 2–8 new titles in parts. At most 8 '
+    'suggestions, each with one short reason; suggest only what the '
+    'request calls for — an empty list is a fine answer.\n'
+    'Request: $request';
+
+/// A proposal turn's request (#35): the same profile-and-catalog prefix
+/// as every catalog turn — byte-identical, so the warmed cache serves
+/// it — with the schema on [LlmRequest.responseSchema] and the
+/// instruction in the user message.
+AssembledContext assembleProposal({
+  required String profile,
+  String? memory,
+  required TaskProjection projection,
+  required CalendarDate today,
+  required List<LlmMessage> history,
+  required String request,
+  ContextBudget budget = defaultContextBudget,
+  bool? reasoning,
+}) => assembleContext(
+  profile: profile,
+  memory: memory,
+  projection: projection,
+  today: today,
+  history: history,
+  draft: proposalInstruction(request),
+  budget: budget,
+  reasoning: reasoning,
+  shape: TaskContextShape.catalog,
+  responseSchema: proposalResponseSchema,
+);
+
 /// Builds the one request a chat turn sends (ADR 0011). Pure and
 /// deterministic: the same inputs give the same request and hash.
 ///
@@ -221,6 +278,7 @@ AssembledContext assembleContext({
   ContextBudget budget = defaultContextBudget,
   bool? reasoning,
   TaskContextShape shape = TaskContextShape.compact,
+  ResponseSchema? responseSchema,
 }) {
   final message = draft.trim();
   if (message.isEmpty) throw ArgumentError('draft must not be blank');
@@ -263,6 +321,7 @@ AssembledContext assembleContext({
           ? TaskProvenance.catalog
           : TaskProvenance.compact,
       reasoning: reasoning,
+      responseSchema: responseSchema,
     );
     final estimate = request.sent.fold(0, (n, m) => n + estimateTokens(m.text));
     return (request, estimate, recordedRequestBytes(request));

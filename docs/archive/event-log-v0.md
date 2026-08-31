@@ -254,7 +254,7 @@ above; the conversation lines never carry them.
 
 | type | payload |
 | --- | --- |
-| `chat.message` | `text`; assistant lines add `finish` ∈ `stop` \| `length` \| `cancelled` |
+| `chat.message` | `text`; assistant lines add `finish` ∈ `stop` \| `length` \| `cancelled`; a user line asking for a proposal adds `mode: "propose"`, an assistant line whose answer asked for one adds `proposes: true` — both optional, #35 |
 
 ### Proposals (#35)
 
