@@ -260,6 +260,23 @@ it streams. The app's transcript selects like any text — drag with the
 mouse, ⌘C copies the words exactly, a fence's copy control takes the
 code alone.
 
+The assistant can also propose changes (#35, ADR 0021). **Propose**
+beside Send (View › Propose Changes, ⇧⌘P; `^P` in the terminal) sends
+the draft — or, empty, a default request — as a schema-constrained
+proposal turn, and a local model may end an ordinary answer by asking
+to propose, in which case sai runs that turn itself. Suggestions land
+in a lane beside the transcript — move to Someday or a date, set or
+clear a deadline, split a task into parts — each naming its task and a
+short reason; nothing changes until you accept one. Accepting applies
+through the ordinary commands, recorded in the archive as the
+assistant's change referencing the proposal and your acceptance, and
+one undo reverses it (a split included); rejecting records that too. A
+suggestion whose task changed since the proposal shows as stale and can
+only be rejected. In the terminal, Tab reaches the lane while a
+proposal is shown — arrows move, `y` accepts, `n` rejects, Esc goes
+back. Proposals need a local provider: the handles the model uses to
+name tasks live in the catalog, which never goes to the cloud.
+
 ## Importing from Things 3
 
 `sai_tui things import --dry-run` shows what the archive would gain from

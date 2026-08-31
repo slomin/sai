@@ -49,6 +49,14 @@ the commit under test;
    server: the dot leaves green and the text says why. Start it again:
    green without relaunching sai. Evidence: three screenshots and the
    `provider.*` lines if a prompt was sent.
+7a. **Propose and confirm (#35).** With the `fake` provider selected
+   (keyless), type a request and press **Propose**: the waiting state
+   says proposing, then the lane shows cards. Accept one — the task
+   changes, the card says applied, ⌘Z undoes it; reject another; edit
+   a third card's task first and see it turn stale with Accept
+   disabled. Evidence: a screenshot per state and the archive's
+   `proposal.made`/`accept`/`reject` lines, the applied `task.*` line
+   carrying `"actor":"assistant"` with refs to both.
 8. **Import.** In a second scratch profile, preview and import a Things
    database, then import again. With a generated fixture
    (`package:sai_core/things_testing.dart`) an agent runs it; with a real
