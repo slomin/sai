@@ -12,6 +12,10 @@ import '../tasks/model.dart';
 import '../tasks/store.dart';
 import 'proposal.dart';
 
+/// The fingerprint rides along on every command, so the store refuses
+/// atomically inside its serialized lane when the task changed between
+/// the lane's stale check and the apply — the race a pre-check alone
+/// cannot close.
 Future<void> applySuggestion(
   Suggestion suggestion, {
   required TaskStore store,
@@ -27,15 +31,22 @@ Future<void> applySuggestion(
       await store.editTask(
         suggestion.target,
         when: Patch(suggestion.when!),
+        ifModifiedAt: suggestion.fingerprint,
         by: by,
       );
     case SuggestionKind.deadline:
       await store.editTask(
         suggestion.target,
         deadline: Patch(suggestion.deadline),
+        ifModifiedAt: suggestion.fingerprint,
         by: by,
       );
     case SuggestionKind.split:
-      await store.splitTask(suggestion.target, suggestion.parts, by: by);
+      await store.splitTask(
+        suggestion.target,
+        suggestion.parts,
+        ifModifiedAt: suggestion.fingerprint,
+        by: by,
+      );
   }
 }

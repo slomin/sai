@@ -48,7 +48,10 @@ on a task that changed under it.
   followed is a change that was not made.
 - **Stale means refused.** Every suggestion fingerprints its target's
   `modifiedAt`; the lane derives staleness against the live projection
-  and a stale accept writes nothing. One accept is one undo entry —
+  and a stale accept writes nothing. The fingerprint is checked twice:
+  at the lane for the refusal sentence, and again atomically inside the
+  serialized store command (`ifModifiedAt`), so an edit racing an
+  acceptance fails the item instead of being overwritten. One accept is one undo entry —
   `splitTask` groups its events (parts created, original to the Trash)
   under a single inverse list.
 - **The lane is session state.** A new proposal replaces the last;

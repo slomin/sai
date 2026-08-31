@@ -539,6 +539,44 @@ void main() {
     });
   });
 
+  group('the proposal fingerprint guard (#35)', () {
+    test('editTask ifModifiedAt refuses a changed task atomically', () async {
+      final id = await store.createTask(title: 'x');
+      final stamp = store.projection.task(id)!.modifiedAt;
+      await store.editTask(id, title: const Patch('y'));
+      final before = logLines().length;
+      await expectLater(
+        store.editTask(
+          id,
+          when: const Patch(TaskWhen.someday),
+          ifModifiedAt: stamp,
+        ),
+        throwsStateError,
+      );
+      expect(logLines().length, before, reason: 'nothing was appended');
+      expect(store.projection.task(id)!.when, TaskWhen.none);
+      // The current fingerprint passes.
+      await store.editTask(
+        id,
+        when: const Patch(TaskWhen.someday),
+        ifModifiedAt: store.projection.task(id)!.modifiedAt,
+      );
+      expect(store.projection.task(id)!.when, TaskWhen.someday);
+    });
+
+    test('splitTask ifModifiedAt refuses a changed original', () async {
+      final id = await store.createTask(title: 'x');
+      final stamp = store.projection.task(id)!.modifiedAt;
+      await store.editTask(id, title: const Patch('y'));
+      final before = logLines().length;
+      await expectLater(
+        store.splitTask(id, ['a', 'b'], ifModifiedAt: stamp),
+        throwsStateError,
+      );
+      expect(logLines().length, before, reason: 'nothing was appended');
+    });
+  });
+
   group('TaskStore.undo', () {
     const today = CalendarDate(2026, 8, 24);
 

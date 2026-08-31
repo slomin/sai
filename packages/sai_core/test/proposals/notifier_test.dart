@@ -168,6 +168,28 @@ void main() {
     expect(store.projection.task(id)!.deletedAt, isNull);
   });
 
+  test('the store guard refuses a fingerprint gone stale mid-flight', () async {
+    // The lane's pre-check can race a concurrent edit; the store's
+    // ifModifiedAt guard is the atomic authority. Simulated by applying
+    // with the old fingerprint after an edit landed.
+    final (store, id, proposal) = await offerOne();
+    await store.editTask(id, title: const Patch('Renamed'));
+    await expectLater(
+      applySuggestion(
+        proposal.items.single,
+        store: store,
+        proposal: proposal,
+        accept: BlobRef.sha256OfBytes(utf8.encode('accept')),
+      ),
+      throwsStateError,
+    );
+    expect(
+      lines().where((l) => (l['type'] as String).startsWith('task.')).length,
+      2,
+      reason: 'the create and the rename; the assistant wrote nothing',
+    );
+  });
+
   test('a new proposal replaces the lane without writing', () async {
     final (_, id, first) = await offerOne();
     final replacement = Proposal(

@@ -18,6 +18,9 @@ import '../proposals/events.dart';
 import '../proposals/parse.dart';
 import '../proposals/proposal.dart';
 import '../providers.dart';
+import '../tasks/date.dart';
+import '../tasks/model.dart';
+import '../tasks/projection.dart';
 
 /// Who said a [ChatTurn].
 enum ChatRole { user, assistant }
@@ -408,28 +411,38 @@ class ChatNotifier extends Notifier<ChatState> {
     }
     if (!current()) return true;
     if (proposes && error == null) {
-      // Stay busy and run the schema-constrained follow-up on this same
-      // generation; its outcome hangs on the answer turn. Esc cancels
-      // it like any call.
-      final at = state.turns.length;
-      _set(
-        state.copyWith(
-          turns: [...state.turns, turn],
-          streaming: '',
-          phase: ChatPhase.proposing,
-        ),
-      );
-      final outcome = await _proposalCall(
-        provider: provider,
-        request: autoProposalRequest,
-        current: current,
-        triggerRefs: [?turn.event],
-      );
-      if (!current()) return true;
-      final turns = [...state.turns];
-      turns[at] = turns[at].withProposal(outcome);
-      _set(state.copyWith(turns: turns, clearStreaming: true));
-      return true;
+      if (provider.privacy != LlmPrivacy.local) {
+        // A cloud answer may still ask — the profile teaches the marker
+        // — but the catalog and its handles never go to the cloud, so
+        // the follow-up cannot run (ADR 0021).
+        turn = turn.withProposal(const ProposalRefused(proposalsNeedLocal));
+      } else {
+        // Stay busy and run the schema-constrained follow-up on this
+        // same generation; its outcome hangs on the answer turn. Esc
+        // cancels it like any call.
+        final at = state.turns.length;
+        _set(
+          state.copyWith(
+            turns: [...state.turns, turn],
+            streaming: '',
+            phase: ChatPhase.proposing,
+          ),
+        );
+        final prep = _prepareProposal(autoProposalRequest);
+        final outcome = prep.error != null
+            ? ProposalRefused(prep.error!)
+            : await _proposalCall(
+                provider: provider,
+                prep: prep,
+                current: current,
+                triggerRefs: [?turn.event],
+              );
+        if (!current()) return true;
+        final turns = [...state.turns];
+        turns[at] = turns[at].withProposal(outcome);
+        _set(state.copyWith(turns: turns, clearStreaming: true));
+        return true;
+      }
     }
     _set(
       state.copyWith(
@@ -461,6 +474,10 @@ class ChatNotifier extends Notifier<ChatState> {
     if (container.read(tasksProvider).value == null) {
       return _refuse(chatNotReadyError);
     }
+    // Assembled before anything is written, so an oversized proposal
+    // refuses atomically — no orphan chat.message (#105's contract).
+    final prep = _prepareProposal(request);
+    if (prep.error case final refusal?) return _refuse(refusal);
 
     final generation = ++_generation;
     bool current() => generation == _generation && !_disposed;
@@ -511,7 +528,7 @@ class ChatNotifier extends Notifier<ChatState> {
 
     final outcome = await _proposalCall(
       provider: provider,
-      request: request,
+      prep: prep,
       current: current,
       triggerRefs: [said.id],
     );
@@ -529,39 +546,54 @@ class ChatNotifier extends Notifier<ChatState> {
     return true;
   }
 
+  /// Assembles a proposal turn before anything is written — request,
+  /// handle map and the projection they were rendered from — or the
+  /// refusal sentence when assembly refuses. Both triggers go through
+  /// here first, so an oversized turn is refused atomically.
+  _ProposalPrep _prepareProposal(String request) {
+    final container = ref.container;
+    final projection = container.read(tasksProvider).value;
+    if (projection == null) return _ProposalPrep.failed(chatNotReadyError);
+    final today = container.read(todayProvider);
+    final render = renderCatalog(projection, today: today);
+    try {
+      return _ProposalPrep(
+        assembleProposal(
+          profile: defaultProfile,
+          projection: projection,
+          today: today,
+          history: _history(),
+          request: request,
+          budget: container.read(chatBudgetProvider),
+          reasoning: container.read(reasoningProvider) ? null : false,
+        ),
+        render.handles,
+        projection,
+        today,
+      );
+    } on ContextBudgetError catch (error) {
+      return _ProposalPrep.failed(error.toString());
+    } on ContextSizeError catch (error) {
+      return _ProposalPrep.failed(error.toString());
+    }
+  }
+
   /// One schema-constrained proposal call, validated into the lane. No
   /// partial display: deltas never reach [ChatState.streaming]; the
   /// clients show the proposing words instead. The handle map lives in
-  /// this call's locals and nowhere else — a handle cannot outlive its
+  /// [prep] and this call's locals only — a handle cannot outlive its
   /// turn.
   Future<ProposalOutcome> _proposalCall({
     required LlmProvider provider,
-    required String request,
+    required _ProposalPrep prep,
     required bool Function() current,
     required List<BlobRef> triggerRefs,
   }) async {
     final container = ref.container;
-    final projection = container.read(tasksProvider).value;
-    if (projection == null) return const ProposalRefused(chatNotReadyError);
-    final today = container.read(todayProvider);
-    final handles = renderCatalog(projection, today: today).handles;
-
-    final AssembledContext assembled;
-    try {
-      assembled = assembleProposal(
-        profile: defaultProfile,
-        projection: projection,
-        today: today,
-        history: _history(),
-        request: request,
-        budget: container.read(chatBudgetProvider),
-        reasoning: container.read(reasoningProvider) ? null : false,
-      );
-    } on ContextBudgetError catch (error) {
-      return ProposalRefused(error.toString());
-    } on ContextSizeError catch (error) {
-      return ProposalRefused(error.toString());
-    }
+    final assembled = prep.assembled!;
+    final handles = prep.handles!;
+    final projection = prep.projection!;
+    final today = prep.today!;
 
     final RecordedCall call;
     try {
@@ -713,4 +745,28 @@ class ChatNotifier extends Notifier<ChatState> {
     _set(state.copyWith(error: why));
     return false;
   }
+}
+
+/// A proposal turn's ingredients, assembled before anything is written
+/// (#105's atomic-refusal contract), or the refusal in [error]. The
+/// handle map lives here and in the call's locals only.
+final class _ProposalPrep {
+  _ProposalPrep(
+    AssembledContext this.assembled,
+    List<TaskId> this.handles,
+    TaskProjection this.projection,
+    CalendarDate this.today,
+  ) : error = null;
+
+  _ProposalPrep.failed(String this.error)
+    : assembled = null,
+      handles = null,
+      projection = null,
+      today = null;
+
+  final AssembledContext? assembled;
+  final List<TaskId>? handles;
+  final TaskProjection? projection;
+  final CalendarDate? today;
+  final String? error;
 }

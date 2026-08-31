@@ -80,11 +80,13 @@ ParsedProposal parseProposalText(
     if (handle is! String || !_handleForm.hasMatch(handle)) {
       throw ProposalFormatError("bad handle '${entry['task']}'");
     }
-    final at = int.parse(handle.substring(1)) - 1;
-    if (at < 0 || at >= handles.length) {
+    // tryParse: the schema admits any digit run, and a number too big
+    // for an int must read as unknown, never as a thrown FormatException.
+    final number = int.tryParse(handle.substring(1));
+    if (number == null || number < 1 || number > handles.length) {
       throw ProposalFormatError("unknown handle '$handle'");
     }
-    final target = handles[at];
+    final target = handles[number - 1];
     final task = projection.task(target);
     if (task == null ||
         task.deletedAt != null ||

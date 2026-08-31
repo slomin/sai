@@ -250,6 +250,13 @@ void main() {
       refuses(twice, "duplicate suggestion for 't1'");
     });
     test(
+      'a handle too big for an int is unknown, never a crash',
+      () => refuses(
+        suggestion(task: 't999999999999999999999999999999', when: 'someday'),
+        "unknown handle 't999999999999999999999999999999'",
+      ),
+    );
+    test(
       'bad when word',
       () => refuses(suggestion(when: 'soon'), "bad when 'soon'"),
     );

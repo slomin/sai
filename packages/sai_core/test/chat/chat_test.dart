@@ -686,6 +686,90 @@ void main() {
       expect(lines().map((l) => l['type']), isNot(contains('proposal.made')));
     });
 
+    test('a cloud answer that asks to propose is refused flat', () async {
+      final container = await make(
+        extraLlms: [
+          FakeLlmProvider(
+            id: 'cloudy',
+            privacy: LlmPrivacy.cloud,
+            script: (_) => 'Try less.\n$proposeMarker',
+          ),
+        ],
+      );
+      final settings = container.read(settingsProvider.notifier);
+      settings.selectLlm('cloudy');
+      settings.setShareTasksWithCloud(true);
+      await container.read(chatProvider.notifier).send('ideas?');
+      final turn = container.read(chatProvider).turns[1];
+      expect(turn.text, 'Try less.');
+      expect(
+        turn.proposal,
+        isA<ProposalRefused>().having(
+          (p) => p.reason,
+          'reason',
+          proposalsNeedLocal,
+        ),
+      );
+      final types = lines().map((l) => l['type']).toList();
+      expect(
+        types.where((t) => t == 'provider.request'),
+        hasLength(1),
+        reason: 'no follow-up call to the cloud',
+      );
+      expect(types.where((t) => '$t'.startsWith('proposal.')), isEmpty);
+    });
+
+    test('an oversized explicit proposal writes nothing at all', () async {
+      final container = await make(
+        overrides: [
+          chatBudgetProvider.overrideWith(
+            (ref) =>
+                const ContextBudget(maxTokens: 1000000, replyReserve: 4096),
+          ),
+        ],
+      );
+      final store = container.read(tasksProvider.notifier).store;
+      await store.createTask(title: 'Huge', notes: '"' * 400000);
+      final before = lines().length;
+      final chat = container.read(chatProvider.notifier);
+      expect(await chat.propose('tidy'), isFalse);
+      expect(container.read(chatProvider).error, contains('once recorded'));
+      expect(container.read(chatProvider).turns, isEmpty);
+      expect(container.read(chatProvider).busy, isFalse);
+      expect(lines().length, before, reason: 'no orphan chat.message');
+    });
+
+    test('a schema-valid but absurd handle refuses, never wedges', () async {
+      fake = FakeLlmProvider(
+        script: (_) => jsonEncode({
+          'suggestions': [
+            {
+              'kind': 'schedule',
+              'task': 't999999999999999999999999999999',
+              'when': 'someday',
+              'deadline': '',
+              'parts': <String>[],
+              'reason': 'huge',
+            },
+          ],
+          'note': '',
+        }),
+      );
+      final container = await make();
+      await container.read(chatProvider.notifier).propose('x');
+      final state = container.read(chatProvider);
+      expect(state.busy, isFalse, reason: 'the chat must not wedge');
+      expect(
+        state.turns[1].proposal,
+        isA<ProposalRefused>().having(
+          (p) => p.reason,
+          'reason',
+          contains('unknown handle'),
+        ),
+      );
+      expect(lines().map((l) => l['type']), contains('proposal.refused'));
+    });
+
     test('proposal turns stay out of later history', () async {
       fake = FakeLlmProvider(
         script: (r) => r.responseSchema != null ? fakeProposal(r) : echo(r),

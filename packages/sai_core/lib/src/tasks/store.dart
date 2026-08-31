@@ -278,6 +278,7 @@ final class TaskStore {
   Future<List<TaskId>> splitTask(
     TaskId task,
     List<String> parts, {
+    DateTime? ifModifiedAt,
     Attribution by = const Attribution.user(),
   }) => _serialized(() async {
     _checkOpen();
@@ -294,6 +295,9 @@ final class TaskStore {
     }
     if (original.status != TaskStatus.open) {
       throw StateError('only an open task splits');
+    }
+    if (ifModifiedAt != null && original.modifiedAt != ifModifiedAt) {
+      throw StateError('the task changed since the proposal');
     }
     final inverses = <TaskEvent>[];
     final undone = <BlobRef>[];
@@ -369,6 +373,11 @@ final class TaskStore {
     by,
   )).id;
 
+  /// [ifModifiedAt] is the proposal fingerprint guard (#35): when set,
+  /// the edit applies only while the task's `modifiedAt` still equals
+  /// it — checked inside the serialized lane, atomically with the
+  /// append, so an edit racing an acceptance fails the acceptance
+  /// instead of being overwritten.
   Future<void> editTask(
     TaskId task, {
     Patch<String>? title,
@@ -376,18 +385,34 @@ final class TaskStore {
     Patch<TaskWhen>? when,
     Patch<CalendarDate?>? deadline,
     Patch<List<TagId>>? tags,
+    DateTime? ifModifiedAt,
     Attribution by = const Attribution.user(),
-  }) => _commit(
-    TaskEdited(
+  }) => _commitFrom((projection) {
+    _guardFingerprint(projection, task, ifModifiedAt);
+    return TaskEdited(
       task,
       title: title,
       notes: notes,
       when: when,
       deadline: deadline,
       tags: tags,
-    ),
-    by,
-  );
+    );
+  }, by);
+
+  /// Refuses a fingerprint-guarded command whose target changed (#35).
+  static void _guardFingerprint(
+    TaskProjection projection,
+    TaskId task,
+    DateTime? ifModifiedAt,
+  ) {
+    if (ifModifiedAt == null) return;
+    final current = projection.task(task);
+    if (current == null ||
+        current.deletedAt != null ||
+        current.modifiedAt != ifModifiedAt) {
+      throw StateError('the task changed since the proposal');
+    }
+  }
 
   Future<void> moveTask(
     TaskId task, {
