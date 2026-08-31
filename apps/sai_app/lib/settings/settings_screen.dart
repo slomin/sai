@@ -11,11 +11,13 @@ import 'archive_page.dart';
 import 'general_page.dart';
 import 'providers_page.dart';
 import 'shortcuts_page.dart';
+import 'usage_page.dart';
 
 /// The sections, in the rail's order.
 enum SettingsSection {
   general('General'),
   providers('Providers'),
+  usage('Usage'),
   archive('Archive'),
   shortcuts('Shortcuts');
 
@@ -194,6 +196,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               SettingsSection.general => const GeneralPage(),
                               SettingsSection.providers =>
                                 const ProvidersPage(),
+                              SettingsSection.usage => const UsagePage(),
                               SettingsSection.archive => const ArchivePage(),
                               SettingsSection.shortcuts =>
                                 const ShortcutsPage(),

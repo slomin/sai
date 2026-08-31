@@ -103,6 +103,14 @@ void main() {
     expect(call.usage, isNotNull);
   });
 
+  test('a provider-reported cost lands on the usage line (#30)', () async {
+    final call = await recorder.start(_CostlyProvider(), ask('hi'));
+    await call.done;
+    final usage = lines().last;
+    expect(usage['type'], 'provider.usage');
+    expect((usage['payload'] as Map)['cost'], 0.0042);
+  });
+
   group('the privacy policy (#27)', () {
     LlmRequest withTasks(String text) => LlmRequest(
       messages: [LlmMessage(LlmRole.user, text)],
@@ -649,6 +657,38 @@ final class _ErroringCall implements LlmCall {
   Future<LlmResult> get done => _done.future;
   @override
   void cancel() {}
+}
+
+/// Answers like a paid backend: one word, with a reported cost (#30).
+final class _CostlyProvider implements LlmProvider {
+  @override
+  String get id => 'costly';
+  @override
+  String get displayName => 'costly';
+  @override
+  LlmPrivacy get privacy => LlmPrivacy.cloud;
+  @override
+  String get defaultModel => 'm';
+  @override
+  LlmCall start(LlmRequest request) {
+    const model = ModelRef(provider: 'costly', id: 'm');
+    final controller = LlmCallController(model: model);
+    controller.run(() async {
+      controller.add('paid');
+      controller.finish(
+        LlmResult(
+          text: 'paid',
+          finish: LlmFinish.stop,
+          model: model,
+          usage: const LlmUsage(totalTokens: 4, cost: 0.0042),
+        ),
+      );
+    });
+    return controller.call;
+  }
+
+  @override
+  Future<void> close() async {}
 }
 
 final class _SpyProvider implements LlmProvider {

@@ -23,6 +23,7 @@ import 'llm/probe.dart';
 import 'llm/provider.dart';
 import 'llm/recorder.dart';
 import 'llm/status.dart';
+import 'llm/usage.dart';
 import 'secrets/keychain.dart';
 import 'secrets/secret_store.dart';
 import 'settings/provider_config.dart';
@@ -207,6 +208,32 @@ final archiveStatsProvider = FutureProvider<ArchiveStats>((ref) async {
   final archive = await ref.watch(archiveProvider.future);
   final head = await archive.head();
   return ArchiveStats(count: head.count, bytes: await archive.byteSize());
+});
+
+/// Daily usage totals (#30), folded from the log's `provider.usage`
+/// lines and re-read for the same reasons as [archiveStatsProvider] —
+/// the recorder is a writer the other watchers cannot see, so a
+/// provider test bumps [archiveRevisionProvider].
+final dailyUsageProvider = FutureProvider<UsageProjection>((ref) async {
+  ref.watch(tasksProvider);
+  ref.watch(chatProvider.select((s) => s.turns.length));
+  ref.watch(archiveRevisionProvider);
+  final archive = await ref.watch(archiveProvider.future);
+  final events = <StoredEvent>[];
+  for (var attempt = 0; ; attempt++) {
+    events.clear();
+    try {
+      await for (final stored in archive.events()) {
+        events.add(stored);
+      }
+      break;
+    } on TornTailError {
+      // A tear can be the transient shadow of an in-flight append; one
+      // retry reads the settled tail (the task store does the same).
+      if (attempt > 0) break;
+    }
+  }
+  return UsageProjection.replay(events);
 });
 
 /// The on-demand integrity pass (#40): [Archive.verify] behind a
@@ -756,7 +783,11 @@ class CacheWarmer extends Notifier<WarmState> {
       }
       _call = call;
       final result = await call.done;
-      if (epoch != _epoch || !ref.mounted) return;
+      if (!ref.mounted) return;
+      // The recorder just wrote lines no other watcher can see — the
+      // same reason the Providers page bumps after its test (#30).
+      container.read(archiveRevisionProvider.notifier).bump();
+      if (epoch != _epoch) return;
       _tick?.cancel();
       _call = null;
       _inFlight = null;

@@ -140,17 +140,6 @@ class _ImportRow extends StatelessWidget {
   }
 }
 
-/// `18402` as `18,402`.
-String thousands(int n) {
-  final digits = n.toString();
-  final out = StringBuffer();
-  for (var i = 0; i < digits.length; i++) {
-    if (i > 0 && (digits.length - i) % 3 == 0) out.write(',');
-    out.write(digits[i]);
-  }
-  return out.toString();
-}
-
 /// Bytes as the card shows them: `4.1 MB`, or `312 KB` under a megabyte.
 String megabytes(int bytes) {
   if (bytes < 1 << 20) return '${(bytes / 1024).round()} KB';

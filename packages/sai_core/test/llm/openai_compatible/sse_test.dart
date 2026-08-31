@@ -84,6 +84,11 @@ void main() {
       expect(u.usage!.promptTokens, 18);
       expect(u.usage!.completionTokens, 117);
       expect(u.usage!.totalTokens, 135);
+      expect(u.usage!.cost, isNull);
+      final paid = ChatChunk.parse(
+        '{"choices":[],"usage":{"total_tokens":135,"cost":0.0042}}',
+      );
+      expect(paid.usage!.cost, 0.0042);
       final t = ChatChunk.parse(
         '{"choices":[{"delta":{},"finish_reason":"stop"}],'
         '"timings":{"predicted_per_second":52.94,"prompt_n":1}}',

@@ -231,6 +231,28 @@ void main() {
     });
   });
 
+  group('LlmUsage', () {
+    test('toJson keeps only what was reported', () {
+      expect(const LlmUsage().toJson(), isEmpty);
+      expect(
+        const LlmUsage(
+          promptTokens: 1,
+          completionTokens: 2,
+          totalTokens: 3,
+          tokensPerSecond: 4.5,
+          cost: 0.0042,
+        ).toJson(),
+        {
+          'prompt_tokens': 1,
+          'completion_tokens': 2,
+          'total_tokens': 3,
+          'tokens_per_second': 4.5,
+          'cost': 0.0042,
+        },
+      );
+    });
+  });
+
   group('LlmFailure', () {
     test('reads like a sentence and serialises without secrets', () {
       const failure = LlmFailure(

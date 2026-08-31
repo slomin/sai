@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/assistant/assistant_band.dart';
 import 'package:sai_app/commands.dart';
@@ -12,6 +13,7 @@ import 'package:sai_app/settings/general_page.dart';
 import 'package:sai_app/settings/providers_page.dart';
 import 'package:sai_app/settings/settings_screen.dart';
 import 'package:sai_app/settings/shortcuts_page.dart';
+import 'package:sai_app/settings/usage_page.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
@@ -68,6 +70,8 @@ void main() {
       await key(tester, LogicalKeyboardKey.arrowDown);
       expect(find.byType(ShortcutsPage), findsOneWidget, reason: 'the end');
       await key(tester, LogicalKeyboardKey.arrowUp);
+      await key(tester, LogicalKeyboardKey.arrowUp);
+      expect(find.byType(UsagePage), findsOneWidget);
       await key(tester, LogicalKeyboardKey.arrowUp);
       expect(find.byType(ProvidersPage), findsOneWidget);
       expect(
@@ -394,6 +398,105 @@ void main() {
         find.byKey(settingsScreenKey),
         matchesGoldenFile('goldens/settings-general.png'),
       );
+    });
+
+    group('usage (#30)', () {
+      // Usage lines straight into the log with explicit timestamps —
+      // the numbers below are exact, so the golden stays stable.
+      Future<void> seed(WidgetTester tester, ProviderContainer c) async {
+        await tester.runAsync(() async {
+          final archive = await c.read(archiveProvider.future);
+          final now = c.read(clockProvider)();
+          Future<void> line(
+            String provider,
+            DateTime ts,
+            Map<String, Object?> payload,
+          ) => archive.append(
+            EventDraft(
+              type: EventTypes.providerUsage,
+              actor: Actor.system,
+              source: 'sai/test',
+              payload: {'finish': 'stop', ...payload},
+              model: ModelRef(provider: provider, id: 'm'),
+              ts: ts,
+            ),
+          );
+          // A month-old call: real in the log, outside the shown window.
+          await line('old', now.subtract(const Duration(days: 30)), {
+            'duration_ms': 9000,
+            'total_tokens': 9000,
+          });
+          final yesterday = now.subtract(const Duration(days: 1));
+          await line('lan', yesterday, {
+            'duration_ms': 3000,
+            'total_tokens': 500,
+            'cost': 0.0042,
+          });
+          await line('fake', now, {'duration_ms': 1000, 'total_tokens': 40});
+          await line('fake', now, {'duration_ms': 1000, 'total_tokens': 60});
+        });
+        c.read(archiveRevisionProvider.notifier).bump();
+      }
+
+      Future<void> settle(WidgetTester tester) async {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await tester.pump();
+      }
+
+      testWidgets('totals by day and provider, cost only as reported', (
+        tester,
+      ) async {
+        final container = await pumpApp(tester, tmp: tempDir());
+        await seed(tester, container);
+        await open(tester);
+        await tester.tap(find.byKey(settingsNavKey(SettingsSection.usage)));
+        await tester.pump();
+        await settle(tester);
+        expect(
+          find.text('FAKE · 2 CALLS · 100 TOKENS · 2S'),
+          findsOneWidget,
+          reason: 'today, summed, no invented cost',
+        );
+        final today = container.read(todayProvider);
+        expect(
+          find.byKey(usageDayKey(today.addDays(-1))),
+          findsOneWidget,
+          reason: 'yesterday has its own row',
+        );
+        expect(
+          find.text('LAN · 1 CALL · 500 TOKENS · 3S · \$0.0042'),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(usageDayKey(today.addDays(-30))),
+          findsNothing,
+          reason: 'a month-old call stays outside the seven-day window',
+        );
+      });
+
+      testWidgets('an empty day says so', (tester) async {
+        await pumpApp(tester, tmp: tempDir());
+        await open(tester);
+        await tester.tap(find.byKey(settingsNavKey(SettingsSection.usage)));
+        await tester.pump();
+        await settle(tester);
+        expect(find.text('NO CALLS TODAY'), findsOneWidget);
+      });
+
+      testWidgets('Usage renders in the reference treatment', (tester) async {
+        final container = await pumpApp(tester, tmp: tempDir());
+        await seed(tester, container);
+        await open(tester);
+        await tester.tap(find.byKey(settingsNavKey(SettingsSection.usage)));
+        await tester.pump();
+        await settle(tester);
+        await expectLater(
+          find.byKey(settingsScreenKey),
+          matchesGoldenFile('goldens/settings-usage.png'),
+        );
+      });
     });
   });
 }

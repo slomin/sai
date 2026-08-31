@@ -201,7 +201,7 @@ names its decision line.
 | `provider.request` | `messages` — `[{role, text}]`, `role` ∈ `system` \| `user` \| `assistant`; optional `max_tokens`, `temperature`, `reasoning` (false when the caller asked the backend not to think); `context_hash` — the sha256 blobref of `messages` as sent (ADR 0011), so a response is traceable to exactly what the model saw. The request as sent, so it never holds a key, header or URL. |
 | `provider.response` | `text`, `finish` ∈ `stop` \| `length` \| `cancelled` — a cancelled call's partial text is still what the assistant said; optional `truncated` (below); optional `reasoning` — the model's thinking as the backend streamed it apart from the answer (`reasoning_content`), capped at 128 KiB with `reasoning_truncated` holding the original byte length when cut |
 | `provider.failure` | `kind` ∈ `unreachable` \| `timeout` \| `rejected` \| `credential` \| `protocol` \| `internal`, `message` (fixed text, never an exception's); optional `endpoint` (an origin, `scheme://host[:port]`, never more), `status`, `text` (partial output), `truncated` |
-| `provider.usage` | `finish` ∈ `stop` \| `length` \| `cancelled` \| `failed`, `duration_ms`; optional `prompt_tokens`, `completion_tokens`, `total_tokens`, `tokens_per_second` |
+| `provider.usage` | `finish` ∈ `stop` \| `length` \| `cancelled` \| `failed`, `duration_ms`; optional `prompt_tokens`, `completion_tokens`, `total_tokens`, `tokens_per_second`, `cost` (what the backend reported, in its own currency units — never an estimate, #30) |
 
 The 1 MiB line cap applies asymmetrically. A request that cannot be
 recorded is not sent (the writer refuses before the call) — and the

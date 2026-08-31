@@ -212,9 +212,12 @@ void main() {
   test('a deadline token renders, in Inbox and in Upcoming', () async {
     await testNocterm('deadline', (tester) async {
       await pumpTui(tester);
-      await tester.enterText('Pay rent !2026-09-01');
+      // Far enough out to never render as the relative `!tomorrow`,
+      // whatever day the suite runs on.
+      final day = CalendarDate.fromLocal(DateTime.now()).addDays(30);
+      await tester.enterText('Pay rent !$day');
       await tester.sendEnter();
-      await pumpUntilText(tester, 'Pay rent !2026-09-01');
+      await pumpUntilText(tester, 'Pay rent !$day');
       // The view union: a due-later Inbox task also surfaces in Upcoming.
       expect(tester.terminalState, containsText('Inbox (1)'));
       expect(tester.terminalState, containsText('Upcoming (1)'));
