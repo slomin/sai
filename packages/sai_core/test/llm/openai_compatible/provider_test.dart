@@ -544,6 +544,37 @@ void main() {
       await provider.close();
     });
 
+    test('a probe overtaken by releaseIdle opens nothing new', () async {
+      // The follow-up discovery GETs must stay on the client the probe
+      // started with; on the replacement they would pool a fresh idle
+      // socket to the switched-away endpoint that nothing releases.
+      final models = Completer<void>();
+      stub.routes['GET /v1/models'] = (req) async {
+        await models.future;
+        await StubServer.json(req, {
+          'data': [
+            {'id': 'qwen'},
+          ],
+        });
+      };
+      final provider = make();
+      final arrived = stub.seen.first;
+      final probing = provider.probe();
+      await arrived;
+      provider.releaseIdle();
+      models.complete();
+      final info = await probing;
+      expect(info.models, ['qwen']);
+      // The health/LM Studio GETs died on the retired client: nothing
+      // else reached the endpoint, and its sockets drain away.
+      expect(stub.requests, hasLength(1));
+      await _until(() => stub.connectionsInfo().total == 0);
+      // A fresh probe rides the replacement client as usual.
+      await provider.probe();
+      expect(stub.requests.length, greaterThan(1));
+      await provider.close();
+    });
+
     test('an abort reaches the server promptly; what it does with '
         'ingested bytes is its own affair (ADR 0009)', () async {
       final gone = Completer<void>();

@@ -114,7 +114,12 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     final controller = LlmCallController(model: model, onCancel: attempt.abort);
     _running.add(controller);
     controller.call.done.whenComplete(() => _running.remove(controller));
-    controller.run(() => _run(controller, attempt, request));
+    // The client is captured here: the whole call — the 400-ladder
+    // retry included — stays on the client it started with, so a
+    // releaseIdle between its requests cannot route one onto the
+    // replacement and leak a fresh socket to a switched-away endpoint.
+    final client = _client;
+    controller.run(() => _run(controller, attempt, request, client));
     return controller.call;
   }
 
@@ -172,6 +177,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     LlmCallController controller,
     _Attempt attempt,
     LlmRequest request,
+    HttpClient client,
   ) async {
     void fail(LlmFailure failure) {
       if (controller.isDone) return;
@@ -219,7 +225,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
 
     final HttpClientResponse response;
     try {
-      final req = await _client.postUrl(_chat);
+      final req = await client.postUrl(_chat);
       if (controller.isDone) return req.abort();
       attempt.request = req;
       req
@@ -267,7 +273,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         _reasoningRefused = true;
       }
       _drain(response);
-      return _run(controller, attempt, request);
+      return _run(controller, attempt, request, client);
     }
     if (status == 400 && request.responseSchema != null) {
       // The backend refused the response schema. A proposal without its
@@ -441,7 +447,13 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     if (refused != null) {
       return EndpointInfo(health: EndpointHealth.unavailable, failure: refused);
     }
-    final models = await _get(_models, auth);
+    // Bound to the client generation it started on: a probe overtaken
+    // by releaseIdle fails its remaining requests on the retired client
+    // — whose soft close refuses new work — rather than opening fresh
+    // sockets to the switched-away endpoint. Its answer is stale by
+    // then anyway; the connection watcher drops it by epoch.
+    final client = _client;
+    final models = await _get(client, _models, auth);
     if (models.failure != null) {
       return EndpointInfo(
         health: EndpointHealth.unavailable,
@@ -463,8 +475,8 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     // body. LM Studio says so on /api/v1/models; anything else is taken
     // at its /v1/models word.
     final [health, lm] = await Future.wait([
-      _get(_atRoot('/health'), auth),
-      _get(_atRoot('/api/v1/models'), auth),
+      _get(client, _atRoot('/health'), auth),
+      _get(client, _atRoot('/api/v1/models'), auth),
     ]);
     final h = health.json;
     final ok =
@@ -477,7 +489,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         h['error'] is Map<String, Object?> &&
         (h['error'] as Map<String, Object?>)['code'] == 503;
     if (ok || loading) {
-      final props = await _get(_atRoot('/props'), auth);
+      final props = await _get(client, _atRoot('/props'), auth);
       int? ctx;
       final p = props.json;
       if (p is Map<String, Object?>) {
@@ -530,10 +542,10 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   /// The most a discovery answer may be; a model list is kilobytes.
   static const maxProbeBytes = 1 << 20;
 
-  Future<_Answer> _get(Uri uri, String? auth) async {
+  Future<_Answer> _get(HttpClient client, Uri uri, String? auth) async {
     HttpClientRequest? req;
     try {
-      req = await _client.getUrl(uri);
+      req = await client.getUrl(uri);
       req.followRedirects = false;
       req.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
       if (auth != null) req.headers.set(HttpHeaders.authorizationHeader, auth);
