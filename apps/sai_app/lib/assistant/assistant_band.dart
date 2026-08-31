@@ -191,10 +191,13 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
   }
 
   var _followPending = false;
+  var _followedExtent = 0.0;
 
   /// Keeps the newest text in view as it arrives — but only while the
   /// reader is at the bottom; someone who scrolled up to re-read stays
-  /// there. One jump per frame, however many deltas landed in it.
+  /// there. One jump per frame, however many deltas landed in it, and
+  /// only when the transcript actually grew: re-jumping to an extent
+  /// already followed would fight the wheel over the last 48px (#109).
   void _follow() {
     if (_followPending || !_scroll.hasClients) return;
     final position = _scroll.position;
@@ -203,7 +206,10 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _followPending = false;
       if (!_scroll.hasClients) return;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      final extent = _scroll.position.maxScrollExtent;
+      if (extent == _followedExtent) return;
+      _followedExtent = extent;
+      _scroll.jumpTo(extent);
     });
   }
 
@@ -212,7 +218,11 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
     ref.listen(chatProvider, (_, _) => _follow());
     final state = ref.watch(chatProvider);
     final reasoningOn = ref.watch(reasoningProvider);
-    final lane = ref.watch(suggestionViewsProvider).isNotEmpty;
+    // Presence only: the lane watches the full list itself, and a task
+    // mutation elsewhere must not rebuild the whole transcript (#109).
+    final lane = ref.watch(
+      suggestionViewsProvider.select((views) => views.isNotEmpty),
+    );
     // The band is ink on a light theme: the selection highlight and the
     // caret take the band's own light, for the transcript and the
     // composer alike.

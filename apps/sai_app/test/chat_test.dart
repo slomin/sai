@@ -248,6 +248,36 @@ void main() {
       return refusal;
     }
 
+    testWidgets('a task mutation elsewhere moves neither scroll nor lane', (
+      tester,
+    ) async {
+      // Watching the lane by presence (#109): a store commit used to
+      // hand the transcript a fresh suggestion list and rebuild it all;
+      // scrolled-up readers saw the view churn.
+      final container = await ready(tester);
+      await proposeSettled(tester, container);
+      for (final line in ['more ideas', 'and again', 'one more', 'last']) {
+        await proposeSettled(tester, container, line);
+      }
+      final scrollable = find.descendant(
+        of: find.byKey(chatTranscriptKey),
+        matching: find.byType(Scrollable),
+      );
+      await tester.drag(find.byKey(chatTranscriptKey), const Offset(0, 200));
+      await tester.pump();
+      final before = tester.state<ScrollableState>(scrollable).position.pixels;
+      expect(before, greaterThan(0), reason: 'the transcript must overflow');
+      await tester.runAsync(
+        () => container
+            .read(tasksProvider.notifier)
+            .store
+            .createTask(title: 'Unrelated chore'),
+      );
+      await tester.pump();
+      expect(tester.state<ScrollableState>(scrollable).position.pixels, before);
+      expect(find.byKey(suggestionLaneKey), findsOneWidget);
+    }, timeout: laneTimeout);
+
     testWidgets('Propose fills the lane with a card', (tester) async {
       final container = await ready(tester);
       await proposeSettled(tester, container);
