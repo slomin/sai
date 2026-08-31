@@ -4,7 +4,9 @@
 /// accepts.
 library;
 
+export 'proposals/apply.dart';
 export 'proposals/events.dart';
+export 'proposals/notifier.dart';
 export 'proposals/parse.dart';
 export 'proposals/proposal.dart';
 export 'proposals/schema.dart';
