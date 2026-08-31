@@ -432,6 +432,113 @@ void main() {
     });
   });
 
+  group('TaskStore.splitTask (#35)', () {
+    test('a split is N creates and a delete, one undo entry', () async {
+      final project = await store.createProject(title: 'P');
+      final heading = await store.createHeading(project: project, title: 'H');
+      final tag = await store.createTag(title: 'errand');
+      final original = await store.createTask(
+        title: 'Big chore',
+        notes: 'the notes',
+        when: const TaskWhen.date(CalendarDate(2026, 8, 30)),
+        deadline: const CalendarDate(2026, 9, 5),
+        project: project,
+        heading: heading,
+        tags: [tag],
+        checklist: [const ChecklistItem(title: 'step')],
+      );
+      final before = store.undoDepth;
+      final parts = await store.splitTask(original, [' First ', 'Second']);
+      expect(parts, hasLength(2));
+      expect(store.undoDepth, before + 1, reason: 'one entry for the split');
+
+      final first = store.projection.task(parts[0])!;
+      final second = store.projection.task(parts[1])!;
+      expect(first.title, 'First');
+      expect(first.notes, 'the notes');
+      expect(first.checklist.single.title, 'step');
+      expect(second.title, 'Second');
+      expect(second.notes, '');
+      expect(second.checklist, isEmpty);
+      for (final part in [first, second]) {
+        expect(part.project, project);
+        expect(part.heading, heading);
+        expect(part.tags, [tag]);
+        expect(part.when, const TaskWhen.date(CalendarDate(2026, 8, 30)));
+        expect(part.deadline, const CalendarDate(2026, 9, 5));
+        expect(part.status, TaskStatus.open);
+      }
+      expect(store.projection.task(original)!.deletedAt, isNotNull);
+      final types = [
+        for (final line in logLines()) (jsonDecode(line) as Map)['type'],
+      ];
+      expect(types.sublist(types.length - 3), [
+        'task.create',
+        'task.create',
+        'task.delete',
+      ]);
+    });
+
+    test('one undo restores the original and trashes the parts', () async {
+      final original = await store.createTask(title: 'Big chore', notes: 'k');
+      final parts = await store.splitTask(original, ['a', 'b']);
+      expect(store.undoDepth, 2, reason: 'the create and the split');
+      await store.undo();
+      final restored = store.projection.task(original)!;
+      expect(restored.deletedAt, isNull);
+      expect(restored.notes, 'k');
+      for (final part in parts) {
+        expect(store.projection.task(part)!.deletedAt, isNotNull);
+      }
+      expect(store.undoDepth, 1);
+    });
+
+    test('refuses blank or lone parts and a non-open original', () async {
+      final id = await store.createTask(title: 'x');
+      await expectLater(store.splitTask(id, ['only']), throwsArgumentError);
+      await expectLater(store.splitTask(id, ['a', ' ']), throwsArgumentError);
+      await store.completeTask(id);
+      await expectLater(store.splitTask(id, ['a', 'b']), throwsStateError);
+      expect(
+        store.undoDepth,
+        2,
+        reason: 'refusals record nothing beyond the create and complete',
+      );
+    });
+
+    test('an assistant split attributes and refs every line', () async {
+      final proposal = BlobRef.sha256OfBytes([9]);
+      final accept = BlobRef.sha256OfBytes([10]);
+      final id = await store.createTask(title: 'x');
+      await store.splitTask(
+        id,
+        ['a', 'b'],
+        by: Attribution.assistant(
+          const ModelRef(provider: 'fake', id: 'f'),
+          refs: [proposal, accept],
+        ),
+      );
+      final lines = logLines().sublist(1);
+      expect(lines, hasLength(3));
+      for (final line in lines) {
+        final map = jsonDecode(line) as Map;
+        expect(map['actor'], 'assistant');
+        expect(map['model'], isNotNull);
+        expect(
+          (map['refs'] as List),
+          containsAll([proposal.toString(), accept.toString()]),
+        );
+      }
+    });
+
+    test('a system split is the barrier, recording no entry', () async {
+      final id = await store.createTask(title: 'x');
+      expect(store.canUndo, isTrue);
+      await store.splitTask(id, ['a', 'b'], by: const Attribution.system());
+      expect(store.canUndo, isFalse);
+    });
+  });
+
   group('TaskStore.undo', () {
     const today = CalendarDate(2026, 8, 24);
 

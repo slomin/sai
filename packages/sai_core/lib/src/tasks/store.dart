@@ -147,7 +147,8 @@ final class TaskStore {
   static const undoLimit = 100;
 
   /// One entry per committed user or assistant command, newest last: the
-  /// event that reverses it, and the id of the line it would reverse.
+  /// events that reverse it — almost always one; a [splitTask]'s several,
+  /// unwound in reverse — parallel to the ids of the lines they reverse.
   /// Bounded to [undoLimit]. Session-local — the stack dies with the
   /// process and survives [reload] (entries name entities by id; a stale
   /// inverse is refused by validation, not by forgetting it) — except
@@ -155,7 +156,7 @@ final class TaskStore {
   /// another writer appended and a reload discovered, clears the stack
   /// and records nothing, so an import (#18) neither leaves thousands of
   /// entries nor lets an older inverse cross imported state.
-  final _undoStack = <({TaskEvent inverse, BlobRef undone})>[];
+  final _undoStack = <({List<TaskEvent> inverses, List<BlobRef> undone})>[];
 
   /// Whether [undo] has a mutation to reverse.
   bool get canUndo => _undoStack.isNotEmpty;
@@ -169,9 +170,10 @@ final class TaskStore {
   /// Undo records no inverse of its own: there is no redo, and repeated
   /// calls unwind the session in reverse order.
   ///
-  /// The inverse carries [by] with the reversed event's id added to its
+  /// Each inverse carries [by] with the reversed event's id added to its
   /// refs. A refused inverse (the reducer no longer accepts it after a
-  /// concurrent change) throws and keeps its stack entry, so a [reload]
+  /// concurrent change) throws and keeps its stack entry — for a grouped
+  /// entry ([splitTask]) the not-yet-reversed slice — so a [reload]
   /// and retry stay possible.
   Future<StoredEvent?> undo({Attribution by = const Attribution.user()}) =>
       _serialized(() async {
@@ -181,13 +183,25 @@ final class TaskStore {
         // shrunk stack to synchronous listeners; a refused inverse never
         // notifies, so pushing the entry back is invisible.
         final entry = _undoStack.removeLast();
-        final attribution = entry.inverse.refs.contains(entry.undone)
-            ? by
-            : by.withRefs([entry.undone]);
+        // Newest event first: inverse i was computed against the
+        // projection before event i, so the group unwinds in reverse.
+        var at = entry.inverses.length - 1;
         try {
-          return await _apply(entry.inverse, attribution, record: false);
+          StoredEvent? last;
+          for (; at >= 0; at--) {
+            final inverse = entry.inverses[at];
+            final undone = entry.undone[at];
+            final attribution = inverse.refs.contains(undone)
+                ? by
+                : by.withRefs([undone]);
+            last = await _apply(inverse, attribution, record: false);
+          }
+          return last;
         } catch (_) {
-          _undoStack.add(entry);
+          _undoStack.add((
+            inverses: entry.inverses.sublist(0, at + 1),
+            undone: entry.undone.sublist(0, at + 1),
+          ));
           rethrow;
         }
       });
@@ -239,8 +253,8 @@ final class TaskStore {
         _undoStack.clear();
       } else if (record) {
         _undoStack.add((
-          inverse: invertEvent(event, before, created: stored.id),
-          undone: stored.id,
+          inverses: [invertEvent(event, before, created: stored.id)],
+          undone: [stored.id],
         ));
         if (_undoStack.length > undoLimit) _undoStack.removeAt(0);
       }
@@ -253,6 +267,77 @@ final class TaskStore {
   }
 
   // --- tasks ---
+
+  /// Splits [task] into [parts] (#35): one `task.create` per trimmed
+  /// part — placement, when, deadline and tags copied from the original,
+  /// its notes and checklist going to the first part — then one soft
+  /// `task.delete` of the original; all one undo entry, so a single
+  /// [undo] restores the original and trashes the parts. Returns the
+  /// new ids in [parts] order. The parts append to the end of the
+  /// original's group; a system attribution is the barrier as ever.
+  Future<List<TaskId>> splitTask(
+    TaskId task,
+    List<String> parts, {
+    Attribution by = const Attribution.user(),
+  }) => _serialized(() async {
+    _checkOpen();
+    final titles = [for (final part in parts) part.trim()];
+    if (titles.length < 2) {
+      throw ArgumentError('a split needs at least two parts');
+    }
+    if (titles.any((title) => title.isEmpty)) {
+      throw ArgumentError('a split part is blank');
+    }
+    final original = _projection.task(task);
+    if (original == null || original.deletedAt != null) {
+      throw StateError('the task is gone');
+    }
+    if (original.status != TaskStatus.open) {
+      throw StateError('only an open task splits');
+    }
+    final inverses = <TaskEvent>[];
+    final undone = <BlobRef>[];
+    Future<StoredEvent> step(TaskEvent event) async {
+      final before = _projection;
+      final stored = await _apply(event, by, record: false);
+      inverses.add(invertEvent(event, before, created: stored.id));
+      undone.add(stored.id);
+      return stored;
+    }
+
+    final ids = <TaskId>[];
+    try {
+      for (final (index, title) in titles.indexed) {
+        final stored = await step(
+          TaskCreated(
+            title: title,
+            notes: index == 0 ? original.notes : '',
+            when: original.when,
+            deadline: original.deadline,
+            project: original.project,
+            area: original.area,
+            heading: original.heading,
+            tags: original.tags,
+            checklist: index == 0 ? original.checklist : const [],
+          ),
+        );
+        ids.add(stored.id);
+      }
+      await step(TaskDeleted(task));
+    } catch (_) {
+      // A refusal mid-group cannot un-append what already landed; what
+      // did land stays one undoable entry.
+      if (by.actor != Actor.system && inverses.isNotEmpty) {
+        _undoStack.add((inverses: inverses, undone: undone));
+      }
+      rethrow;
+    }
+    if (by.actor != Actor.system) {
+      _undoStack.add((inverses: inverses, undone: undone));
+      if (_undoStack.length > undoLimit) _undoStack.removeAt(0);
+    }
+    return ids;
+  });
 
   Future<TaskId> createTask({
     required String title,

@@ -379,7 +379,11 @@ event's id in the envelope `refs`. No new types, no new payload keys.
 
 The table is total: a degenerate mutation (deleting the deleted,
 reopening the open) inverts to the state-preserving event of its kind,
-so a session's N mutations take exactly N undos, unwound newest first.
+so a session's N commands take exactly N undos, unwound newest first.
+One command is usually one event; `splitTask` (#35) — the parts'
+creates and the original's delete — is one stack entry whose inverses
+unwind in reverse order, so one undo restores the original and trashes
+the parts.
 Each event type carries its own inverse (`TaskEvent.invert`, abstract
 on the sealed hierarchy — a new type does not compile without one);
 `invertEvent` is the entry point that delegates.
