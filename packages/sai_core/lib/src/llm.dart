@@ -22,3 +22,4 @@ export 'llm/probe.dart';
 export 'llm/provider.dart';
 export 'llm/recorder.dart';
 export 'llm/status.dart';
+export 'llm/usage.dart';
