@@ -233,7 +233,14 @@ void main() {
     final container = await make();
     final chat = container.read(chatProvider.notifier);
     final sending = chat.send('go');
-    await Future<void>.delayed(const Duration(milliseconds: 70));
+    // Cancel only once a delta has landed — condition-polled, so a slow
+    // runner cannot cancel before the stream began (CI flaked at a
+    // fixed 70ms).
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!(container.read(chatProvider).streaming?.isNotEmpty ?? false)) {
+      if (DateTime.now().isAfter(deadline)) fail('no delta arrived');
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
     expect(container.read(chatProvider).busy, isTrue);
     chat.cancel();
     await sending;
