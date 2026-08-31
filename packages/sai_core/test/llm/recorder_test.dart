@@ -638,6 +638,9 @@ final class _ThrowingProvider implements LlmProvider {
   @override
   LlmCall start(LlmRequest request) => throw StateError('boom');
   @override
+  void releaseIdle() {}
+
+  @override
   Future<void> close() async {}
 }
 
@@ -654,6 +657,9 @@ final class _ErroringProvider implements LlmProvider {
   String get defaultModel => 'm';
   @override
   LlmCall start(LlmRequest request) => _ErroringCall();
+  @override
+  void releaseIdle() {}
+
   @override
   Future<void> close() async {}
 }
@@ -712,6 +718,9 @@ final class _CostlyProvider implements LlmProvider {
   }
 
   @override
+  void releaseIdle() {}
+
+  @override
   Future<void> close() async {}
 }
 
@@ -733,6 +742,9 @@ final class _SpyProvider implements LlmProvider {
     linesAtStart = _count();
     return _inner.start(request);
   }
+
+  @override
+  void releaseIdle() {}
 
   @override
   Future<void> close() => _inner.close();

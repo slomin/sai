@@ -376,6 +376,9 @@ final class _ThrowingProvider implements LlmProvider {
   LlmCall start(LlmRequest request) => throw error;
 
   @override
+  void releaseIdle() {}
+
+  @override
   Future<void> close() async {}
 }
 
@@ -396,6 +399,9 @@ final class _ErroringStreamProvider implements LlmProvider {
 
   @override
   LlmCall start(LlmRequest request) => _ErroringCall(error, defaultModel);
+
+  @override
+  void releaseIdle() {}
 
   @override
   Future<void> close() async {}

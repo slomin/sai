@@ -194,16 +194,22 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
 
   /// Keeps the newest text in view as it arrives — but only while the
   /// reader is at the bottom; someone who scrolled up to re-read stays
-  /// there. One jump per frame, however many deltas landed in it.
+  /// there. One jump per frame, however many deltas landed in it, and
+  /// only when this very update grew the transcript — the extent is
+  /// compared across the frame, not remembered, so a stale value can
+  /// never re-jump on an update that changed nothing (#109).
   void _follow() {
     if (_followPending || !_scroll.hasClients) return;
     final position = _scroll.position;
     if (position.pixels < position.maxScrollExtent - 48) return;
+    final before = position.maxScrollExtent;
     _followPending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _followPending = false;
       if (!_scroll.hasClients) return;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      final extent = _scroll.position.maxScrollExtent;
+      if (extent == before) return;
+      _scroll.jumpTo(extent);
     });
   }
 
@@ -212,7 +218,11 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
     ref.listen(chatProvider, (_, _) => _follow());
     final state = ref.watch(chatProvider);
     final reasoningOn = ref.watch(reasoningProvider);
-    final lane = ref.watch(suggestionViewsProvider).isNotEmpty;
+    // Presence only: the lane watches the full list itself, and a task
+    // mutation elsewhere must not rebuild the whole transcript (#109).
+    final lane = ref.watch(
+      suggestionViewsProvider.select((views) => views.isNotEmpty),
+    );
     // The band is ink on a light theme: the selection highlight and the
     // caret take the band's own light, for the transcript and the
     // composer alike.
@@ -224,10 +234,24 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(child: _transcript(state, reasoningOn)),
+                // One boundary per scrollable (#109): scrollbar chrome
+                // and hover repaints originate above the viewport, and
+                // this pins a scroll tick's repaint to the pane that
+                // scrolled — measured with the repaint rainbow, which
+                // put the per-tick repaint here and nowhere else.
+                Expanded(
+                  child: RepaintBoundary(
+                    key: chatTranscriptBoundaryKey,
+                    child: _transcript(state, reasoningOn),
+                  ),
+                ),
                 // The lane (#35): the latest proposal's cards, beside
                 // the talk, only while there is one.
-                if (lane) const SizedBox(width: 300, child: SuggestionLane()),
+                if (lane)
+                  const RepaintBoundary(
+                    key: suggestionLaneBoundaryKey,
+                    child: SizedBox(width: 300, child: SuggestionLane()),
+                  ),
               ],
             ),
           ),

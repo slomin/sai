@@ -501,6 +501,104 @@ void main() {
       expect(result.failure!.kind, LlmFailureKind.internal);
       expect(result.failure!.message, TransportText.closed);
     });
+
+    test('releaseIdle closes the idle keep-alive promptly; the next call '
+        'opens fresh (#109)', () async {
+      answerWith(['ok']);
+      final provider = make();
+      expect((await provider.start(ask('a')).done).text, 'ok');
+      // The completed call's socket stays pooled for reuse — that linger
+      // is today's behaviour, and what releaseIdle exists to cut short.
+      expect(stub.connectionsInfo().total, greaterThanOrEqualTo(1));
+      provider.releaseIdle();
+      // Well under the client's 15 s default idle timeout: promptness is
+      // the point.
+      await _until(() => stub.connectionsInfo().total == 0);
+      expect(provider.isClosed, isFalse);
+      expect((await provider.start(ask('b')).done).text, 'ok');
+      await provider.close();
+    });
+
+    test("releaseIdle mid-stream keeps that call's socket", () async {
+      stub.routes['POST /v1/chat/completions'] = (req) => StubServer.stream(
+        req,
+        ['a', 'b', 'c'],
+        gap: const Duration(milliseconds: 40),
+      );
+      final provider = make(deadlines: const OpenAiDeadlines());
+      final call = provider.start(ask('x'));
+      final parts = <String>[];
+      var released = false;
+      await for (final delta in call.deltas) {
+        parts.add(delta.text);
+        if (!released) {
+          released = true;
+          provider.releaseIdle();
+        }
+      }
+      final result = await call.done;
+      expect(result.finish, LlmFinish.stop);
+      expect(result.text, 'abc');
+      // The retired client goes down once its last active request ends.
+      await _until(() => stub.connectionsInfo().total == 0);
+      await provider.close();
+    });
+
+    test('a probe overtaken by releaseIdle opens nothing new', () async {
+      // The follow-up discovery GETs must stay on the client the probe
+      // started with; on the replacement they would pool a fresh idle
+      // socket to the switched-away endpoint that nothing releases.
+      final models = Completer<void>();
+      stub.routes['GET /v1/models'] = (req) async {
+        await models.future;
+        await StubServer.json(req, {
+          'data': [
+            {'id': 'qwen'},
+          ],
+        });
+      };
+      final provider = make();
+      final arrived = stub.seen.first;
+      final probing = provider.probe();
+      await arrived;
+      provider.releaseIdle();
+      models.complete();
+      final info = await probing;
+      expect(info.models, ['qwen']);
+      // The health/LM Studio GETs died on the retired client: nothing
+      // else reached the endpoint, and its sockets drain away.
+      expect(stub.requests, hasLength(1));
+      await _until(() => stub.connectionsInfo().total == 0);
+      // A fresh probe rides the replacement client as usual.
+      await provider.probe();
+      expect(stub.requests.length, greaterThan(1));
+      await provider.close();
+    });
+
+    test('an abort reaches the server promptly; what it does with '
+        'ingested bytes is its own affair (ADR 0009)', () async {
+      final gone = Completer<void>();
+      stub.routes['POST /v1/chat/completions'] = (req) async {
+        // Never answers — a server deep in prompt ingestion, like the
+        // one a cancelled warm leaves behind; the detached socket
+        // reports the client going away.
+        final socket = await req.response.detachSocket(writeHeaders: false);
+        void done() {
+          if (!gone.isCompleted) gone.complete();
+        }
+
+        socket.listen((_) {}, onDone: done, onError: (Object _) => done());
+      };
+      final arrived = stub.seen.first;
+      // The stock deadlines: no timeout may beat the cancel to the abort.
+      final provider = make(deadlines: const OpenAiDeadlines());
+      final call = provider.start(ask('x'));
+      await arrived;
+      call.cancel();
+      expect((await call.done).finish, LlmFinish.cancelled);
+      await gone.future.timeout(const Duration(seconds: 1));
+      await provider.close();
+    });
   });
 
   test('every failure names the origin and uses fixed text', () async {
@@ -720,4 +818,13 @@ final class _BrokenStore implements SecretStore {
   void write(String account, String value) => throw UnimplementedError();
   @override
   bool delete(String account) => throw UnimplementedError();
+}
+
+/// Polls [ready] every 10 ms, failing after five seconds.
+Future<void> _until(bool Function() ready) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!ready()) {
+    if (DateTime.now().isAfter(deadline)) fail('condition never held');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
 }

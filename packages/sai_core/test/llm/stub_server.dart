@@ -46,6 +46,10 @@ final class StubServer {
   String get origin => '${https ? 'https' : 'http'}://127.0.0.1:$port';
   Uri get v1 => Uri.parse('$origin/v1');
 
+  /// The server's live socket view — how many connections are open or
+  /// idle right now — for asserting keep-alive lifecycles (#109).
+  HttpConnectionsInfo connectionsInfo() => _server.connectionsInfo();
+
   Future<void> _serve(HttpRequest request) async {
     final body = await utf8.decoder.bind(request).join();
     final headers = <String, String>{};

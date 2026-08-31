@@ -27,6 +27,14 @@ abstract interface class LlmProvider {
   /// throw or forgotten finish into a recorded failure.
   LlmCall start(LlmRequest request);
 
+  /// Releases idle transport resources — pooled keep-alive sockets, say —
+  /// promptly, keeping the provider open and usable: a running call is
+  /// never disturbed, and the next call simply reconnects. Called when the
+  /// selection moves away from this provider (#109); prompt release rides
+  /// on the clients holding `connectionProvider` for the session, exactly
+  /// like probing does. A provider holding nothing idle does nothing.
+  void releaseIdle();
+
   /// Releases what the provider holds (an HTTP client, say). Calls still
   /// running are cancelled.
   Future<void> close();

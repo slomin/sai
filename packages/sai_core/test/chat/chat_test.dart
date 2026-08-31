@@ -900,5 +900,8 @@ final class _Drip implements LlmProvider {
   }
 
   @override
+  void releaseIdle() {}
+
+  @override
   Future<void> close() async {}
 }

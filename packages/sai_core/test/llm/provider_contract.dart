@@ -94,5 +94,24 @@ void llmProviderContract(
       await provider.close();
       expect((await call.done).finish, LlmFinish.cancelled);
     });
+
+    test('releaseIdle mid-call disturbs nothing (#109)', () async {
+      final call = provider.start(request());
+      final parts = <String>[];
+      var released = false;
+      await for (final delta in call.deltas) {
+        parts.add(delta.text);
+        if (!released) {
+          released = true;
+          provider.releaseIdle();
+        }
+      }
+      final result = await call.done;
+      expect(result.finish, LlmFinish.stop);
+      expect(result.failure, isNull);
+      expect(parts.join(), result.text);
+      // The provider stays open: another call answers.
+      expect((await provider.start(request()).done).finish, LlmFinish.stop);
+    });
   });
 }

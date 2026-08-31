@@ -28,6 +28,9 @@ final class _Probed implements LlmProvider, LlmEndpointProbe {
   @override
   LlmCall start(LlmRequest request) => throw UnimplementedError();
   @override
+  void releaseIdle() {}
+
+  @override
   Future<void> close() async {}
   @override
   Future<EndpointInfo> probe() async {
@@ -51,6 +54,9 @@ final class _Slow implements LlmProvider, LlmEndpointProbe {
   String get defaultModel => 'm';
   @override
   LlmCall start(LlmRequest request) => throw UnimplementedError();
+  @override
+  void releaseIdle() {}
+
   @override
   Future<void> close() async {}
   @override
@@ -222,6 +228,34 @@ void main() {
         expect(c.read(llmStatusProvider), status);
         c.dispose();
       });
+    });
+
+    test("switching the selection releases the old provider's idle "
+        'sockets but keeps it open (#109)', () async {
+      final a = FakeLlmProvider(id: 'a');
+      final b = FakeLlmProvider(id: 'b');
+      final c = make(builtins: [() => a, () => b]);
+      c.listen(connectionProvider, (_, _) {});
+      final settings = c.read(settingsProvider.notifier);
+      settings.selectLlm('a');
+      c.read(connectionProvider);
+      expect(a.idleReleases, 0);
+      settings.selectLlm('b');
+      c.read(connectionProvider);
+      expect(a.idleReleases, 1);
+      expect(a.isClosed, isFalse, reason: 'released, never closed');
+      expect(b.idleReleases, 0);
+      // Deselecting entirely releases too.
+      settings.selectLlm(null);
+      c.read(connectionProvider);
+      expect(b.idleReleases, 1);
+      // An unrelated save rebuilds with the identical instance: a no-op.
+      settings.selectLlm('a');
+      c.read(connectionProvider);
+      settings.setWorkspace(const WorkspaceState(section: 'list:inbox'));
+      c.read(connectionProvider);
+      expect(a.idleReleases, 1);
+      expect(b.idleReleases, 1);
     });
 
     test('a slow older probe cannot overwrite a newer answer', () async {

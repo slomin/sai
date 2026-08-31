@@ -534,6 +534,20 @@ final activeLlmProvider = Provider<LlmProvider?>((ref) {
   return ref.watch(llmRegistryProvider)[id];
 });
 
+/// Releases the idle sockets of the provider the selection moved away
+/// from — to another, or to none — while the instance (and any running
+/// call) lives on (#109). Its own dependency-free provider rather than
+/// [Connection] state, so the listener outlives every [Connection]
+/// rebuild; [Connection.build] keeps it alive for the session, exactly
+/// like probing.
+final _llmIdleReleaseProvider = Provider<void>((ref) {
+  ref.listen(activeLlmProvider, (previous, next) {
+    if (previous != null && !identical(previous, next)) {
+      previous.releaseIdle();
+    }
+  });
+});
+
 /// The privacy policy (#27) as settings hold it. Read per call by the
 /// recorder, watched by the status line.
 final privacyPolicyProvider = Provider<PrivacyPolicy>(
@@ -753,7 +767,8 @@ class CacheWarmer extends Notifier<WarmState> {
     });
     if (ref.watch(chatProvider.select((s) => s.busy))) {
       // The slot belongs to the person's turn; the server keeps what a
-      // cancelled warm already ingested.
+      // cancelled warm already ingested — cancellation is client-side
+      // only, by decision (ADR 0009, #109).
       return stopped();
     }
     if (_inFlight == key) {
@@ -1360,11 +1375,15 @@ class Connection extends Notifier<ConnectionStatus> {
     final (problem, id) = ref.watch(
       settingsProvider.select((s) => (s.problem, s.llm)),
     );
+    // Holds the release watcher for the session; and the active provider
+    // is watched above the early returns, so even deselecting recomputes
+    // it and the watcher sees the move.
+    ref.watch(_llmIdleReleaseProvider);
+    final active = ref.watch(activeLlmProvider);
     if (problem != null) {
       return const ConnectionStatus.down('settings unreadable');
     }
     if (id == null) return const ConnectionStatus.down('no provider');
-    final active = ref.watch(activeLlmProvider);
     if (active == null) {
       final missing = ref.watch(misconfiguredLlmsProvider)[id];
       return ConnectionStatus.down(

@@ -148,6 +148,15 @@ final class FakeLlmProvider implements LlmProvider {
   /// Whether [close] has been called.
   bool get isClosed => _closed;
 
+  var _idleReleases = 0;
+
+  /// How often [releaseIdle] was called — what the riverpod-layer tests
+  /// observe (#109). The fake holds no sockets to drop.
+  int get idleReleases => _idleReleases;
+
+  @override
+  void releaseIdle() => _idleReleases++;
+
   @override
   Future<void> close() async {
     _closed = true;
