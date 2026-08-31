@@ -19,6 +19,7 @@ final class DailyUsage {
     required this.promptTokens,
     required this.completionTokens,
     required this.totalTokens,
+    required this.tokens,
     required this.duration,
     required this.cost,
   });
@@ -46,13 +47,11 @@ final class DailyUsage {
   /// Locals never report cost, and nothing here estimates one.
   final double? cost;
 
-  /// The best token total: the reported one, else prompt+completion,
-  /// else unknown.
-  int? get tokens {
-    if (totalTokens != null) return totalTokens;
-    if (promptTokens == null && completionTokens == null) return null;
-    return (promptTokens ?? 0) + (completionTokens ?? 0);
-  }
+  /// The best token count, summed per call — each line contributes its
+  /// reported total, else prompt+completion — so a day mixing payload
+  /// shapes never drops the component-only lines. Null until any line
+  /// reported tokens at all.
+  final int? tokens;
 
   @override
   bool operator ==(Object other) =>
@@ -64,6 +63,7 @@ final class DailyUsage {
       other.promptTokens == promptTokens &&
       other.completionTokens == completionTokens &&
       other.totalTokens == totalTokens &&
+      other.tokens == tokens &&
       other.duration == duration &&
       other.cost == cost;
 
@@ -76,6 +76,7 @@ final class DailyUsage {
     promptTokens,
     completionTokens,
     totalTokens,
+    tokens,
     duration,
     cost,
   );
@@ -108,15 +109,28 @@ final class UsageProjection {
       if (payload['duration_ms'] case final int ms) {
         sum.durationMs += ms < 0 ? 0 : ms;
       }
-      if (payload['prompt_tokens'] case final int n) {
-        sum.promptTokens = (sum.promptTokens ?? 0) + n;
+      final prompt = payload['prompt_tokens'] is int
+          ? payload['prompt_tokens'] as int
+          : null;
+      final completion = payload['completion_tokens'] is int
+          ? payload['completion_tokens'] as int
+          : null;
+      final total = payload['total_tokens'] is int
+          ? payload['total_tokens'] as int
+          : null;
+      if (prompt != null) sum.promptTokens = (sum.promptTokens ?? 0) + prompt;
+      if (completion != null) {
+        sum.completionTokens = (sum.completionTokens ?? 0) + completion;
       }
-      if (payload['completion_tokens'] case final int n) {
-        sum.completionTokens = (sum.completionTokens ?? 0) + n;
-      }
-      if (payload['total_tokens'] case final int n) {
-        sum.totalTokens = (sum.totalTokens ?? 0) + n;
-      }
+      if (total != null) sum.totalTokens = (sum.totalTokens ?? 0) + total;
+      // This call's best count: the reported total, else the components
+      // — decided per line, so mixed payload shapes still all count.
+      final best =
+          total ??
+          ((prompt == null && completion == null)
+              ? null
+              : (prompt ?? 0) + (completion ?? 0));
+      if (best != null) sum.tokens = (sum.tokens ?? 0) + best;
       if (payload['cost'] case final num c) {
         sum.cost = (sum.cost ?? 0) + c.toDouble();
       }
@@ -131,6 +145,7 @@ final class UsageProjection {
           promptTokens: sum.promptTokens,
           completionTokens: sum.completionTokens,
           totalTokens: sum.totalTokens,
+          tokens: sum.tokens,
           duration: Duration(milliseconds: sum.durationMs),
           cost: sum.cost,
         ),
@@ -164,6 +179,7 @@ final class _Sum {
   int? promptTokens;
   int? completionTokens;
   int? totalTokens;
+  int? tokens;
   double? cost;
 }
 

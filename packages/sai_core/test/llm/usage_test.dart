@@ -146,6 +146,19 @@ void main() {
       expect(q.onDay(q.days.single).single.tokens, 15);
     });
 
+    test('mixed payload shapes all count toward tokens', () {
+      // One backend reports a total, another only the components; the
+      // best count is decided per call, then summed (review, #107).
+      final p = UsageProjection.replay([
+        usage(totalTokens: 100),
+        usage(promptTokens: 50, completionTokens: 20),
+      ]);
+      final row = p.onDay(p.days.single).single;
+      expect(row.totalTokens, 100);
+      expect(row.promptTokens, 50);
+      expect(row.tokens, 170);
+    });
+
     test('cost stays null until a line carries it, then sums', () {
       final p = UsageProjection.replay([
         usage(),
@@ -235,6 +248,7 @@ void main() {
         promptTokens: null,
         completionTokens: null,
         totalTokens: totalTokens,
+        tokens: totalTokens,
         duration: duration,
         cost: cost,
       );
