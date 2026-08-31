@@ -51,11 +51,11 @@ void main() {
     EventTypes.providerUsage,
     payload: {
       'finish': finish,
-      if (durationMs != null) 'duration_ms': durationMs,
-      if (promptTokens != null) 'prompt_tokens': promptTokens,
-      if (completionTokens != null) 'completion_tokens': completionTokens,
-      if (totalTokens != null) 'total_tokens': totalTokens,
-      if (cost != null) 'cost': cost,
+      'duration_ms': ?durationMs,
+      'prompt_tokens': ?promptTokens,
+      'completion_tokens': ?completionTokens,
+      'total_tokens': ?totalTokens,
+      'cost': ?cost,
     },
     model: provider == null ? null : ModelRef(provider: provider, id: 'm'),
     ts: ts,
@@ -93,7 +93,11 @@ void main() {
 
     test('ignores every other event type', () {
       final p = UsageProjection.replay([
-        emit(EventTypes.chatMessage, payload: {'text': 'hi'}, actor: Actor.user),
+        emit(
+          EventTypes.chatMessage,
+          payload: {'text': 'hi'},
+          actor: Actor.user,
+        ),
         emit(
           EventTypes.providerRequest,
           payload: {'hash': 'x', 'payload': <String, Object?>{}},
@@ -169,10 +173,7 @@ void main() {
       // uses, so the test holds in any zone.
       final early = DateTime.utc(2026, 8, 24, 23, 30);
       final late_ = DateTime.utc(2026, 8, 25, 0, 30);
-      final p = UsageProjection.replay([
-        usage(ts: early),
-        usage(ts: late_),
-      ]);
+      final p = UsageProjection.replay([usage(ts: early), usage(ts: late_)]);
       final dayA = CalendarDate.fromLocal(early);
       final dayB = CalendarDate.fromLocal(late_);
       if (dayA == dayB) {
