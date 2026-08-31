@@ -13,6 +13,7 @@ provider relies on, checked directly:
   props      /props reports the alias and default_generation_settings.n_ctx
   stream     a chat completion streams, with usage and llama.cpp timings
   thinking   chat_template_kwargs.enable_thinking turns reasoning off/on
+  schema     response_format json_schema constrains the reply (#35)
   vision     a generated 64x64 PNG (blue square on red) is described
   needle     a word buried after ~64k tokens of filler comes back;
              with --full the needle sits near the 262k limit, which
@@ -155,6 +156,25 @@ def main(base, full):
             assert '391' in (m.get('content') or ''), m
         return 'off/on/off as asked'
 
+    def schema():
+        # The proposal lane's transport (#35): the OpenAI nesting,
+        # schema → grammar on the server, valid JSON back.
+        body = dict(user('Tell me a one-line joke.'), max_tokens=256,
+                    chat_template_kwargs={'enable_thinking': False})
+        body['response_format'] = {
+            'type': 'json_schema',
+            'json_schema': {
+                'name': 'joke_v0',
+                'strict': True,
+                'schema': {'type': 'object', 'additionalProperties': False,
+                           'required': ['joke'],
+                           'properties': {'joke': {'type': 'string'}}},
+            },
+        }
+        decoded = json.loads(chat(base, body)['choices'][0]['message']['content'])
+        assert set(decoded) == {'joke'} and decoded['joke'].strip(), decoded
+        return f'constrained JSON: {decoded["joke"]!r}'
+
     def vision():
         data = base64.b64encode(fixture_png()).decode()
         body = dict(user([
@@ -190,6 +210,7 @@ def main(base, full):
     check('props', props)
     check('stream', streaming)
     check('thinking', thinking)
+    check('schema', schema)
     check('vision', vision)
     check('needle' + (' (full)' if full else ''), needle)
     return 0 if all(results) else 1
