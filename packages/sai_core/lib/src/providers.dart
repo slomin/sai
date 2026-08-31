@@ -24,6 +24,8 @@ import 'llm/provider.dart';
 import 'llm/recorder.dart';
 import 'llm/status.dart';
 import 'llm/usage.dart';
+import 'proposals/notifier.dart';
+import 'proposals/proposal.dart';
 import 'secrets/keychain.dart';
 import 'secrets/secret_store.dart';
 import 'settings/provider_config.dart';
@@ -287,6 +289,30 @@ final chatProvider = NotifierProvider<ChatNotifier, ChatState>(
 final chatVisibleProvider = NotifierProvider<ChatVisible, bool>(
   ChatVisible.new,
 );
+
+/// The propose/confirm lane (#35): the latest proposal and the person's
+/// verdicts on its items. Session state; the archive keeps the record.
+final proposalsProvider = NotifierProvider<ProposalsNotifier, ProposalsState>(
+  ProposalsNotifier.new,
+);
+
+/// The lane as a client renders it: every item of the current proposal,
+/// staleness derived against the live projection — so the app's watch
+/// and the TUI's archive poll re-derive it for free.
+final suggestionViewsProvider = Provider<List<SuggestionView>>((ref) {
+  final proposal = ref.watch(proposalsProvider).current;
+  if (proposal == null) return const [];
+  final projection = ref.watch(tasksProvider).value;
+  return List.unmodifiable([
+    for (final item in proposal.items)
+      SuggestionView(
+        item: item,
+        stale:
+            item.status == SuggestionStatus.pending &&
+            (projection == null || item.stale(projection)),
+      ),
+  ]);
+});
 
 /// The areas the sidebar shows folded (#76).
 final collapsedAreasProvider = NotifierProvider<CollapsedAreas, Set<AreaId>>(

@@ -10,6 +10,7 @@ import 'chat_composer.dart';
 import 'chat_keys.dart';
 import 'markdown/sai_markdown.dart';
 import 'selection_join.dart';
+import 'suggestion_lane.dart';
 import 'waiting_dots.dart';
 
 export 'chat_keys.dart';
@@ -27,8 +28,8 @@ final bandSelectionTheme = TextSelectionThemeData(
 const chatEmptyHint =
     'Ask about your list — what is due, what is coming up, what you '
     'finished. A local model sees every task, Logbook and Trash included; '
-    'a cloud one reads at most Today and Upcoming. The assistant cannot '
-    'change your tasks.';
+    'a cloud one reads at most Today and Upcoming. The assistant can '
+    'propose changes — nothing changes until you accept.';
 
 /// How tall the open band's body is for a main column of [height]: about
 /// two fifths, within bounds, so a short window keeps its list.
@@ -211,7 +212,7 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
     ref.listen(chatProvider, (_, _) => _follow());
     final state = ref.watch(chatProvider);
     final reasoningOn = ref.watch(reasoningProvider);
-    final text = context.saiText;
+    final lane = ref.watch(suggestionViewsProvider).isNotEmpty;
     // The band is ink on a light theme: the selection highlight and the
     // caret take the band's own light, for the transcript and the
     // composer alike.
@@ -220,78 +221,84 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
       child: Column(
         children: [
           Expanded(
-            child: state.turns.isEmpty && !state.busy
-                ? Align(
-                    alignment: Alignment.topLeft,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
-                      child: Text(
-                        chatEmptyHint,
-                        style: text.small.copyWith(color: SaiColors.sheetDim),
-                      ),
-                    ),
-                  )
-                // The transcript is under the desktop selection system
-                // (#99): a mouse drag selects across a person's plain text
-                // and the rendered Markdown alike, ⌘C copies it; touch and
-                // the wheel still scroll.
-                : SelectionArea(
-                    child: ListView(
-                      key: chatTranscriptKey,
-                      controller: _scroll,
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      children: [
-                        SelectionJoin(
-                          separator: '\n\n',
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              // One boundary per turn, as the list gave
-                              // each child: a delta repaints its row.
-                              for (final turn in state.turns)
-                                RepaintBoundary(
-                                  child: _TurnRow(
-                                    turn,
-                                    reasoningOn: reasoningOn,
-                                  ),
-                                ),
-                              if (state.busy)
-                                _Row(
-                                  who: 'sai',
-                                  reasoning: reasoningOn
-                                      ? state.reasoning
-                                      : null,
-                                  text: state.streaming!,
-                                  leading: state.streaming!.isEmpty
-                                      ? WaitingDots(
-                                          key: chatWaitingKey,
-                                          // Named after what is shown:
-                                          // thinking the setting hides
-                                          // stays unmentioned.
-                                          label:
-                                              reasoningOn &&
-                                                  state.reasoning != null
-                                              ? 'sai is thinking'
-                                              : 'Waiting for sai',
-                                        )
-                                      : null,
-                                  markdown: true,
-                                  caret: true,
-                                  note: state.tasksWithheld
-                                      ? tasksWithheldWord
-                                      : null,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _transcript(state, reasoningOn)),
+                // The lane (#35): the latest proposal's cards, beside
+                // the talk, only while there is one.
+                if (lane) const SizedBox(width: 300, child: SuggestionLane()),
+              ],
+            ),
           ),
           const ChatComposer(),
         ],
       ),
     );
+  }
+
+  Widget _transcript(ChatState state, bool reasoningOn) {
+    final text = context.saiText;
+    return state.turns.isEmpty && !state.busy
+        ? Align(
+            alignment: Alignment.topLeft,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+              child: Text(
+                chatEmptyHint,
+                style: text.small.copyWith(color: SaiColors.sheetDim),
+              ),
+            ),
+          )
+        // The transcript is under the desktop selection system
+        // (#99): a mouse drag selects across a person's plain text
+        // and the rendered Markdown alike, ⌘C copies it; touch and
+        // the wheel still scroll.
+        : SelectionArea(
+            child: ListView(
+              key: chatTranscriptKey,
+              controller: _scroll,
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              children: [
+                SelectionJoin(
+                  separator: '\n\n',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // One boundary per turn, as the list gave
+                      // each child: a delta repaints its row.
+                      for (final turn in state.turns)
+                        RepaintBoundary(
+                          child: _TurnRow(turn, reasoningOn: reasoningOn),
+                        ),
+                      if (state.busy)
+                        _Row(
+                          who: 'sai',
+                          reasoning: reasoningOn ? state.reasoning : null,
+                          text: state.streaming!,
+                          leading: state.streaming!.isEmpty
+                              ? WaitingDots(
+                                  key: chatWaitingKey,
+                                  // Named after what is shown:
+                                  // thinking the setting hides
+                                  // stays unmentioned.
+                                  label: state.phase == ChatPhase.proposing
+                                      ? 'sai is proposing'
+                                      : reasoningOn && state.reasoning != null
+                                      ? 'sai is thinking'
+                                      : 'Waiting for sai',
+                                )
+                              : null,
+                          markdown: true,
+                          caret: true,
+                          note: state.tasksWithheld ? tasksWithheldWord : null,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
   }
 }
 

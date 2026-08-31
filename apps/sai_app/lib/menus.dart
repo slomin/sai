@@ -174,6 +174,17 @@ List<PlatformMenuItem> saiMenus({
         shortcut: const SingleActivator(LogicalKeyboardKey.keyR, meta: true),
         onSelected: commands.toggleReasoning,
       ),
+      // Ask the assistant for structured suggestions (#35); the lane
+      // beside the transcript shows them, nothing changes until Accept.
+      PlatformMenuItem(
+        label: 'Propose Changes',
+        shortcut: const SingleActivator(
+          LogicalKeyboardKey.keyP,
+          meta: true,
+          shift: true,
+        ),
+        onSelected: commands.proposeChat,
+      ),
       const PlatformMenuItemGroup(
         members: [
           PlatformProvidedMenuItem(
@@ -406,6 +417,11 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
           const SingleActivator(LogicalKeyboardKey.escape): commands.cancelChat,
           const SingleActivator(LogicalKeyboardKey.keyR, meta: true):
               commands.toggleReasoning,
+          const SingleActivator(
+            LogicalKeyboardKey.keyP,
+            meta: true,
+            shift: true,
+          ): commands.proposeChat,
           const SingleActivator(LogicalKeyboardKey.keyI, meta: true):
               commands.toggleInspector,
           const SingleActivator(

@@ -161,14 +161,16 @@ void main() {
       await store.createTask(title: 'One');
       c.read(settingsProvider.notifier).selectLlm('warmy');
       final sub = c.listen(cacheWarmerProvider, (_, _) {});
-      // Let the warm start streaming slowly, then edit a task under it.
-      await Future<void>.delayed(const Duration(milliseconds: 40));
-      expect(c.read(cacheWarmerProvider).phase, WarmPhase.warming);
+      // Wait for the warm to actually be streaming (slowly), then edit
+      // a task under it — condition-polled, not wall-clocked, so a slow
+      // runner cannot miss either window (CI flaked at fixed delays).
+      await _until(
+        () => c.read(cacheWarmerProvider).phase == WarmPhase.warming,
+      );
       await store.createTask(title: 'Two');
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await _until(() => c.read(cacheWarmerProvider).phase == WarmPhase.warm);
       final sent = requests(tmp);
       expect(sent, hasLength(2), reason: 'the stale warm, then the fresh one');
-      expect(c.read(cacheWarmerProvider).phase, WarmPhase.warm);
       sub.close();
     },
   );
@@ -278,4 +280,14 @@ void main() {
     expect(warmingWord(null), 'warming up…');
     expect(warmingWord(0.43), 'warming up 43%');
   });
+}
+
+/// Polls [ready] with real waits, bounded — deterministic on any
+/// runner, unlike a fixed delay.
+Future<void> _until(bool Function() ready) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!ready()) {
+    if (DateTime.now().isAfter(deadline)) fail('condition never held');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
 }

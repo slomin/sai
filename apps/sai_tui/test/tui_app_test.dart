@@ -594,6 +594,150 @@ void main() {
     });
   });
 
+  group('the propose lane (#35)', () {
+    const big = Size(90, 28);
+
+    Future<ProviderContainer> pumpLane(
+      NoctermTester tester,
+      FakeLlmProvider fake,
+    ) async {
+      final container = testContainer(builtins: [() => fake]);
+      await container.read(tasksProvider.future);
+      await container
+          .read(tasksProvider.notifier)
+          .store
+          .createTask(
+            title: 'Call mom',
+            when: TaskWhen.date(container.read(todayProvider)),
+          );
+      container.read(settingsProvider.notifier).selectLlm('fake');
+      await tester.pumpComponent(
+        RiverpodScope(
+          container: container,
+          child: TuiApp(onQuit: () {}),
+        ),
+      );
+      await pumpUntilText(tester, 'Call mom @today');
+      return container;
+    }
+
+    Future<void> propose(NoctermTester tester, {String? line}) async {
+      await tester.sendKey(LogicalKey.tab);
+      await tester.pump();
+      if (line != null) await tester.enterText(line);
+      await tester.sendKeyEvent(
+        const KeyboardEvent(
+          logicalKey: LogicalKey.keyP,
+          modifiers: ModifierKeys(ctrl: true),
+        ),
+      );
+      await tester.pump();
+    }
+
+    test('^P proposes and the lane appears', () async {
+      await testNocterm('propose', (tester) async {
+        final container = await pumpLane(tester, FakeLlmProvider());
+        await propose(tester, line: 'tidy');
+        await pumpUntilText(tester, 'suggestions');
+        await pumpUntilText(tester, 'Move to Someday');
+        expect(tester.terminalState, containsText('proposed 1 change'));
+        expect(container.read(suggestionViewsProvider), hasLength(1));
+      }, size: big);
+    });
+
+    test('Tab reaches the lane; y applies as the assistant', () async {
+      await testNocterm('accept', (tester) async {
+        final container = await pumpLane(tester, FakeLlmProvider());
+        await propose(tester, line: 'tidy');
+        await pumpUntilText(tester, 'Move to Someday');
+        await tester.sendKey(LogicalKey.tab); // chat → lane
+        await tester.pump();
+        await tester.sendKey(LogicalKey.keyY);
+        await pumpUntilText(tester, '✓ applied');
+        final store = container.read(tasksProvider.notifier).store;
+        expect(
+          store.projection.tasks.values
+              .firstWhere((t) => t.title == 'Call mom')
+              .when,
+          TaskWhen.someday,
+        );
+        final types = [
+          for (final line in archiveLines(container))
+            (jsonDecode(line) as Map)['type'],
+        ];
+        expect(types, contains('proposal.accept'));
+        expect(types.last, 'task.edit');
+        // The y stayed a verdict; no field typed it.
+        expect(tester.terminalState, isNot(containsText('Ask sai… y')));
+      }, size: big);
+    });
+
+    test('n rejects without touching a task', () async {
+      await testNocterm('reject', (tester) async {
+        final container = await pumpLane(tester, FakeLlmProvider());
+        await propose(tester, line: 'tidy');
+        await pumpUntilText(tester, 'Move to Someday');
+        await tester.sendKey(LogicalKey.tab);
+        await tester.pump();
+        await tester.sendKey(LogicalKey.keyN);
+        await pumpUntilText(tester, '✗ rejected');
+        final store = container.read(tasksProvider.notifier).store;
+        expect(
+          store.projection.tasks.values
+              .firstWhere((t) => t.title == 'Call mom')
+              .when,
+          TaskWhen.date(container.read(todayProvider)),
+        );
+        final types = [
+          for (final line in archiveLines(container))
+            (jsonDecode(line) as Map)['type'],
+        ];
+        expect(types, contains('proposal.reject'));
+        expect(types, isNot(contains('task.edit')));
+      }, size: big);
+    });
+
+    test('a changed target shows stale and refuses the y', () async {
+      await testNocterm('stale', (tester) async {
+        final container = await pumpLane(tester, FakeLlmProvider());
+        await propose(tester, line: 'tidy');
+        await pumpUntilText(tester, 'Move to Someday');
+        final store = container.read(tasksProvider.notifier).store;
+        final mom = store.projection.tasks.values.single.id;
+        await store.editTask(mom, title: const Patch('Call dad'));
+        await pumpUntilText(tester, '[stale]');
+        await tester.sendKey(LogicalKey.tab);
+        await tester.pump();
+        await tester.sendKey(LogicalKey.keyY);
+        await pumpUntilText(tester, staleSuggestion);
+        final types = [
+          for (final line in archiveLines(container))
+            (jsonDecode(line) as Map)['type'],
+        ];
+        expect(types, isNot(contains('proposal.accept')));
+      }, size: big);
+    });
+
+    test('a marker answer strips, then the lane follows', () async {
+      await testNocterm('marker', (tester) async {
+        final fake = FakeLlmProvider(
+          script: (r) => r.responseSchema != null
+              ? fakeProposal(r)
+              : 'Do less.\n$proposeMarker',
+        );
+        await pumpLane(tester, fake);
+        await tester.sendKey(LogicalKey.tab);
+        await tester.pump();
+        await tester.enterText('ideas?');
+        await tester.sendEnter();
+        await pumpUntilText(tester, 'sai · proposed 1 change ›');
+        expect(tester.terminalState, containsText('Do less.'));
+        expect(tester.terminalState, isNot(containsText('<sai:propose')));
+        await pumpUntilText(tester, 'suggestions');
+      }, size: big);
+    });
+  });
+
   group('the chat (#34)', () {
     const big = Size(80, 24);
 

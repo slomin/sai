@@ -171,6 +171,10 @@ Restore from a replica (#15); do not edit the log.
 | `policy.decision` | system | the privacy policy's word on a call to a cloud provider, written before its request; the request's `refs` name it — see [policy](#policy-27) |
 | `tool.call` | assistant | `payload.name`, `payload.arguments` |
 | `tool.result` | system | `refs` → the `tool.call` |
+| `proposal.made` | assistant | the validated suggestions, task ids resolved; `model`, `refs` → the `provider.response` that carried them and the `chat.message` that triggered the call — see [proposals](#proposals-35) |
+| `proposal.accept` | user | `payload.item`; `refs` → the `proposal.made`; written before the mutations it authorises |
+| `proposal.reject` | user | `payload.item`; `refs` → the `proposal.made` |
+| `proposal.refused` | system | a proposal call whose output failed validation; `payload.reason`, `refs` → the `provider.response` |
 | `archive.correction` | any | `refs` → the corrected event; the payload says what is wrong |
 
 Producers add rows here in the same change that starts writing a new
@@ -250,7 +254,40 @@ above; the conversation lines never carry them.
 
 | type | payload |
 | --- | --- |
-| `chat.message` | `text`; assistant lines add `finish` ∈ `stop` \| `length` \| `cancelled` |
+| `chat.message` | `text`; assistant lines add `finish` ∈ `stop` \| `length` \| `cancelled`; a user line asking for a proposal adds `mode: "propose"`, an assistant line whose answer asked for one adds `proposes: true` — both optional, #35 |
+
+### Proposals (#35)
+
+The assistant changes nothing itself. A proposal call is a provider
+call like any other — three lines, the answer constrained by the
+request's `response_format` — and its validated output is one
+`proposal.made` line: `schema` (the payload version, `0`), `note`, and
+`items`, each `{kind ∈ schedule | deadline | split, task: <id>,
+when | deadline | parts, reason}` with task ids resolved from the
+turn-local handles the catalog carried; the handles themselves are
+never persisted. A proposal call writes no assistant `chat.message` —
+the structured event is the answer. Output that fails to parse or
+validate writes one `proposal.refused` (actor `system`,
+`payload.reason` in fixed words, `refs` → the `provider.response`) and
+no `proposal.made`; there is no repair pass.
+
+Accepting item N writes `proposal.accept` (actor `user`,
+`payload.item`, `refs` → the `proposal.made`), then the task mutations
+it authorises — ordinary task-domain events, actor `assistant` with
+`model` and `refs` naming both the `proposal.made` and the
+`proposal.accept`, applied through the store like any command and
+undoable (#19). An acceptance whose mutations never followed (the
+store refused them) is a change that was not made. Rejecting item N
+writes `proposal.reject` (actor `user`, `payload.item`, `refs` → the
+`proposal.made`). A suggestion whose target changed since the proposal
+is stale: surfaced, refused at acceptance, and nothing is written.
+
+| type | payload |
+| --- | --- |
+| `proposal.made` | `schema`, `note`, `items` — `[{kind, task, when \| deadline \| parts, reason}]` |
+| `proposal.accept` | `item` — the index into the proposal's `items` |
+| `proposal.reject` | `item` |
+| `proposal.refused` | `reason` — fixed validation text |
 
 ### Task domain (#17)
 

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
@@ -55,6 +57,67 @@ void main() {
     FakeLlmProvider.new,
     request: () => ask('one two three'),
   );
+
+  group('the canned proposal (#35)', () {
+    const schema = ResponseSchema(name: 'p', schema: {'type': 'object'});
+
+    LlmRequest propose(String catalog) => LlmRequest(
+      messages: [
+        const LlmMessage(LlmRole.system, 'profile'),
+        LlmMessage(LlmRole.system, catalog),
+        const LlmMessage(LlmRole.user, 'propose'),
+      ],
+      responseSchema: schema,
+    );
+
+    test('a schema request gets one suggestion per known kind', () async {
+      final result = await FakeLlmProvider()
+          .start(
+            propose(
+              'Open (3):\n'
+              '- [t1] Buy milk @today\n'
+              '- [t2] Loose thought\n'
+              '- [t3] Dream trip\n',
+            ),
+          )
+          .done;
+      final decoded = jsonDecode(result.text) as Map<String, Object?>;
+      expect(decoded['note'], 'fake suggestions');
+      final suggestions = (decoded['suggestions'] as List).cast<Map>();
+      expect(suggestions, hasLength(3));
+      expect(suggestions[0]['kind'], 'schedule');
+      expect(suggestions[0]['task'], 't1');
+      expect(suggestions[0]['when'], 'someday');
+      expect(suggestions[1]['kind'], 'deadline');
+      expect(suggestions[1]['task'], 't2');
+      expect(suggestions[1]['deadline'], 'tomorrow');
+      expect(suggestions[2]['kind'], 'split');
+      expect(suggestions[2]['task'], 't3');
+      expect((suggestions[2]['parts'] as List).length, 2);
+    });
+
+    test('fewer handles mean fewer suggestions', () async {
+      final result = await FakeLlmProvider()
+          .start(propose('Open (1):\n- [t1] Buy milk\n'))
+          .done;
+      final decoded = jsonDecode(result.text) as Map<String, Object?>;
+      expect((decoded['suggestions'] as List), hasLength(1));
+    });
+
+    test('no handles, no suggestions — still valid JSON', () async {
+      final result = await FakeLlmProvider()
+          .start(propose('Open (0): none\n'))
+          .done;
+      final decoded = jsonDecode(result.text) as Map<String, Object?>;
+      expect(decoded['suggestions'], isEmpty);
+    });
+
+    test('a custom script still wins over the canned reply', () async {
+      final fake = FakeLlmProvider(script: (_) => 'not json');
+      final result = await fake.start(propose('- [t1] x\n')).done;
+      expect(result.text, 'not json');
+    });
+  });
 
   group('FakeLlmProvider', () {
     test('describes itself as a local fake', () {

@@ -138,6 +138,13 @@ the layout and the toolchain; this file has the rules.
   the privacy policy (ADR 0010): a caller puts the list in
   `LlmRequest.taskContext`, never in a message of its own, so a cloud
   provider can be denied it while the switch is off.
+- The assistant changes tasks only through an accepted proposal (#35,
+  ADR 0021): `proposals/apply.dart` is the one caller of
+  `Attribution.assistant`, pinned by `test/no_assistant_mutation_test.dart`
+  together with `chat/`, `llm/` and `context/` never importing the task
+  store. Proposal turns are schema-constrained (`response_format`),
+  validated in core, recorded as `proposal.*` events; handles are
+  turn-local and never persisted.
 - A request is built by `assembleContext` and nowhere else (ADR 0011):
   profile, memory, lists and conversation in one deterministic, hashed
   shape. A client sends what it is given; it never assembles a prompt.

@@ -52,7 +52,11 @@ class ChatPane extends StatelessComponent {
           ),
         Text(
           'sai${state.tasksWithheld ? ' · $tasksWithheldWord' : ''} › '
-          '${state.streaming!.isEmpty ? (state.reasoning == null ? '…' : 'thinking…') : '${state.streaming!}▌'}',
+          '${state.streaming!.isEmpty ? (state.phase == ChatPhase.proposing
+                    ? proposingWord
+                    : state.reasoning == null
+                    ? '…'
+                    : 'thinking…') : '${state.streaming!}▌'}',
         ),
       ],
       if (state.error case final error?)

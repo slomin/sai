@@ -21,6 +21,7 @@ const shortcutRows = <(String, String)>[
   ('⌥⌘⏎', 'Cancel the selected task'),
   ('⌘⌫', 'Delete the selected task'),
   ('⌘J', 'Open the assistant, or tuck it away'),
+  ('⇧⌘P', 'Ask the assistant to propose changes'),
   ('⌘Z', 'Undo the last change'),
   ('⌘R', 'Let the model think before it answers, or not'),
   ('⌘,', 'Settings'),

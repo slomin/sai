@@ -207,6 +207,10 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       if (sendEffort) 'reasoning_effort': 'none',
       if (sendTemplateSwitch)
         'chat_template_kwargs': {'enable_thinking': false},
+      // A schema-constrained answer (#35); the OpenAI nesting both
+      // llama-server and LM Studio read.
+      if (request.responseSchema case final schema?)
+        'response_format': schema.toWire(),
     });
 
     final HttpClientResponse response;
@@ -260,6 +264,20 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       }
       _drain(response);
       return _run(controller, attempt, request);
+    }
+    if (status == 400 && request.responseSchema != null) {
+      // The backend refused the response schema. A proposal without its
+      // grammar would be unvalidated output, so there is no retry
+      // without it (#35).
+      _drain(response);
+      return fail(
+        LlmFailure(
+          LlmFailureKind.rejected,
+          TransportText.schemaRefused,
+          endpoint: origin,
+          status: status,
+        ),
+      );
     }
     if (status < 200 || status >= 300) {
       _drain(response);

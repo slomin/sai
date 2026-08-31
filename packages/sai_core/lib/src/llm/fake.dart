@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../archive/event.dart';
 import 'call.dart';
 import 'failure.dart';
@@ -22,7 +24,7 @@ final class FakeLlmProvider implements LlmProvider {
     this.failWith,
     this.failAfter = 0,
     this.delta = Duration.zero,
-  }) : script = script ?? _echo;
+  }) : script = script ?? _scripted;
 
   /// A fake whose reply is [words] of lorem ipsum, for a demo or a test
   /// that wants something to stream that is not the prompt.
@@ -160,6 +162,11 @@ final class FakeLlmProvider implements LlmProvider {
     totalTokens: prompt + completion,
   );
 
+  /// The default reply: the canned proposal for a schema request (#35),
+  /// the echo otherwise. A custom [script] replaces both.
+  static String _scripted(LlmRequest request) =>
+      request.responseSchema != null ? fakeProposal(request) : _echo(request);
+
   static String _echo(LlmRequest request) => request.messages
       .lastWhere(
         (m) => m.role == LlmRole.user,
@@ -174,6 +181,54 @@ final class FakeLlmProvider implements LlmProvider {
 
   static final _word = RegExp(r'\S+\s*');
 }
+
+/// The deterministic canned proposal (#35): one suggestion per known
+/// kind, targeting the first handles found in the request's catalog
+/// message, so widget tests and the keyless smoke exercise the real
+/// schema path without a model. Valid against the proposal schema by
+/// construction; fewer handles simply mean fewer suggestions.
+String fakeProposal(LlmRequest request) {
+  final handles = [
+    for (final message in request.messages)
+      for (final match in _handle.allMatches(message.text)) match[1]!,
+  ];
+  Map<String, Object?> item(
+    String kind,
+    String task, {
+    String when = '',
+    String deadline = '',
+    List<String> parts = const [],
+    required String reason,
+  }) => {
+    'kind': kind,
+    'task': task,
+    'when': when,
+    'deadline': deadline,
+    'parts': parts,
+    'reason': reason,
+  };
+  final suggestions = [
+    if (handles.isNotEmpty)
+      item('schedule', handles[0], when: 'someday', reason: 'later is fine'),
+    if (handles.length > 1)
+      item(
+        'deadline',
+        handles[1],
+        deadline: 'tomorrow',
+        reason: 'needs an edge',
+      ),
+    if (handles.length > 2)
+      item(
+        'split',
+        handles[2],
+        parts: const ['first half', 'second half'],
+        reason: 'two sittings',
+      ),
+  ];
+  return jsonEncode({'suggestions': suggestions, 'note': 'fake suggestions'});
+}
+
+final _handle = RegExp(r'^- \[(t[0-9]+)\] ', multiLine: true);
 
 /// The first [words] words of lorem ipsum, cycling past its length.
 String loremIpsum(int words) {
