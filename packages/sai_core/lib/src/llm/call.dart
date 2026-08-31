@@ -200,6 +200,7 @@ final class LlmUsage {
     this.completionTokens,
     this.totalTokens,
     this.tokensPerSecond,
+    this.cost,
   });
 
   final int? promptTokens;
@@ -209,11 +210,17 @@ final class LlmUsage {
   /// llama.cpp `timings` and friends, where reported (#22).
   final double? tokensPerSecond;
 
+  /// What the backend says the call cost, in its own currency units
+  /// (OpenRouter reports dollars). Only ever what was reported — nothing
+  /// in sai estimates a price (#30).
+  final double? cost;
+
   Map<String, Object?> toJson() => {
     if (promptTokens != null) 'prompt_tokens': promptTokens,
     if (completionTokens != null) 'completion_tokens': completionTokens,
     if (totalTokens != null) 'total_tokens': totalTokens,
     if (tokensPerSecond != null) 'tokens_per_second': tokensPerSecond,
+    if (cost != null) 'cost': cost,
   };
 }
 

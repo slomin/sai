@@ -293,6 +293,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       completionTokens: usage?.completionTokens,
       totalTokens: usage?.totalTokens,
       tokensPerSecond: tokensPerSecond,
+      cost: usage?.cost,
     );
 
     late final StreamSubscription<SseEvent> sub;

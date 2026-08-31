@@ -81,6 +81,7 @@ final class ChatChunk {
         promptTokens: _int(u['prompt_tokens']),
         completionTokens: _int(u['completion_tokens']),
         totalTokens: _int(u['total_tokens']),
+        cost: u['cost'] is num ? (u['cost'] as num).toDouble() : null,
       );
     }
     double? tps;
