@@ -95,6 +95,9 @@ class AppCommands {
     required this.toggleChat,
     required this.sendChat,
     required this.cancelChat,
+    required this.proposeChat,
+    required this.acceptSuggestion,
+    required this.rejectSuggestion,
     required this.toggleReasoning,
     required this.showShortcuts,
     required this.showSettings,
@@ -123,6 +126,11 @@ class AppCommands {
       toggleChat: () => _toggleChat(container),
       sendChat: () => _sendChat(container),
       cancelChat: () => container.read(chatProvider.notifier).cancel(),
+      proposeChat: () => _proposeChat(container),
+      acceptSuggestion: (index) =>
+          unawaited(_verdictSuggestion(container, index, accept: true)),
+      rejectSuggestion: (index) =>
+          unawaited(_verdictSuggestion(container, index, accept: false)),
       toggleReasoning: () => _toggleReasoning(container),
       showShortcuts: () =>
           openSettings(context, initial: SettingsSection.shortcuts),
@@ -153,6 +161,14 @@ class AppCommands {
 
   /// Stops the answer being streamed; a no-op when none is.
   final VoidCallback cancelChat;
+
+  /// Sends the chat draft — or the default request, when it is empty —
+  /// as a proposal turn (#35); the lane shows what comes back.
+  final VoidCallback proposeChat;
+
+  /// The lane's verdicts (#35); a refusal lands on the top bar.
+  final void Function(int index) acceptSuggestion;
+  final void Function(int index) rejectSuggestion;
 
   /// Lets the model think before it answers, or not (`reasoning` in
   /// settings); the thinking shows in the chat pane while it is on.
@@ -243,6 +259,36 @@ class AppCommands {
         if (!sent && draft.text.isEmpty) draft.text = text;
       }),
     );
+  }
+
+  static void _proposeChat(ProviderContainer container) {
+    final draft = container.read(chatDraftProvider);
+    final text = draft.text;
+    final chat = container.read(chatProvider.notifier);
+    // The same draft-keeping dance as _sendChat; an empty draft is fine
+    // here — the notifier substitutes the default request.
+    final sending = chat.propose(text);
+    if (container.read(chatProvider).error != null) return;
+    draft.clear();
+    container.read(chatFocusProvider).requestFocus();
+    unawaited(
+      sending.then((sent) {
+        if (!sent && draft.text.isEmpty) draft.text = text;
+      }),
+    );
+  }
+
+  static Future<void> _verdictSuggestion(
+    ProviderContainer container,
+    int index, {
+    required bool accept,
+  }) async {
+    final proposals = container.read(proposalsProvider.notifier);
+    final refusal = accept
+        ? await proposals.accept(index)
+        : await proposals.reject(index);
+    final notice = container.read(noticeProvider.notifier);
+    refusal == null ? notice.clear() : notice.show(refusal);
   }
 
   static void _toggleReasoning(ProviderContainer container) {

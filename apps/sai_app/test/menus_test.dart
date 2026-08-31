@@ -33,6 +33,9 @@ void main() {
       toggleChat: () => calls.add('chat'),
       sendChat: () => calls.add('send'),
       cancelChat: () => calls.add('cancel'),
+      proposeChat: () => calls.add('propose'),
+      acceptSuggestion: (index) => calls.add('accept $index'),
+      rejectSuggestion: (index) => calls.add('reject $index'),
       toggleReasoning: () => calls.add('reasoning'),
       showShortcuts: () => calls.add('shortcuts'),
       showSettings: (section) => calls.add('settings ${section.name}'),
@@ -145,6 +148,17 @@ void main() {
           PlatformProvidedMenuItemType.toggleFullScreen,
         ),
       );
+    });
+
+    test('View asks for a proposal on ⇧⌘P (#35)', () {
+      final item = menuItem(menus(), ['View', 'Propose Changes']);
+      final serialized = chord(item);
+      expect(
+        serialized,
+        containsPair('shortcutTrigger', LogicalKeyboardKey.keyP.keyId),
+      );
+      item.onSelected!();
+      expect(calls, ['propose']);
     });
 
     test('Go opens Quick Find on ⌘K, then lists every list and the Trash '

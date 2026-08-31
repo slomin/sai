@@ -27,3 +27,13 @@ const assistantHeaderKey = Key('assistant-header');
 /// The connection light and its word (#40).
 const connectionDotKey = Key('connection-dot');
 const connectionTextKey = Key('connection-text');
+
+/// The composer's propose button (#35).
+const chatProposeKey = Key('chat-propose');
+
+/// The suggestion lane (#35) and its per-card controls.
+const suggestionLaneKey = Key('suggestion-lane');
+
+Key suggestionCardKey(int index) => Key('suggestion-card-$index');
+Key suggestionAcceptKey(int index) => Key('suggestion-accept-$index');
+Key suggestionRejectKey(int index) => Key('suggestion-reject-$index');

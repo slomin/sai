@@ -194,6 +194,173 @@ void main() {
     expect(find.text(noProviderStatus), findsNothing);
   });
 
+  group('the propose lane (#35)', () {
+    late FakeLlmProvider fake;
+
+    setUp(() => fake = FakeLlmProvider());
+
+    // A hung test dies in two minutes, never flutter_test's ten.
+    const laneTimeout = Timeout(Duration(minutes: 2));
+
+    Future<ProviderContainer> ready(WidgetTester tester) async {
+      final container = await pumpApp(tester, builtins: [() => fake]);
+      await tester.runAsync(
+        () => container
+            .read(tasksProvider.notifier)
+            .store
+            .createTask(
+              title: 'Call mom',
+              when: TaskWhen.date(container.read(todayProvider)),
+            ),
+      );
+      container.read(settingsProvider.notifier).selectLlm('fake');
+      await tester.pump();
+      return container;
+    }
+
+    // Real async runs to completion inside a single runAsync window —
+    // never pumped from outside — so every future resolves in the zone
+    // that created it (runAsync's docs; pumping while waiting straddles
+    // the fake and real zones and deadlocks). Rendering is asserted on
+    // the settled state after one pump; the button wiring has its own
+    // synchronous test below.
+    Future<void> proposeSettled(
+      WidgetTester tester,
+      ProviderContainer container, [
+      String draft = 'tidy up',
+    ]) async {
+      await tester.runAsync(
+        () => container.read(chatProvider.notifier).propose(draft),
+      );
+      await tester.pump();
+    }
+
+    Future<String?> verdict(
+      WidgetTester tester,
+      ProviderContainer container, {
+      required bool accept,
+    }) async {
+      final proposals = container.read(proposalsProvider.notifier);
+      final refusal = await tester.runAsync(
+        () => accept ? proposals.accept(0) : proposals.reject(0),
+      );
+      await tester.pump();
+      return refusal;
+    }
+
+    testWidgets('Propose fills the lane with a card', (tester) async {
+      final container = await ready(tester);
+      await proposeSettled(tester, container);
+      expect(find.byKey(suggestionLaneKey), findsOneWidget);
+      expect(find.text('SUGGESTIONS'), findsOneWidget);
+      expect(find.text('Move to Someday'), findsOneWidget);
+      expect(find.textContaining('proposed 1 change'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(suggestionAcceptKey(0)))
+            .onPressed,
+        isNotNull,
+      );
+      expect(find.byKey(suggestionRejectKey(0)), findsOneWidget);
+    }, timeout: laneTimeout);
+
+    testWidgets('the Propose button routes the draft; a refusal keeps it', (
+      tester,
+    ) async {
+      // Pure wiring, no real async: with no provider selected the
+      // notifier refuses before its first await.
+      final container = await pumpApp(tester, builtins: [() => fake]);
+      await tester.enterText(find.byKey(chatFieldKey), 'tidy up');
+      await tester.tap(find.byKey(chatProposeKey));
+      await tester.pump();
+      expect(container.read(chatProvider).error, noProviderStatus);
+      expect(
+        tester.widget<TextField>(find.byKey(chatFieldKey)).controller!.text,
+        'tidy up',
+        reason: 'a refused draft is kept',
+      );
+    }, timeout: laneTimeout);
+
+    testWidgets('Accept applies as the assistant, one ⌘Z away', (tester) async {
+      final container = await ready(tester);
+      await proposeSettled(tester, container);
+      expect(await verdict(tester, container, accept: true), isNull);
+      expect(find.text('applied · ⌘Z undoes'), findsOneWidget);
+      final store = container.read(tasksProvider.notifier).store;
+      Task mom() => store.projection.tasks.values.firstWhere(
+        (t) => t.title == 'Call mom',
+      );
+      expect(mom().when, TaskWhen.someday);
+      final log = archiveLines(container.read(archiveRootProvider));
+      final edit = log.lastWhere((l) => l.contains('"task.edit"'));
+      expect(edit, contains('"actor":"assistant"'));
+      expect(store.canUndo, isTrue);
+      await tester.runAsync(store.undo);
+      await tester.pump();
+      expect(mom().when, TaskWhen.date(container.read(todayProvider)));
+    }, timeout: laneTimeout);
+
+    testWidgets('Reject settles the card and changes nothing', (tester) async {
+      final container = await ready(tester);
+      await proposeSettled(tester, container);
+      expect(await verdict(tester, container, accept: false), isNull);
+      expect(find.text('rejected'), findsOneWidget);
+      final store = container.read(tasksProvider.notifier).store;
+      expect(
+        store.projection.tasks.values
+            .firstWhere((t) => t.title == 'Call mom')
+            .when,
+        TaskWhen.date(container.read(todayProvider)),
+      );
+      final log = archiveLines(container.read(archiveRootProvider));
+      expect(log.where((l) => l.contains('"proposal.reject"')), hasLength(1));
+      expect(log.where((l) => l.contains('"task.edit"')), isEmpty);
+    }, timeout: laneTimeout);
+
+    testWidgets('a stale card says so and cannot be accepted', (tester) async {
+      final container = await ready(tester);
+      await proposeSettled(tester, container);
+      final store = container.read(tasksProvider.notifier).store;
+      final mom = store.projection.tasks.values.firstWhere(
+        (t) => t.title == 'Call mom',
+      );
+      await tester.runAsync(
+        () => store.editTask(mom.id, title: const Patch('Call dad')),
+      );
+      await tester.pump();
+      expect(find.text('STALE'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(suggestionAcceptKey(0)))
+            .onPressed,
+        isNull,
+      );
+      expect(await verdict(tester, container, accept: true), staleSuggestion);
+    }, timeout: laneTimeout);
+
+    testWidgets('a marker answer strips, then the lane appears', (
+      tester,
+    ) async {
+      fake = FakeLlmProvider(
+        script: (r) => r.responseSchema != null
+            ? fakeProposal(r)
+            : 'Do less.\n$proposeMarker',
+      );
+      final container = await ready(tester);
+      await tester.runAsync(
+        () => container.read(chatProvider.notifier).send('ideas?'),
+      );
+      await tester.pump();
+      final state = container.read(chatProvider);
+      expect(state.busy, isFalse);
+      expect(state.turns[1].text, 'Do less.');
+      expect(state.turns[1].proposal, isA<ProposalMade>());
+      expect(find.textContaining(proposeMarker), findsNothing);
+      expect(find.textContaining('Do less.'), findsOneWidget);
+      expect(find.byKey(suggestionLaneKey), findsOneWidget);
+    }, timeout: laneTimeout);
+  });
+
   group('the conversation (#34)', () {
     late FakeLlmProvider fake;
 

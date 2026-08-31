@@ -153,7 +153,19 @@ class ChatComposer extends ConsumerWidget {
                   ),
                   child: const Text('Stop'),
                 )
-              else
+              else ...[
+                // The explicit trigger (#35): the draft — or, empty, the
+                // default request — as a schema-constrained proposal.
+                FilledButton(
+                  key: chatProposeKey,
+                  onPressed: commands.proposeChat,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: SaiColors.sheetCard,
+                    foregroundColor: SaiColors.sheetText,
+                  ),
+                  child: const Text('Propose'),
+                ),
+                const SizedBox(width: 10),
                 FilledButton(
                   key: chatSendKey,
                   onPressed: commands.sendChat,
@@ -163,6 +175,7 @@ class ChatComposer extends ConsumerWidget {
                   ),
                   child: const Text('Send'),
                 ),
+              ],
             ],
           ),
         ),
