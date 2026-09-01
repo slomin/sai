@@ -17,6 +17,7 @@ final class ProviderConfig {
     this.credential,
     String? credentialOrigin,
     this.privacy,
+    this.routing,
     Map<String, Object?> extra = const {},
   }) : extra = Map.unmodifiable(extra),
        credentialOrigin = _boundOrigin(endpoint, credential, credentialOrigin) {
@@ -31,6 +32,9 @@ final class ProviderConfig {
     if (e != null) checkEndpoint(e);
     if (defaultModel != null && defaultModel!.isEmpty) {
       throw ArgumentError('default_model, when given, must not be empty');
+    }
+    if (routing != null && routing!.isEmpty) {
+      throw ArgumentError('routing, when given, must not be empty');
     }
     final c = credential;
     if (c != null && !credentialForm.hasMatch(c)) {
@@ -107,6 +111,13 @@ final class ProviderConfig {
   /// third tag); it is dropped on the next write.
   final LlmPrivacy? privacy;
 
+  /// How a kind that routes inside a broker picks the endpoint (#24):
+  /// for `openrouter`, `deepinfra_fp8` (the pinned preset) or `exact`
+  /// (one model, the broker's own endpoint choice). Null for kinds with
+  /// no routing; a word the kind does not know leaves the provider
+  /// misconfigured, never silently re-routed. Stored as written.
+  final String? routing;
+
   /// Keys this sai does not know, exactly as read.
   final Map<String, Object?> extra;
 
@@ -159,6 +170,7 @@ final class ProviderConfig {
     String? Function()? credential,
     String? Function()? credentialOrigin,
     LlmPrivacy? Function()? privacy,
+    String? Function()? routing,
   }) => ProviderConfig(
     id: id,
     kind: kind ?? this.kind,
@@ -169,6 +181,7 @@ final class ProviderConfig {
         ? this.credentialOrigin
         : credentialOrigin(),
     privacy: privacy == null ? this.privacy : privacy(),
+    routing: routing == null ? this.routing : routing(),
     extra: extra,
   );
 
@@ -184,6 +197,7 @@ final class ProviderConfig {
     'credential',
     'credential_origin',
     'privacy',
+    'routing',
   };
 
   /// Reads one `providers[]` entry. Throws [SettingsFormatException] on a
@@ -222,6 +236,7 @@ final class ProviderConfig {
         credential: optional('credential'),
         credentialOrigin: optional('credential_origin'),
         privacy: privacy,
+        routing: optional('routing'),
         extra: {
           for (final e in json.entries)
             if (!_known.contains(e.key)) e.key: e.value,
@@ -241,6 +256,7 @@ final class ProviderConfig {
     if (credential != null) 'credential': credential,
     if (credentialOrigin != null) 'credential_origin': credentialOrigin,
     if (privacy != null) 'privacy': privacy!.name,
+    if (routing != null) 'routing': routing,
   });
 
   /// Value equality over the stored form: two configs that would write

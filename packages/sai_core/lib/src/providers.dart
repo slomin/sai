@@ -18,6 +18,7 @@ import 'llm/failure.dart';
 import 'llm/builtins.dart';
 import 'llm/factory.dart';
 import 'llm/openai_compatible/provider.dart';
+import 'llm/openrouter.dart';
 import 'llm/privacy.dart';
 import 'llm/probe.dart';
 import 'llm/provider.dart';
@@ -375,17 +376,19 @@ final credentialsProvider = NotifierProvider<CredentialsNotifier, int>(
   CredentialsNotifier.new,
 );
 
-/// The credential status of the configured provider [id] — the built-in
-/// fake and unknown ids take no key. Re-evaluated whenever
+/// The credential status of the provider [id]: the account its
+/// configuration names, or — for an unconfigured built-in that takes a
+/// key (OpenRouter, #24) — the one it ships with. The fake, the local
+/// built-ins and unknown ids take no key. Re-evaluated whenever
 /// [credentialsProvider] writes or the configuration changes.
 final credentialStatusProvider = Provider.family<CredentialStatus, String>((
   ref,
   id,
 ) {
   ref.watch(credentialsProvider);
-  final account = ref.watch(
-    settingsProvider.select((s) => s.provider(id)?.credential),
-  );
+  final account =
+      ref.watch(settingsProvider.select((s) => s.provider(id)?.credential)) ??
+      ref.watch(llmRegistryProvider.select((r) => _shippedCredential(r[id])));
   if (account == null) return CredentialStatus.none;
   if (ref.watch(identityProvider).keychainService == null) {
     return CredentialStatus.absent;
@@ -399,13 +402,27 @@ final credentialStatusProvider = Provider.family<CredentialStatus, String>((
   }
 });
 
+/// The account an unconfigured built-in reads its key from, or null for
+/// one that takes none or is not there.
+String? _shippedCredential(LlmProvider? provider) =>
+    provider is OpenAiCompatibleProvider ? provider.credential : null;
+
+/// Where OpenRouter is (#24): the one fixed origin. Nothing in settings
+/// or the environment reaches this; a test overrides it with a loopback
+/// stub, and that is the only way the built-in or the factory ever talks
+/// to anything else.
+final openRouterEndpointProvider = Provider<Uri>((ref) => openRouterEndpoint);
+
 /// The factories this build can turn a [ProviderConfig] into, by kind.
-final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>(
-  (ref) => const {
+final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>((ref) {
+  final openRouter = ref.watch(openRouterEndpointProvider);
+  return {
     'fake': fakeProviderFactory,
     'openai_compatible': openAiCompatibleFactory,
-  },
-);
+    openRouterKind: (config, secrets) =>
+        openRouterFactory(config, secrets, endpoint: openRouter),
+  };
+});
 
 /// Configured providers whose kind is known but whose configuration the
 /// factory refused, by id, with what is missing. Not built, not in the
@@ -444,6 +461,7 @@ final builtinLlmsProvider = Provider<List<LlmProvider Function()>>(
   (ref) => builtinLlms(
     ref.watch(secretStoreProvider),
     fakeDelta: fakeDeltaFrom(ref.watch(environmentProvider)),
+    openRouterEndpoint: ref.watch(openRouterEndpointProvider),
   ),
 );
 
@@ -997,18 +1015,27 @@ class CredentialsNotifier extends Notifier<int> {
   @override
   int build() => 0;
 
-  /// Stores [value] under the account of the configured provider [id]
-  /// (`provider:<id>` unless its configuration names another). Throws
-  /// [StateError] for an unconfigured id or one that takes no key, and
-  /// [SecretStoreException] when the store refuses.
+  /// Stores [value] under the account of the provider [id]
+  /// (`provider:<id>` unless its configuration names another). A built-in
+  /// that takes a key but is not configured yet (OpenRouter, #24) is
+  /// configured as it ships first, so the entry naming the account is on
+  /// disk before the secret is in the Keychain. Throws [StateError] for an
+  /// unknown id or one that takes no key, and [SecretStoreException] when
+  /// the store refuses.
   void set(String id, String value) {
+    var config = ref.read(settingsProvider).provider(id);
+    if (config == null) {
+      final shipped = _shipped(id);
+      if (shipped?.credential == null) throw _noCredential(id, shipped);
+      ref.read(settingsProvider.notifier).upsertProvider(shipped!);
+      config = shipped;
+    }
     final account = _account(id);
     // The key is good for the endpoint as configured this moment: record
     // its origin first, so a later endpoint change stops sending it. The
     // binding before the secret: a write that fails half-way leaves a
     // binding without a key (a plain "no key"), never a key that can
     // never be sent.
-    final config = ref.read(settingsProvider).provider(id)!;
     final origin = config.origin;
     if (origin != null && config.credentialOrigin != origin) {
       ref
@@ -1044,17 +1071,29 @@ class CredentialsNotifier extends Notifier<int> {
     }
   }
 
+  /// The account of [id]: its configuration's, or the one an
+  /// unconfigured built-in ships with.
   String _account(String id) {
-    final config = ref.read(settingsProvider).provider(id);
-    if (config == null) {
-      throw StateError("provider '$id' is not configured");
-    }
-    final account = config.credential;
-    if (account == null) {
-      throw StateError("provider '$id' takes no credential");
-    }
+    final config = ref.read(settingsProvider).provider(id) ?? _shipped(id);
+    final account = config?.credential;
+    if (account == null) throw _noCredential(id, config);
     return account;
   }
+
+  /// The entry that would configure the built-in [id] as it ships, or
+  /// null when no built-in has that id.
+  ProviderConfig? _shipped(String id) {
+    if (ref.read(settingsProvider).provider(id) != null) return null;
+    final provider = ref.read(llmRegistryProvider)[id];
+    return provider == null ? null : configFor(provider);
+  }
+
+  static StateError _noCredential(String id, ProviderConfig? config) =>
+      StateError(
+        config == null
+            ? "provider '$id' is not configured"
+            : "provider '$id' takes no credential",
+      );
 }
 
 /// Open providers by build key. [sync] builds what is missing, closes

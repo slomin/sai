@@ -10,6 +10,7 @@ import '../failure.dart';
 import '../probe.dart';
 import '../provider.dart';
 import 'chunks.dart';
+import 'dialect.dart';
 import 'policy.dart';
 import 'sse.dart';
 
@@ -19,6 +20,9 @@ import 'sse.dart';
 /// machine or the LAN (ADR 0012), the key sent only to the origin it was
 /// entered for, and a
 /// deadline on every stage. Failures carry fixed text and the origin.
+/// What a backend wants beyond that — its headers, body fields, the way
+/// reasoning is switched off, how it is asked about itself — is its
+/// [dialect] (#24); the transport is one.
 ///
 /// The key is read from [secrets] at call time, never held.
 final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
@@ -31,6 +35,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     this.credentialOrigin,
     this.privacy = LlmPrivacy.local,
     this.deadlines = const OpenAiDeadlines(),
+    this.dialect = const LocalDialect(),
     HttpClient Function()? clientFactory,
   }) : _endpoint = _trimSlash(endpoint),
        origin = endpointOrigin(endpoint),
@@ -51,6 +56,12 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
 
   @override
   final String id;
+
+  /// What this backend wants beyond the common transport.
+  final OpenAiDialect dialect;
+
+  /// The settings `kind` a configuration of this provider would carry.
+  String get kind => dialect.kind;
 
   @override
   String get displayName => '$id @ $origin';
@@ -96,6 +107,9 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   /// The `/v1` base this provider talks to.
   Uri get endpoint => _endpoint;
 
+  /// Whether this provider takes a key, as its configuration would say.
+  bool get takesKey => credential != null;
+
   final SecretStore _secrets;
   final HttpClient Function() _clientFactory;
   late HttpClient _client;
@@ -104,8 +118,6 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
 
   Uri get _chat =>
       _endpoint.replace(path: '${_endpoint.path}/chat/completions');
-  Uri get _models => _endpoint.replace(path: '${_endpoint.path}/models');
-  Uri _atRoot(String path) => _endpoint.replace(path: path);
 
   @override
   LlmCall start(LlmRequest request) {
@@ -156,7 +168,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     if (key == null) {
       return (refuse(LlmFailureKind.credential, TransportText.noKey), null);
     }
-    if (credentialOrigin != origin) {
+    if (dialect.bindsKeyToOrigin && credentialOrigin != origin) {
       return (
         refuse(LlmFailureKind.credential, TransportText.keyElsewhere),
         null,
@@ -169,7 +181,8 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   /// `chat_template_kwargs`, once; from then on that switch is not sent
   /// to it. Negotiated one at a time: the template switch (llama.cpp's)
   /// is dropped first, OpenAI's word second, so an endpoint that knows
-  /// either still gets the one it knows.
+  /// either still gets the one it knows. Only a dialect that negotiates
+  /// (the local one) sends either; another says it its own way, once.
   var _reasoningRefused = false;
   var _templateSwitchRefused = false;
 
@@ -198,8 +211,9 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
 
     final wireModel = _wireModel(request);
     final off = request.reasoning == false;
-    final sendEffort = off && !_reasoningRefused;
-    final sendTemplateSwitch = off && !_templateSwitchRefused;
+    final negotiate = off && dialect.negotiatesReasoning;
+    final sendEffort = negotiate && !_reasoningRefused;
+    final sendTemplateSwitch = negotiate && !_templateSwitchRefused;
     final body = jsonEncode({
       'model': ?wireModel,
       'messages': [
@@ -207,7 +221,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
           {'role': m.role.name, 'content': m.text},
       ],
       'stream': true,
-      'stream_options': {'include_usage': true},
+      ...dialect.fields(request, reasoningOff: off),
       if (request.maxTokens != null) 'max_tokens': request.maxTokens,
       if (request.temperature != null) 'temperature': request.temperature,
       // Off, said both ways: OpenAI's word (LM Studio, and llama.cpp on
@@ -232,6 +246,9 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         ..followRedirects = false
         ..headers.contentType = ContentType.json
         ..headers.set(HttpHeaders.acceptHeader, 'text/event-stream');
+      for (final h in dialect.headers.entries) {
+        req.headers.set(h.key, h.value);
+      }
       if (auth != null) req.headers.set(HttpHeaders.authorizationHeader, auth);
       req.add(utf8.encode(body));
       response = await req.close().timeout(deadlines.firstResponse);
@@ -291,7 +308,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     }
     if (status < 200 || status >= 300) {
       _drain(response);
-      return fail(statusFailure(status, origin));
+      return fail(_refused(status));
     }
     final type = response.headers.contentType?.mimeType;
     if (type != 'text/event-stream') {
@@ -441,6 +458,18 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     unawaited(response.drain<void>().catchError((_) {}));
   }
 
+  /// A non-2xx answer as a failure: the dialect's own word for the
+  /// status when it has one, the common ladder otherwise.
+  LlmFailure _refused(int status) => switch (dialect.refusal(status)) {
+    final text? => LlmFailure(
+      LlmFailureKind.rejected,
+      text,
+      endpoint: origin,
+      status: status,
+    ),
+    null => statusFailure(status, origin),
+  };
+
   @override
   Future<EndpointInfo> probe() async {
     final (refused, auth) = _prepare();
@@ -453,88 +482,15 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     // sockets to the switched-away endpoint. Its answer is stale by
     // then anyway; the connection watcher drops it by epoch.
     final client = _client;
-    final models = await _get(client, _models, auth);
-    if (models.failure != null) {
-      return EndpointInfo(
-        health: EndpointHealth.unavailable,
-        failure: models.failure,
-      );
-    }
-    final ids = <String>[];
-    final list = models.json;
-    if (list is Map<String, Object?> && list['data'] is List) {
-      for (final m in list['data'] as List) {
-        if (m is Map<String, Object?> && m['id'] is String) {
-          ids.add(m['id'] as String);
-        }
-      }
-    }
-    // llama.cpp says so on /health — `{"status":"ok"}`, or a 503 whose
-    // error carries the code while the model loads. Only that shape
-    // counts: LM Studio answers any unknown path with a 200 and an error
-    // body. LM Studio says so on /api/v1/models; anything else is taken
-    // at its /v1/models word.
-    final [health, lm] = await Future.wait([
-      _get(client, _atRoot('/health'), auth),
-      _get(client, _atRoot('/api/v1/models'), auth),
-    ]);
-    final h = health.json;
-    final ok =
-        health.status == 200 &&
-        h is Map<String, Object?> &&
-        h['status'] == 'ok';
-    final loading =
-        health.status == 503 &&
-        h is Map<String, Object?> &&
-        h['error'] is Map<String, Object?> &&
-        (h['error'] as Map<String, Object?>)['code'] == 503;
-    if (ok || loading) {
-      final props = await _get(client, _atRoot('/props'), auth);
-      int? ctx;
-      final p = props.json;
-      if (p is Map<String, Object?>) {
-        final settings = p['default_generation_settings'];
-        if (settings is Map<String, Object?> && settings['n_ctx'] is int) {
-          ctx = settings['n_ctx'] as int;
-        }
-      }
-      return EndpointInfo(
-        health: ok ? EndpointHealth.ok : EndpointHealth.loading,
-        models: ids,
-        contextWindow: ctx,
-        serverKind: 'llama.cpp',
-      );
-    }
-    final l = lm.json;
-    if (lm.status == 200 && l is Map<String, Object?> && l['models'] is List) {
-      int? ctx;
-      for (final m in l['models'] as List) {
-        if (m is! Map<String, Object?>) continue;
-        // The configured model, or with [loadedModel] the first LLM that is
-        // loaded — the one LM Studio would answer with.
-        if (defaultModel == loadedModel
-            ? (m['type'] != 'llm' || ctx != null)
-            : m['key'] != defaultModel) {
-          continue;
-        }
-        final loaded = m['loaded_instances'];
-        if (loaded is List && loaded.isNotEmpty) {
-          final first = loaded.first;
-          final config = first is Map<String, Object?> ? first['config'] : null;
-          if (config is Map<String, Object?> &&
-              config['context_length'] is int) {
-            ctx = config['context_length'] as int;
-          }
-        }
-      }
-      return EndpointInfo(
-        health: EndpointHealth.ok,
-        models: ids,
-        contextWindow: ctx,
-        serverKind: 'lmstudio',
-      );
-    }
-    return EndpointInfo(health: EndpointHealth.ok, models: ids);
+    return dialect.probe(
+      Discovery(
+        get: (uri) => _get(client, uri, auth),
+        base: _endpoint,
+        origin: origin,
+        wantsLoadedModel: defaultModel == loadedModel,
+        defaultModel: defaultModel,
+      ),
+    );
   }
 
   /// One bounded GET. A non-2xx answer is a failure only for the caller
@@ -542,18 +498,21 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   /// The most a discovery answer may be; a model list is kilobytes.
   static const maxProbeBytes = 1 << 20;
 
-  Future<_Answer> _get(HttpClient client, Uri uri, String? auth) async {
+  Future<DiscoveryAnswer> _get(HttpClient client, Uri uri, String? auth) async {
     HttpClientRequest? req;
     try {
       req = await client.getUrl(uri);
       req.followRedirects = false;
       req.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
+      for (final h in dialect.headers.entries) {
+        req.headers.set(h.key, h.value);
+      }
       if (auth != null) req.headers.set(HttpHeaders.authorizationHeader, auth);
       final response = await req.close().timeout(deadlines.firstResponse);
       final status = response.statusCode;
       if (status >= 300 && status < 400) {
         _drain(response);
-        return _Answer(
+        return DiscoveryAnswer(
           status,
           failure: LlmFailure(
             LlmFailureKind.rejected,
@@ -565,7 +524,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       }
       final text = await _readCapped(response);
       if (text == null) {
-        return _Answer(
+        return DiscoveryAnswer(
           status,
           failure: LlmFailure(
             LlmFailureKind.protocol,
@@ -583,16 +542,12 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         } on FormatException {
           json = null;
         }
-        return _Answer(
-          status,
-          json: json,
-          failure: statusFailure(status, origin),
-        );
+        return DiscoveryAnswer(status, json: json, failure: _refused(status));
       }
       try {
-        return _Answer(status, json: jsonDecode(text));
+        return DiscoveryAnswer(status, json: jsonDecode(text));
       } on FormatException {
-        return _Answer(
+        return DiscoveryAnswer(
           status,
           failure: LlmFailure(
             LlmFailureKind.protocol,
@@ -603,7 +558,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
       }
     } on TimeoutException {
       req?.abort();
-      return _Answer(
+      return DiscoveryAnswer(
         0,
         failure: LlmFailure(
           LlmFailureKind.timeout,
@@ -612,7 +567,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         ),
       );
     } catch (error) {
-      return _Answer(0, failure: connectFailure(error, origin));
+      return DiscoveryAnswer(0, failure: connectFailure(error, origin));
     }
   }
 
@@ -727,14 +682,6 @@ final class _Attempt {
     final sub = subscription;
     if (sub != null) _quietly(sub.cancel());
   }
-}
-
-final class _Answer {
-  _Answer(this.status, {this.json, this.failure});
-
-  final int status;
-  final Object? json;
-  final LlmFailure? failure;
 }
 
 /// Cancelling a subscription can hand back the socket's own close error;

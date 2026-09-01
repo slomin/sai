@@ -314,6 +314,88 @@ void main() {
     }
   });
 
+  test('the OpenRouter built-in takes a key the same way and leaks nothing '
+      '(#24)', () async {
+    final stub = await StubServer.start();
+    addTearDown(stub.close);
+    final container = ProviderContainer.test(
+      overrides: [
+        archiveRootProvider.overrideWithValue(Directory('${tmp.path}/archive')),
+        settingsFileProvider.overrideWithValue(
+          File('${tmp.path}/settings.json'),
+        ),
+        eventSourceProvider.overrideWithValue('sai/test'),
+        secretStoreProvider.overrideWithValue(secrets),
+        openRouterEndpointProvider.overrideWithValue(stub.v1),
+      ],
+    );
+    final results = <LlmResult>[];
+    await capturing(() async {
+      container.read(settingsProvider.notifier).selectLlm('openrouter');
+      // The built-in is configured as it ships by the first key stored.
+      container.read(credentialsProvider.notifier).set('openrouter', canary);
+      final recorder = await container.read(llmRecorderProvider.future);
+      final request = LlmRequest(
+        messages: [const LlmMessage(LlmRole.user, 'hello')],
+        reasoning: false,
+      );
+      Future<void> run() async {
+        final call = await recorder.start(
+          container.read(activeLlmProvider)!,
+          request,
+        );
+        results.add(await call.done);
+      }
+
+      // A 401 and a 404 that quote the key, then success.
+      stub.routes['POST /v1/chat/completions'] = (req) => StubServer.json(req, {
+        'error': {'code': 401, 'message': 'bad key $canary'},
+      }, status: 401);
+      await run();
+      stub.routes['POST /v1/chat/completions'] = (req) => StubServer.json(req, {
+        'error': {'code': 404, 'message': 'no route for $canary'},
+      }, status: 404);
+      await run();
+      stub.routes['POST /v1/chat/completions'] = (req) =>
+          StubServer.stream(req, ['ready'], id: 'gen-1');
+      await run();
+      for (final r in results) {
+        print('result: $r');
+      }
+    });
+    expect(results.map((r) => r.finish), [
+      LlmFinish.failed,
+      LlmFinish.failed,
+      LlmFinish.stop,
+    ]);
+    expect(results[1].failure!.message, 'no endpoint matched the pinned route');
+    for (final sent in stub.requests) {
+      expect(sent.header('authorization'), 'Bearer $canary');
+      expect(sent.path, '/v1/chat/completions');
+      expect(sent.body, isNot(contains(canary)));
+      expect(sent.body, contains('"only":["deepinfra"]'));
+    }
+    final files = allBytes();
+    final lines = [
+      for (final k in files.keys.where((k) => k.startsWith('archive/events/')))
+        ...utf8.decode(files[k]!).split('\n').where((l) => l.isNotEmpty),
+    ];
+    // A cloud call is four lines (ADR 0010): the decision and the three.
+    expect(lines.where((l) => l.contains('"policy.decision"')), hasLength(3));
+    expect(lines.where((l) => l.contains('"provider.failure"')), hasLength(2));
+    for (final line in lines.where((l) => l.contains('"endpoint"'))) {
+      expect(line, contains('"endpoint":"${stub.origin}"'));
+    }
+    expect(
+      utf8.decode(files['settings.json']!),
+      allOf(contains('"routing":"deepinfra_fp8"'), isNot(contains('sk-'))),
+    );
+    expectNoCanary(files);
+    for (final r in results) {
+      expect(r.toString(), isNot(contains(canary)));
+    }
+  });
+
   test('a key written into settings by hand is refused and not repeated', () {
     File('${tmp.path}/settings.json').writeAsStringSync(
       '{"version":0,"llm":null,"providers":[{"id":"lan","kind":"fake",'
