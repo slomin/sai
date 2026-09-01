@@ -12,6 +12,7 @@ library;
 export 'llm/builtins.dart';
 export 'llm/call.dart';
 export 'llm/connection.dart';
+export 'llm/effort.dart';
 export 'llm/failure.dart';
 export 'llm/factory.dart';
 export 'llm/fake.dart';

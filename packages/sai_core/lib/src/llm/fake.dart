@@ -98,7 +98,7 @@ final class FakeLlmProvider implements LlmProvider {
     final cut = limit != null && limit < words.length;
     final reply = cut ? words.sublist(0, limit) : words;
     var emitted = 0;
-    final thought = request.reasoning == false
+    final thought = request.reasoningEffort == ReasoningEffort.none
         ? null
         : reasoning?.call(request);
     for (final word in _chunks(thought ?? '')) {

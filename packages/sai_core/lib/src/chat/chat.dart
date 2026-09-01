@@ -258,8 +258,8 @@ class ChatNotifier extends Notifier<ChatState> {
         // The active local provider's probed window, or the conservative
         // default; a synchronous read — a send never awaits a probe.
         budget: container.read(chatBudgetProvider),
-        // Off asks the backend not to think; on leaves it to the model.
-        reasoning: container.read(reasoningProvider) ? null : false,
+        // The provider's own effort, or the switch translated (#26).
+        reasoningEffort: container.read(requestedEffortProvider),
         // A local model sees the whole collection; a cloud one at most
         // the compact lists (#105).
         shape: provider.privacy == LlmPrivacy.local
@@ -565,7 +565,7 @@ class ChatNotifier extends Notifier<ChatState> {
           history: _history(),
           request: request,
           budget: container.read(chatBudgetProvider),
-          reasoning: container.read(reasoningProvider) ? null : false,
+          reasoningEffort: container.read(requestedEffortProvider),
         ),
         render.handles,
         projection,

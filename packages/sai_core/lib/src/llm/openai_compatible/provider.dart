@@ -211,7 +211,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     if (refused != null) return fail(refused);
 
     final wireModel = _wireModel(request);
-    final off = request.reasoning == false;
+    final off = request.reasoningEffort == ReasoningEffort.none;
     final negotiate = off && dialect.negotiatesReasoning;
     final sendEffort = negotiate && !_reasoningRefused;
     final sendTemplateSwitch = negotiate && !_templateSwitchRefused;

@@ -337,7 +337,7 @@ void main() {
       final recorder = await container.read(llmRecorderProvider.future);
       final request = LlmRequest(
         messages: [const LlmMessage(LlmRole.user, 'hello')],
-        reasoning: false,
+        reasoningEffort: ReasoningEffort.none,
       );
       Future<void> run() async {
         final call = await recorder.start(

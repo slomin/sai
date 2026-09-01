@@ -64,10 +64,14 @@ abstract interface class LlmEndpointProbe {
 const providerTestPrompt = 'Reply with the single word: ready.';
 
 /// The test request. The budget is generous because a reasoning model
-/// spends most of it thinking before the one word.
-LlmRequest providerTestRequest({bool? reasoning}) => LlmRequest(
+/// spends most of it thinking before the one word. [temperature] is
+/// nulled for a backend that has no such field (#26).
+LlmRequest providerTestRequest({
+  ReasoningEffort? effort,
+  double? temperature = 0,
+}) => LlmRequest(
   messages: const [LlmMessage(LlmRole.user, providerTestPrompt)],
   maxTokens: 512,
-  temperature: 0,
-  reasoning: reasoning,
+  temperature: temperature,
+  reasoningEffort: effort,
 );

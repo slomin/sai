@@ -14,6 +14,7 @@ import 'archive/event.dart';
 import 'archive/verify_state.dart';
 import 'llm/call.dart';
 import 'llm/connection.dart';
+import 'llm/effort.dart';
 import 'llm/failure.dart';
 import 'llm/builtins.dart';
 import 'llm/factory.dart';
@@ -288,6 +289,18 @@ final selectedTaskProvider = NotifierProvider<SelectedTask, TaskId?>(
 final reasoningProvider = Provider<bool>(
   (ref) => ref.watch(settingsProvider.select((s) => s.reasoningOn)),
 );
+
+/// The reasoning effort the next request to the active provider carries
+/// (#26): an OpenAI kind's own `reasoning_effort` setting — null for
+/// Model default — or, for every other kind, the switch above translated
+/// as it always was (on → the backend's default, off → `none`). Resolved
+/// here, before assembly, so a client never decides a wire word.
+final requestedEffortProvider = Provider<ReasoningEffort?>((ref) {
+  final provider = ref.watch(activeLlmProvider);
+  final on = ref.watch(reasoningProvider);
+  if (provider == null) return on ? null : ReasoningEffort.none;
+  return requestedEffortFor(provider, reasoningOn: on);
+});
 
 /// When a finished task leaves its working views (#97), as settings hold
 /// it (`finished_task_visibility`, end of the local day by default).
@@ -806,12 +819,12 @@ class CacheWarmer extends Notifier<WarmState> {
   var _epoch = 0;
 
   /// The prefix each provider id last warmed (catalog bytes and the
-  /// reasoning flag), so an unchanged prefix is never re-sent.
-  final _warmed = <String, (String, bool?)>{};
+  /// reasoning effort), so an unchanged prefix is never re-sent.
+  final _warmed = <String, (String, ReasoningEffort?)>{};
 
   /// The prefix each id last failed on — retried only once something
   /// changes, so a probe-ok-but-chat-failing endpoint cannot loop.
-  final _failed = <String, (String, bool?)>{};
+  final _failed = <String, (String, ReasoningEffort?)>{};
 
   /// Measured ingestion per id, in recorded request bytes per second,
   /// behind the indicator's percentage.
@@ -824,7 +837,7 @@ class CacheWarmer extends Notifier<WarmState> {
   /// make the TUI re-read the log every two seconds, and cancelling on
   /// every content-identical projection turned one warm into a stutter
   /// of one-second bursts (measured before this guard existed).
-  (String, bool?)? _inFlight;
+  (String, ReasoningEffort?)? _inFlight;
 
   /// The last fraction shown, so the keep path can return it.
   double? _lastFraction;
@@ -880,14 +893,14 @@ class CacheWarmer extends Notifier<WarmState> {
       return stopped();
     }
     if (connection.level != ConnectionLevel.ready) return stopped();
-    final reasoning = ref.watch(reasoningProvider) ? null : false;
+    final effort = ref.watch(requestedEffortProvider);
     final request = assembleWarmup(
       profile: defaultProfile,
       projection: projection,
       today: ref.watch(todayProvider),
-      reasoning: reasoning,
+      reasoningEffort: effort,
     );
-    final key = (request.taskContext!, reasoning);
+    final key = (request.taskContext!, effort);
     // A finished local catalog turn ingested this very prefix; note it
     // rather than re-sending 35 KB of request line after every answer.
     ref.listen(chatProvider, (previous, next) {
@@ -926,7 +939,7 @@ class CacheWarmer extends Notifier<WarmState> {
     int epoch,
     LlmProvider provider,
     LlmRequest request,
-    (String, bool?) key,
+    (String, ReasoningEffort?) key,
   ) async {
     if (epoch != _epoch || !ref.mounted) return;
     final container = ref.container;

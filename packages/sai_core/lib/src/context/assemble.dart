@@ -184,13 +184,13 @@ const warmupPrompt = 'ready?';
 /// prefix in the background, so the next real turn pays only for its
 /// own tail. Byte-identical to a turn's leading messages by
 /// construction — same profile, same renderer, same splice — and
-/// [reasoning] mirrors the chat's switch so the served template cannot
+/// [reasoningEffort] mirrors the chat's so the served template cannot
 /// differ.
 LlmRequest assembleWarmup({
   required String profile,
   required TaskProjection projection,
   required CalendarDate today,
-  bool? reasoning,
+  ReasoningEffort? reasoningEffort,
 }) {
   if (profile.isEmpty) throw ArgumentError('profile must not be empty');
   return LlmRequest(
@@ -201,7 +201,7 @@ LlmRequest assembleWarmup({
     maxTokens: 1,
     taskContext: taskCatalog(projection, today: today),
     taskContextProvenance: TaskProvenance.catalog,
-    reasoning: reasoning,
+    reasoningEffort: reasoningEffort,
   );
 }
 
@@ -241,7 +241,7 @@ AssembledContext assembleProposal({
   required List<LlmMessage> history,
   required String request,
   ContextBudget budget = defaultContextBudget,
-  bool? reasoning,
+  ReasoningEffort? reasoningEffort,
 }) => assembleContext(
   profile: profile,
   memory: memory,
@@ -250,7 +250,7 @@ AssembledContext assembleProposal({
   history: history,
   draft: proposalInstruction(request),
   budget: budget,
-  reasoning: reasoning,
+  reasoningEffort: reasoningEffort,
   shape: TaskContextShape.catalog,
   responseSchema: proposalResponseSchema,
 );
@@ -276,7 +276,7 @@ AssembledContext assembleContext({
   required List<LlmMessage> history,
   required String draft,
   ContextBudget budget = defaultContextBudget,
-  bool? reasoning,
+  ReasoningEffort? reasoningEffort,
   TaskContextShape shape = TaskContextShape.compact,
   ResponseSchema? responseSchema,
 }) {
@@ -320,7 +320,7 @@ AssembledContext assembleContext({
       taskContextProvenance: catalog != null
           ? TaskProvenance.catalog
           : TaskProvenance.compact,
-      reasoning: reasoning,
+      reasoningEffort: reasoningEffort,
       responseSchema: responseSchema,
     );
     final estimate = request.sent.fold(0, (n, m) => n + estimateTokens(m.text));

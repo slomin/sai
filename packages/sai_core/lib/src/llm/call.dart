@@ -31,6 +31,40 @@ final class LlmMessage {
   Map<String, Object?> toJson() => {'role': role.name, 'text': text};
 }
 
+/// How hard a model may think before it answers (#26): the upstream word
+/// exactly as a backend takes it — `none`, `low`, `high`, `xhigh`, or a
+/// word this sai has never heard of. A class, not an enum: the vocabulary
+/// varies by backend and by model, and a word sai does not know still has
+/// to survive a settings round trip and reach the wire unchanged. Which
+/// words a backend accepts is the provider's judgement, never assembly's.
+/// `null` in a request means "the provider's or the model's default".
+final class ReasoningEffort {
+  const ReasoningEffort(this.word);
+
+  /// The one word every OpenAI-shaped backend reads as "do not think".
+  static const none = ReasoningEffort('none');
+
+  /// The upstream word, non-empty, never translated.
+  final String word;
+
+  /// [word] as an effort, or null for an absent or empty word — the
+  /// shape a settings value or a CLI argument arrives in.
+  static ReasoningEffort? parse(String? word) =>
+      word == null || word.isEmpty ? null : ReasoningEffort(word);
+
+  bool get isNone => word == none.word;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReasoningEffort && other.word == word;
+
+  @override
+  int get hashCode => word.hashCode;
+
+  @override
+  String toString() => word;
+}
+
 /// What a caller asks a provider for. Immutable; [messages] is never empty.
 ///
 /// [taskContext] is the task list as the caller wants the model to see it,
@@ -45,7 +79,7 @@ final class LlmRequest {
     this.temperature,
     this.taskContext,
     TaskProvenance? taskContextProvenance,
-    this.reasoning,
+    this.reasoningEffort,
     this.responseSchema,
   }) : messages = List.unmodifiable(messages),
        taskContextProvenance =
@@ -94,10 +128,11 @@ final class LlmRequest {
   /// context can never reach a cloud provider, whatever the switch says.
   final TaskProvenance taskContextProvenance;
 
-  /// Whether the model may think before it answers: false asks the
-  /// backend not to (`reasoning_effort: none` on an OpenAI-compatible
-  /// wire); null leaves it to the backend's default.
-  final bool? reasoning;
+  /// How hard the model may think before it answers: [ReasoningEffort.none]
+  /// asks the backend not to (`reasoning_effort: none` on an
+  /// OpenAI-compatible wire), another word is passed exactly as given, and
+  /// null leaves it to the backend's or the model's default.
+  final ReasoningEffort? reasoningEffort;
 
   /// A schema the answer must take (#35), or null for free text; see
   /// [ResponseSchema].
@@ -142,12 +177,12 @@ final class LlmRequest {
       taskContextProvenance: context
           ? taskContextProvenance
           : TaskProvenance.none,
-      reasoning: reasoning,
+      reasoningEffort: reasoningEffort,
       responseSchema: responseSchema,
     );
   }
 
-  /// The same request with the reasoning switch left to the backend —
+  /// The same request with the reasoning effort left to the backend —
   /// for a backend that rejected the switch.
   LlmRequest withoutReasoning() => LlmRequest(
     messages: messages,
@@ -183,7 +218,7 @@ final class LlmRequest {
     model: model,
     maxTokens: maxTokens,
     temperature: temperature,
-    reasoning: reasoning,
+    reasoningEffort: reasoningEffort,
     responseSchema: responseSchema,
   );
 }

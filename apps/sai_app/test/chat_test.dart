@@ -584,7 +584,7 @@ void main() {
       expect(
         archiveLines(container.read(archiveRootProvider))
             .singleWhere((l) => l.contains('"provider.request"')),
-        contains('"reasoning":false'),
+        contains('"reasoning_effort":"none"'),
       );
       await chord(tester, LogicalKeyboardKey.keyR);
       expect(find.text('reasoning on'), findsOneWidget);

@@ -751,7 +751,10 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       call = await recorder.start(
         provider,
         providerTestRequest(
-          reasoning: ref.read(reasoningProvider) ? null : false,
+          effort: requestedEffortFor(
+            provider,
+            reasoningOn: ref.read(reasoningProvider),
+          ),
         ),
       );
     } on Object catch (error) {

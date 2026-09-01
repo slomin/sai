@@ -310,7 +310,7 @@ void main() {
       expect(container.read(chatProvider).reasoning, isNull);
       expect(
         lines().singleWhere((l) => l['type'] == 'provider.request')['payload'],
-        isNot(containsPair('reasoning', false)),
+        isNot(contains('reasoning_effort')),
       );
     },
   );
@@ -330,7 +330,7 @@ void main() {
       expect(turn.reasoning, isNull);
       expect(
         lines().singleWhere((l) => l['type'] == 'provider.request')['payload'],
-        containsPair('reasoning', false),
+        containsPair('reasoning_effort', 'none'),
       );
     },
   );

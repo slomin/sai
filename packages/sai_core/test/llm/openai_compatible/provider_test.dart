@@ -12,7 +12,7 @@ import '../stub_server.dart';
 
 LlmRequest ask(String text, {bool? reasoning, String? model}) => LlmRequest(
   messages: [LlmMessage(LlmRole.user, text)],
-  reasoning: reasoning,
+  reasoningEffort: reasoning == false ? ReasoningEffort.none : null,
   model: model,
 );
 
@@ -740,7 +740,7 @@ void main() {
     final provider = make();
     final request = LlmRequest(
       messages: const [LlmMessage(LlmRole.user, 'a')],
-      reasoning: false,
+      reasoningEffort: ReasoningEffort.none,
       responseSchema: const ResponseSchema(
         name: 'p',
         schema: {'type': 'object'},

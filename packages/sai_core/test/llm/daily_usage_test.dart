@@ -40,7 +40,7 @@ void main() {
     final recorder = await container.read(llmRecorderProvider.future);
     final call = await recorder.start(
       container.read(llmRegistryProvider)['fake']!,
-      providerTestRequest(reasoning: false),
+      providerTestRequest(effort: ReasoningEffort.none),
     );
     await call.done;
     expect((await container.read(dailyUsageProvider.future)).isEmpty, isTrue);

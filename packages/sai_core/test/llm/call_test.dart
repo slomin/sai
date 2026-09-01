@@ -192,6 +192,45 @@ void main() {
     );
   });
 
+  group('LlmRequest.reasoningEffort (#26)', () {
+    LlmRequest ask(ReasoningEffort? effort) => LlmRequest(
+      messages: const [LlmMessage(LlmRole.user, 'hi')],
+      taskContext: 'tasks',
+      reasoningEffort: effort,
+    );
+
+    test('survives every request copy, word for word', () {
+      for (final effort in [
+        ReasoningEffort.none,
+        const ReasoningEffort('xhigh'),
+        const ReasoningEffort('a-word-from-the-future'),
+      ]) {
+        final request = ask(effort);
+        expect(request.assembled().reasoningEffort, effort);
+        expect(
+          request
+              .forCloud(sendTaskContext: true, keepCompactHistory: true)
+              .reasoningEffort,
+          effort,
+        );
+        expect(
+          request
+              .forCloud(sendTaskContext: false, keepCompactHistory: false)
+              .reasoningEffort,
+          effort,
+        );
+      }
+      expect(ask(null).assembled().reasoningEffort, isNull);
+    });
+
+    test('withoutReasoning leaves the effort to the backend', () {
+      expect(
+        ask(const ReasoningEffort('high')).withoutReasoning().reasoningEffort,
+        isNull,
+      );
+    });
+  });
+
   group('ResponseSchema (#35)', () {
     const schema = ResponseSchema(
       name: 'sai_proposal_v0',
@@ -213,7 +252,7 @@ void main() {
       final request = LlmRequest(
         messages: const [LlmMessage(LlmRole.user, 'q')],
         taskContext: 'Today (0): none',
-        reasoning: false,
+        reasoningEffort: ReasoningEffort.none,
         responseSchema: schema,
       );
       expect(request.assembled().responseSchema, same(schema));
