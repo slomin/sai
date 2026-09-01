@@ -17,6 +17,7 @@ jobs:
     name: No attribution trailers
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,6 +34,7 @@ jobs:
   secrets:
     name: No secrets in the tree or the PR
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       GITLEAKS_VERSION: 8.30.1
       GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
@@ -56,9 +58,27 @@ jobs:
   dart:
     name: Analyze and test (core, tui)
     runs-on: ubuntu-latest
+    # A hung runner must fail fast, not sit for the six-hour default:
+    # the whole job takes about three minutes when healthy.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # The SDK download is the one step that has hung (#113): give it a
+      # deadline and one clean second try before the job is declared dead.
       - uses: subosito/flutter-action@v2
+        id: flutter
+        timeout-minutes: 8
+        continue-on-error: true
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Drop a half-installed SDK before the second try
+        if: steps.flutter.outcome == 'failure'
+        run: rm -rf "$RUNNER_TOOL_CACHE/flutter"
+      - uses: subosito/flutter-action@v2
+        if: steps.flutter.outcome == 'failure'
+        timeout-minutes: 8
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
@@ -92,9 +112,27 @@ jobs:
   macos:
     name: Test and build (app)
     runs-on: macos-26
+    # About seven minutes when healthy (#113 sat 43 minutes on the SDK
+    # download before it could even be cancelled).
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      # The SDK download is the one step that has hung (#113): give it a
+      # deadline and one clean second try before the job is declared dead.
       - uses: subosito/flutter-action@v2
+        id: flutter
+        timeout-minutes: 8
+        continue-on-error: true
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Drop a half-installed SDK before the second try
+        if: steps.flutter.outcome == 'failure'
+        run: rm -rf "$RUNNER_TOOL_CACHE/flutter"
+      - uses: subosito/flutter-action@v2
+        if: steps.flutter.outcome == 'failure'
+        timeout-minutes: 8
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
