@@ -75,8 +75,35 @@ for lib in "$bundle"/lib/*.dylib; do
   [ -e "$lib" ] || continue
   codesign --verify --strict "$lib" || fail "$(basename "$lib") in the terminal client's bundle does not verify"
 done
+# The ChatGPT runtime (#26): a stable release carries the pinned App
+# Server beside each client, signed and — in the app — universal; a dev
+# release carries none, and one that does is not a dev release.
+helper="$app/Contents/Helpers/codex-app-server"
+sidecar="$bundle/libexec/codex-app-server"
+case "$flavor" in
+  stable)
+    if [ -f "$helper" ] || [ -f "$sidecar" ]; then
+      [ -f "$helper" ] || fail "the app carries no codex-app-server helper while the terminal client does"
+      [ -f "$sidecar" ] || fail "the terminal client carries no codex-app-server while the app does"
+      codesign --verify --strict "$helper" || fail "the app's codex-app-server helper does not verify"
+      codesign --verify --strict "$sidecar" || fail "the terminal client's codex-app-server does not verify"
+      case "$(lipo -archs "$helper")" in
+        *x86_64*arm64*|*arm64*x86_64*) ;;
+        *) fail "the app's codex-app-server helper is $(lipo -archs "$helper"), not universal" ;;
+      esac
+      for dir in "$app/Contents/Resources" "$bundle/libexec"; do
+        [ -f "$dir/codex-app-server.LICENSE" ] && [ -f "$dir/codex-app-server.NOTICE" ] \
+          || fail "$dir carries codex-app-server without its LICENSE and NOTICE"
+      done
+    fi
+    ;;
+  dev)
+    [ ! -e "$helper" ] && [ ! -e "$sidecar" ] && [ ! -e "$bundle/libexec" ] \
+      || fail "a dev release carries a codex-app-server; the dev copy runs no runtime"
+    ;;
+esac
 if [ "${unsealed:-0}" = 1 ]; then
-  for x in "$app" "$bundle/bin/$tui" "$bundle"/lib/*.dylib; do
+  for x in "$app" "$bundle/bin/$tui" "$bundle"/lib/*.dylib "$helper" "$sidecar"; do
     [ -e "$x" ] || continue
     if adhoc "$x"; then
       fail "a release without a seal must carry a real signature, and $(basename "$x") is ad-hoc — a stable release is sealed by tool/release.sh sign, a dev one by prepare dev"

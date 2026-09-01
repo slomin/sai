@@ -1,6 +1,6 @@
 # 13. Subscription logins belong to the vendor runtime
 
-Date: 2026-08-25 · Status: accepted · Issue: #28 · Spike: [provider_auth_spike](../../spikes/provider_auth_spike/DECISION.md) · Builds on: [0008](0008-secrets-live-in-the-file-keychain.md), [0009](0009-provider-transport-is-direct-and-bounded.md), [0010](0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md)
+Date: 2026-08-25 · Status: accepted · Issue: #28 · Spike: [provider_auth_spike](../../spikes/provider_auth_spike/DECISION.md) · Amended by: [0022](0022-openrouter-is-its-own-kind-with-pinned-routing.md), [0023](0023-openai-is-two-kinds-on-one-transport-and-a-bundled-runtime.md) · Builds on: [0008](0008-secrets-live-in-the-file-keychain.md), [0009](0009-provider-transport-is-direct-and-bounded.md), [0010](0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md)
 
 ## Context
 

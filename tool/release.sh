@@ -160,6 +160,7 @@ sign_tree() {
   for helper in "$app"/Contents/Helpers/* "$app"/Contents/MacOS/*; do
     [ -f "$helper" ] || continue
     [ "$helper" = "$app/Contents/MacOS/$slug" ] && continue
+    case "$helper" in *.LICENSE|*.NOTICE|*.version) continue ;; esac
     codesign --force --sign "$who" --timestamp=none "$@" "$helper"
   done
   codesign --force --sign "$who" --timestamp=none "$@" \
@@ -168,12 +169,23 @@ sign_tree() {
     [ -e "$lib" ] || continue
     codesign --force --sign "$who" --timestamp=none "$@" "$lib"
   done
+  # The client's sidecar (#26), when the flavor carries one.
+  for helper in "$bundle"/libexec/*; do
+    [ -f "$helper" ] || continue
+    case "$helper" in *.LICENSE|*.NOTICE|*.version) continue ;; esac
+    codesign --force --sign "$who" --timestamp=none "$@" "$helper"
+  done
   codesign --force --sign "$who" --timestamp=none "$@" "$bundle/bin/$tui"
   codesign --verify --deep --strict "$app"
   codesign --verify --strict "$bundle/bin/$tui"
   for lib in "$bundle"/lib/*.dylib; do
     [ -e "$lib" ] || continue
     codesign --verify --strict "$lib"
+  done
+  for helper in "$bundle"/libexec/*; do
+    [ -f "$helper" ] || continue
+    case "$helper" in *.LICENSE|*.NOTICE|*.version) continue ;; esac
+    codesign --verify --strict "$helper"
   done
 }
 
@@ -235,6 +247,12 @@ prepare() {
   /usr/libexec/PlistBuddy -c "Add :SaiCommit string $head" "$app/Contents/Info.plist"
 
   tool/build-tui.sh "$work/tui" "$flavor"
+  # The ChatGPT runtime (#26): a stable release carries the pinned,
+  # checksum-verified App Server beside each client; a dev release
+  # deliberately carries none — the dev copy runs no runtime.
+  case "$flavor" in
+    stable) tool/vendor-app-server.sh place "$app" "$work/tui/bundle" ;;
+  esac
   echo "$head" > "$work/tui/bundle/commit"
   echo "$flavor" > "$work/tui/bundle/flavor"
   echo "$head" > "$work/commit"
