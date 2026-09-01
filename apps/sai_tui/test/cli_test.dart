@@ -127,6 +127,151 @@ void main() {
     expect(err.toString(), contains("provider 'lmstudio' is not available"));
   });
 
+  test('OpenRouter is built in and provider add starts from its preset '
+      '(#24)', () async {
+    container = testContainer(builtins: builtinLlms(InMemorySecretStore()));
+    expect(await run('provider list'), cliOk);
+    expect(
+      out.toString(),
+      contains(
+        '  openrouter  built-in @ https://openrouter.ai  '
+        '($openRouterPresetModel) · cloud · pinned to DeepInfra fp8 · no key',
+      ),
+    );
+    expect(settingsFile().existsSync(), isFalse);
+    out.clear();
+    expect(await run('provider add openrouter'), cliOk);
+    expect(
+      out.toString(),
+      contains('added provider openrouter (over the built-in)'),
+    );
+    expect(out.toString(), contains('routing: pinned to DeepInfra fp8'));
+    expect(
+      out.toString(),
+      contains('set its key with: sai_tui secret set openrouter'),
+    );
+    expect(err.toString(), isEmpty);
+    Map<String, Object?> entry() =>
+        (jsonDecode(settingsFile().readAsStringSync())['providers'] as List)
+                .single
+            as Map<String, Object?>;
+    expect(entry(), {
+      'id': 'openrouter',
+      'kind': 'openrouter',
+      'default_model': openRouterPresetModel,
+      'credential': 'provider:openrouter',
+      'privacy': 'cloud',
+      'routing': 'deepinfra_fp8',
+    });
+    // A model of one's own is exact routing, said so.
+    out.clear();
+    expect(await run('provider add openrouter --model qwen/qwen3-8b'), cliOk);
+    expect(out.toString(), contains('routing: exact model'));
+    expect(entry()['default_model'], 'qwen/qwen3-8b');
+    expect(entry()['routing'], 'exact');
+    final built = container.read(llmRegistryProvider)['openrouter']!;
+    expect(built.defaultModel, 'qwen/qwen3-8b');
+    expect(built.privacy, LlmPrivacy.cloud);
+    // The preset model by hand stays exact; --routing recommended pins.
+    out.clear();
+    expect(
+      await run('provider add openrouter --model $openRouterPresetModel'),
+      cliOk,
+    );
+    expect(entry()['routing'], 'exact');
+    expect(await run('provider add openrouter --routing recommended'), cliOk);
+    expect(entry()['default_model'], openRouterPresetModel);
+    expect(entry()['routing'], 'deepinfra_fp8');
+    expect(out.toString(), contains('routing: pinned to DeepInfra fp8'));
+    // What is refused, with the entry untouched.
+    final before = entry();
+    for (final (line, why) in [
+      (
+        'provider add openrouter --routing recommended --model qwen/qwen3-8b',
+        'pins',
+      ),
+      (
+        'provider add openrouter --model openrouter/auto',
+        'lets the router pick',
+      ),
+      ('provider add openrouter --model ~deepseek/latest', 'owner/name'),
+      ('provider add openrouter --model qwen/qwen3-8b:nitro', 'shortcut'),
+      (
+        'provider add openrouter --endpoint https://x.example/v1',
+        'fixed endpoint',
+      ),
+      ('provider add openrouter --privacy local', 'cloud provider'),
+      ('provider add openrouter --no-key', 'needs a key'),
+      ('provider add openrouter --routing cheapest', 'recommended or exact'),
+      ('provider add lan --routing exact', 'openrouter only'),
+    ]) {
+      err.clear();
+      expect(await run(line), cliUsageError, reason: line);
+      expect(err.toString(), contains(why), reason: line);
+    }
+    expect(entry(), before);
+    expect(container.read(settingsProvider).provider('lan'), isNull);
+  });
+
+  test(
+    'secret set configures the OpenRouter built-in as shipped (#24)',
+    () async {
+      final store = InMemorySecretStore();
+      container = testContainer(builtins: builtinLlms(store), secrets: store);
+      expect(await run('secret status openrouter'), cliOk);
+      expect(out.toString().trim(), 'missing');
+      out.clear();
+      expect(await run('secret set openrouter'), cliOk);
+      expect(prompts, ['API key for openrouter: ']);
+      expect(
+        out.toString().trim(),
+        'key for openrouter stored in the Keychain (openrouter configured as '
+        'shipped)',
+      );
+      expect(store.accounts, ['provider:openrouter']);
+      expect(store.read('provider:openrouter'), canary);
+      final saved = jsonDecode(settingsFile().readAsStringSync());
+      expect(saved['providers'], [
+        {
+          'id': 'openrouter',
+          'kind': 'openrouter',
+          'default_model': openRouterPresetModel,
+          'credential': 'provider:openrouter',
+          'privacy': 'cloud',
+          'routing': 'deepinfra_fp8',
+        },
+      ]);
+      out.clear();
+      expect(await run('provider list'), cliOk);
+      expect(
+        out.toString(),
+        contains(
+          '  openrouter  openrouter  ($openRouterPresetModel) · cloud · '
+          'pinned to DeepInfra fp8 · key set',
+        ),
+      );
+      // A second key replaces, the entry stays; clear removes the item.
+      out.clear();
+      expect(await run('secret set openrouter'), cliOk);
+      expect(
+        out.toString().trim(),
+        'key for openrouter stored in the Keychain',
+      );
+      expect(await run('secret clear openrouter'), cliOk);
+      expect(store.accounts, isEmpty);
+      expect(
+        container.read(settingsProvider).provider('openrouter'),
+        isNotNull,
+      );
+      // The keyless built-ins are still refused.
+      err.clear();
+      expect(await run('secret set lan'), cliFailed);
+      expect(err.toString(), contains("no configured provider 'lan'"));
+      final everything = '$out$err${settingsFile().readAsStringSync()}';
+      expect(everything, isNot(contains(canary)));
+    },
+  );
+
   test('version prints the workspace version', () async {
     expect(await run('version'), cliOk);
     expect(out.toString().trim(), 'sai_tui $saiVersion');

@@ -12,6 +12,7 @@ ProviderContainer testContainer({
   List<Override> overrides = const [],
   List<LlmProvider Function()> builtins = const [FakeLlmProvider.new],
   FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
+  SecretStore? secrets,
 }) {
   // Archive and settings both go under one temp dir, whatever the
   // developer's environment says.
@@ -23,8 +24,9 @@ ProviderContainer testContainer({
       archiveRootProvider.overrideWithValue(root),
       settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
       eventSourceProvider.overrideWithValue(EventSources.tui),
-      // Never the login keychain from a test.
-      secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+      // Never the login keychain from a test. A test whose built-ins
+      // take a key hands in the store they were built over.
+      secretStoreProvider.overrideWithValue(secrets ?? InMemorySecretStore()),
       // The fake alone, nothing selected: a test never reaches LM Studio
       // or the LAN box unless it asks for them.
       builtinLlmsProvider.overrideWithValue(builtins),
