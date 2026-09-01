@@ -454,6 +454,70 @@ void main() {
       );
     });
 
+    test('a failure names the file, never its path, and a refused reload '
+        'waits for the log to move', () async {
+      final container = await make(
+        overrides: [tasksProvider.overrideWith(_CountingTasks.new)],
+      );
+      final tasks = container.read(tasksProvider.notifier) as _CountingTasks;
+      // A line the reducer refuses in log order: another process created
+      // a task in a project this one had deleted by then.
+      final project = await tasks.store.createProject(title: 'P');
+      final other = await Archive.open(tmp);
+      final stale = await TaskStore.open(other, source: 'sai/app');
+      await tasks.store.deleteProject(project);
+      await stale.createTask(
+        title: 'imported',
+        project: project,
+        by: const Attribution.system(),
+      );
+      final follower = container.read(archiveFollowerProvider.notifier);
+      await follower.tick();
+      var state = container.read(archiveFollowerProvider);
+      expect(state.failure, contains('TaskProjectionError'));
+      expect(state.notice, startsWith('reload failed: '));
+      expect(tasks.reloads, 1);
+      // The log has not moved: no second replay.
+      await follower.tick();
+      await follower.tick();
+      expect(tasks.reloads, 1);
+      expect(container.read(archiveFollowerProvider), state);
+      // Any line moves it: one more attempt, the same refusal.
+      await tasks.store.createTask(title: 'mine');
+      await follower.tick();
+      expect(tasks.reloads, 2);
+      await follower.tick();
+      expect(tasks.reloads, 2);
+      stale.dispose();
+      await other.close();
+
+      // A damaged HEAD is named without its directory.
+      final head = File('${tmp.path}/HEAD');
+      head.writeAsStringSync('not json\n');
+      await follower.tick();
+      state = container.read(archiveFollowerProvider);
+      expect(state.failure, contains('(HEAD)'));
+      expect(state.failure, isNot(contains(tmp.path)));
+    });
+
+    test('a store that closes under the check is not a failure', () async {
+      final container = await make();
+      await foreign((other) => other.createTask(title: 'from the app'));
+      container.read(tasksProvider.notifier).store.dispose();
+      await container.read(archiveFollowerProvider.notifier).tick();
+      expect(container.read(archiveFollowerProvider), const FollowerState());
+    });
+
+    test('FollowerState compares by value', () {
+      expect(const FollowerState(reloads: 1), const FollowerState(reloads: 1));
+      expect(
+        const FollowerState(reloads: 1),
+        isNot(const FollowerState(reloads: 1, failure: 'x')),
+      );
+      expect(const FollowerState(failure: 'x').notice, 'reload failed: x');
+      expect(const FollowerState().notice, isNull);
+    });
+
     test('the timer follows archivePollEveryProvider and disposal', () {
       expect(ArchiveFollower.pollEvery, const Duration(seconds: 2));
       fakeAsync((async) {
@@ -2149,4 +2213,15 @@ final class _ThrowingStore implements SecretStore {
 class _StuckTasks extends TasksNotifier {
   @override
   Future<TaskProjection> build() => Completer<TaskProjection>().future;
+}
+
+/// Counts the replays the follower asks for.
+class _CountingTasks extends TasksNotifier {
+  var reloads = 0;
+
+  @override
+  Future<void> reload() {
+    reloads++;
+    return super.reload();
+  }
 }

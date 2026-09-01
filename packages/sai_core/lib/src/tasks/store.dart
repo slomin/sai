@@ -33,10 +33,26 @@ final class TaskStore {
     Archive archive, {
     required String source,
   }) async {
-    final events = await _readEvents(archive);
+    final (events, appended) = await _readAligned(archive);
     return TaskStore._(archive, source, TaskProjection.replay(events))
       .._readCount = events.length
-      .._appendedAtRead = archive.appended;
+      .._appendedAtRead = appended;
+  }
+
+  /// The whole log together with the archive's own-append count that
+  /// belongs to it. An own line landing *during* the read (the chat, the
+  /// recorder — nothing serializes them with a replay) would be counted
+  /// on one side only and [hasForeignLines] would misjudge once, so the
+  /// read repeats while the count moved under it; a log written to
+  /// without pause is read on the third pass with the count sampled
+  /// after it, which errs towards one spare replay, never a missed line.
+  static Future<(List<StoredEvent>, int)> _readAligned(Archive archive) async {
+    for (var attempt = 0; ; attempt++) {
+      final before = archive.appended;
+      final events = await _readEvents(archive);
+      final after = archive.appended;
+      if (before == after || attempt >= 2) return (events, after);
+    }
   }
 
   /// Reads the whole log, tolerating a torn tail. A tear can also be the
@@ -95,7 +111,7 @@ final class TaskStore {
   /// process (or another store) become visible. Serialized with commands.
   Future<void> reload() => _serialized(() async {
     _checkOpen();
-    final events = await _readEvents(_archive);
+    final (events, appended) = await _readAligned(_archive);
     // Everything past the last read that this store did not append itself
     // is another writer's work — including lines that landed *before* a
     // local commit, which the projection's own count would walk past. A
@@ -110,7 +126,7 @@ final class TaskStore {
     if (barrier) _undoStack.clear();
     _projection = next;
     _readCount = events.length;
-    _appendedAtRead = _archive.appended;
+    _appendedAtRead = appended;
     _ownSinceRead.clear();
     _notify();
   });
@@ -121,8 +137,8 @@ final class TaskStore {
   /// the appends this process made through the shared [Archive] since
   /// that read — its own task commands, chat and provider lines move the
   /// head without being news. A read that a foreign line's reducer
-  /// refuses leaves the cursor where it was, so this stays true and the
-  /// next attempt replays again.
+  /// refuses leaves the cursor where it was, so this stays true; the
+  /// follower retries once the log has moved again.
   Future<bool> hasForeignLines() async {
     _checkOpen();
     // Both reads happen before the first suspension point, so the pair
