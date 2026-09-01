@@ -506,6 +506,120 @@ void main() {
     expect(err.toString(), contains("no configured provider 'lan'"));
   });
 
+  test('the two OpenAI kinds are added apart, each with its own billing '
+      '(#26)', () async {
+    Map<String, Object?> entry(String id) =>
+        (jsonDecode(settingsFile().readAsStringSync())['providers'] as List)
+            .cast<Map<String, Object?>>()
+            .singleWhere((p) => p['id'] == id);
+    // The API key kind: cloud, keyed, one exact model, effort by default.
+    expect(
+      await run('provider add openai --kind openai --model gpt-5.6-sol'),
+      cliOk,
+    );
+    expect(out.toString(), contains('added provider openai'));
+    expect(out.toString(), contains('reasoning effort: Model default'));
+    expect(
+      out.toString(),
+      contains('set its key with: sai_tui secret set openai'),
+    );
+    expect(entry('openai'), {
+      'id': 'openai',
+      'kind': 'openai',
+      'default_model': 'gpt-5.6-sol',
+      'credential': 'provider:openai',
+      'privacy': 'cloud',
+    });
+    // The effort is its own choice: set, changed, returned to the default,
+    // never touching the model.
+    out.clear();
+    expect(await run('provider add openai --effort xhigh'), cliOk);
+    expect(out.toString(), contains('reasoning effort: xhigh'));
+    expect(entry('openai')['reasoning_effort'], 'xhigh');
+    expect(entry('openai')['default_model'], 'gpt-5.6-sol');
+    expect(await run('provider add openai --model gpt-5.6-luna'), cliOk);
+    expect(entry('openai')['reasoning_effort'], 'xhigh');
+    expect(entry('openai')['default_model'], 'gpt-5.6-luna');
+    expect(await run('provider add openai --effort default'), cliOk);
+    expect(entry('openai'), isNot(contains('reasoning_effort')));
+    // The subscription kind: cloud, no key, the model may come later.
+    out.clear();
+    expect(
+      await run('provider add chatgpt --kind chatgpt_subscription'),
+      cliOk,
+    );
+    expect(out.toString(), contains('added provider chatgpt'));
+    expect(out.toString(), contains('reasoning effort: Model default'));
+    expect(
+      out.toString(),
+      contains('sign in with: sai_tui provider login chatgpt'),
+    );
+    expect(out.toString(), isNot(contains('secret set')));
+    expect(entry('chatgpt'), {
+      'id': 'chatgpt',
+      'kind': 'chatgpt_subscription',
+      'privacy': 'cloud',
+    });
+    expect(
+      await run('provider add chatgpt --model gpt-5.6-sol --effort high'),
+      cliOk,
+    );
+    expect(entry('chatgpt')['default_model'], 'gpt-5.6-sol');
+    expect(entry('chatgpt')['reasoning_effort'], 'high');
+    // What is refused, with both entries untouched.
+    final before = (entry('openai'), entry('chatgpt'));
+    for (final (line, why) in [
+      ('provider add openai --endpoint https://x.example/v1', 'fixed endpoint'),
+      ('provider add openai --privacy local', 'cloud provider'),
+      ('provider add openai --no-key', 'needs a key'),
+      ('provider add openai --routing exact', 'openrouter only'),
+      ('provider add key --kind openai', 'needs --model'),
+      (
+        'provider add chatgpt --endpoint https://x.example/v1',
+        'fixed endpoint',
+      ),
+      ('provider add chatgpt --privacy local', 'cloud provider'),
+      ('provider add chatgpt --key', 'takes no key'),
+      ('provider add chatgpt --routing exact', 'openrouter only'),
+      (
+        'provider add plain --kind fake --effort high',
+        'openai and chatgpt_subscription only',
+      ),
+      ('provider add openai --effort', '--effort needs a value'),
+    ]) {
+      err.clear();
+      expect(await run(line), cliUsageError, reason: line);
+      expect(err.toString(), contains(why), reason: line);
+    }
+    expect(entry('openai'), before.$1);
+    expect(entry('chatgpt'), before.$2);
+    expect(container.read(settingsProvider).provider('key'), isNull);
+    expect(container.read(settingsProvider).provider('plain'), isNull);
+    // An entry changed to an OpenAI kind drops what the kind refuses.
+    expect(
+      await run(
+        'provider add box --kind openai_compatible '
+        '--endpoint http://127.0.0.1:8080/v1 --model m --key',
+      ),
+      cliOk,
+    );
+    expect(await run('provider add box --kind openai'), cliOk);
+    expect(entry('box'), {
+      'id': 'box',
+      'kind': 'openai',
+      'default_model': 'm',
+      'credential': 'provider:box',
+      'privacy': 'cloud',
+    });
+    expect(await run('provider add box --kind chatgpt_subscription'), cliOk);
+    expect(entry('box'), {
+      'id': 'box',
+      'kind': 'chatgpt_subscription',
+      'default_model': 'm',
+      'privacy': 'cloud',
+    });
+  });
+
   test('an openai_compatible provider needs an endpoint and a model', () async {
     expect(await run('provider add local --kind openai_compatible'), cliOk);
     expect(

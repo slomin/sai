@@ -1497,6 +1497,59 @@ void main() {
         expect(File('${tmp.path}/settings.json').existsSync(), isFalse);
       });
 
+      test('the OpenAI kinds are judged by their own words (#26)', () {
+        final container = make(shipped: true);
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'openai',
+            kind: openAiKind,
+            defaultModel: 'gpt-5.6-sol',
+            privacy: LlmPrivacy.local,
+            credential: 'provider:openai',
+          ),
+        );
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'chatgpt',
+            kind: chatGptKind,
+            credential: 'provider:chatgpt',
+          ),
+        );
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'local',
+            kind: 'openai_compatible',
+            endpoint: 'http://127.0.0.1:8080/v1',
+            defaultModel: 'm',
+            reasoningEffort: 'high',
+          ),
+        );
+        final missing = container.read(misconfiguredLlmsProvider);
+        expect(
+          missing['local'],
+          'carrying a reasoning effort, which only the OpenAI kinds take',
+        );
+        // The kinds themselves are judged by their own words once a
+        // factory builds them (the OpenAI kinds' factories land with
+        // their transports); the judgement is already theirs.
+        final stored = container.read(settingsProvider);
+        expect(
+          missingForKind(stored.provider('openai')!),
+          'tagged local, but openai is a cloud provider',
+        );
+        expect(
+          missingForKind(stored.provider('chatgpt')!),
+          startsWith('naming a key'),
+        );
+        settings.selectLlm('local');
+        expect(
+          container.read(llmStatusProvider),
+          "provider 'local' is carrying a reasoning effort, which only the "
+          'OpenAI kinds take — local only',
+        );
+      });
+
       test('a wrong OpenRouter entry is misconfigured, never re-routed', () {
         final container = make(shipped: true);
         final settings = container.read(settingsProvider.notifier);

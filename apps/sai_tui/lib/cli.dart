@@ -12,6 +12,7 @@ usage: sai_tui                       open the terminal client
                                     [--model <name>] [--key | --no-key]
                                     [--privacy local|cloud]
                                     [--routing recommended|exact]
+                                    [--effort default|<word>]
        sai_tui provider remove <id>
        sai_tui provider use <id|none>
        sai_tui privacy               show the cloud-sharing switch
@@ -58,6 +59,20 @@ openrouter/* routers, ~latest aliases and :nitro/:floor/:online
 shortcuts are refused. secret set openrouter configures it as shipped
 and files the key. Removing the key here removes the Keychain item
 only: revoke the key at openrouter.ai as well.
+
+OpenAI is two kinds, never one (#26): --kind openai is the Responses
+API on an API key, billed to your OpenAI project, fixed to
+https://api.openai.com, needing --model <exact id> and a key (secret
+set <id>); --kind chatgpt_subscription is your ChatGPT plan through
+OpenAI's Codex App Server, which sai runs as a child — no key, no
+endpoint, signed in with provider login <id>. Both are cloud; neither
+takes --endpoint, --privacy local or --routing, and a failure on one is
+never retried on the other. --effort chooses how hard the model thinks
+for these two kinds alone: default leaves it to the model, any other
+word goes to the backend exactly as typed (openai: none, minimal, low,
+medium, high, xhigh, max — which of them a model takes is the model's
+business; chatgpt_subscription: what provider models <id> lists for the
+chosen model). Other kinds keep the reasoning on|off switch.
 
 things import reads a private copy of the Things 3 database (the one
 under ~/Library/Group Containers, or --db / SAI_THINGS_DB) and writes
@@ -206,10 +221,12 @@ Future<int> runCli(
         String? model = seed?.defaultModel;
         LlmPrivacy? privacy = seed?.privacy;
         String? routing = seed?.routing;
+        String? effort = seed?.reasoningEffort;
         bool? keyGiven;
         String? endpointGiven;
         String? modelGiven;
         String? routingGiven;
+        String? effortGiven;
         LlmPrivacy? privacyGiven;
         for (var i = 0; i < rest.length; i++) {
           String value() {
@@ -243,6 +260,11 @@ Future<int> runCli(
               if (privacy == null) {
                 throw _Usage('--privacy takes local or cloud, not $name');
               }
+            case '--effort':
+              // The word goes through as typed; `default` is Model
+              // default, the absent key (#26).
+              effortGiven = value();
+              effort = effortGiven == 'default' ? null : effortGiven;
             default:
               throw _Usage('unknown option ${rest[i]}');
           }
@@ -301,6 +323,46 @@ Future<int> runCli(
           // carries none, whatever the entry had before.
           routing = null;
         }
+        if (kind == openAiKind || kind == chatGptKind) {
+          // The two OpenAI kinds (#26): one origin each, cloud, and the
+          // billing said by the kind — a key for the API, the App
+          // Server's own login for the plan. Only the flags typed are
+          // refused; what an entry brought along is dropped.
+          if (endpointGiven != null) {
+            throw _Usage(
+              '$kind has a fixed endpoint; --endpoint does not apply',
+            );
+          }
+          if (privacyGiven == LlmPrivacy.local) {
+            throw _Usage(
+              '$kind is a cloud provider; --privacy local does not apply',
+            );
+          }
+          endpoint = null;
+          privacy = LlmPrivacy.cloud;
+          if (kind == openAiKind) {
+            if (keyGiven == false) {
+              throw _Usage('openai needs a key; --no-key does not apply');
+            }
+            key = true;
+            if (model == null) throw _Usage('provider add needs --model');
+          } else {
+            if (keyGiven == true) {
+              throw _Usage(
+                'chatgpt_subscription takes no key — the login is the App '
+                "Server's own; sign in with: $program provider login $id",
+              );
+            }
+            key = false;
+          }
+        } else if (effortGiven != null) {
+          throw _Usage(
+            '--effort applies to openai and chatgpt_subscription only; '
+            'other kinds use: $program reasoning on|off',
+          );
+        } else {
+          effort = null;
+        }
         final ProviderConfig config;
         try {
           // What a new entry must satisfy beyond what a stored one must.
@@ -323,6 +385,7 @@ Future<int> runCli(
                 : null,
             privacy: () => privacy,
             routing: () => routing,
+            reasoningEffort: () => effort,
           );
         } on ArgumentError catch (e) {
           throw _Usage('${e.message}');
@@ -341,6 +404,11 @@ Future<int> runCli(
           out.writeln(
             'routing: ${r.label}'
             '${r == OpenRouterRouting.exact ? ' — needs an endpoint that meets the privacy filters, zero retention above all' : ''}',
+          );
+        }
+        if (kind == openAiKind || kind == chatGptKind) {
+          out.writeln(
+            'reasoning effort: ${config.reasoningEffort ?? 'Model default'}',
           );
         }
         if (hadKey && !key) {
@@ -383,6 +451,9 @@ Future<int> runCli(
           );
         } else if (key && !hadKey) {
           out.writeln('set its key with: $program secret set $id');
+        }
+        if (kind == chatGptKind) {
+          out.writeln('sign in with: $program provider login $id');
         }
         return cliOk;
 

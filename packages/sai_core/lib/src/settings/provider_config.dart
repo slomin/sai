@@ -18,6 +18,7 @@ final class ProviderConfig {
     String? credentialOrigin,
     this.privacy,
     this.routing,
+    this.reasoningEffort,
     Map<String, Object?> extra = const {},
   }) : extra = Map.unmodifiable(extra),
        credentialOrigin = _boundOrigin(endpoint, credential, credentialOrigin) {
@@ -35,6 +36,9 @@ final class ProviderConfig {
     }
     if (routing != null && routing!.isEmpty) {
       throw ArgumentError('routing, when given, must not be empty');
+    }
+    if (reasoningEffort != null && reasoningEffort!.isEmpty) {
+      throw ArgumentError('reasoning_effort, when given, must not be empty');
     }
     final c = credential;
     if (c != null && !credentialForm.hasMatch(c)) {
@@ -118,6 +122,16 @@ final class ProviderConfig {
   /// misconfigured, never silently re-routed. Stored as written.
   final String? routing;
 
+  /// How hard the model may think (#26), for the OpenAI kinds
+  /// (`chatgpt_subscription`, `openai`): the backend's own word — `none`,
+  /// `low`, `high`, `xhigh`, … — stored as written, or null for "Model
+  /// default", which omits the override on the wire. Which words a model
+  /// takes is the kind's judgement against what upstream advertises; a
+  /// word this sai does not know round-trips untouched and is shown as
+  /// unavailable, never dropped or swapped. Another kind carrying one is
+  /// misconfigured (`missingForKind`).
+  final String? reasoningEffort;
+
   /// Keys this sai does not know, exactly as read.
   final Map<String, Object?> extra;
 
@@ -171,6 +185,7 @@ final class ProviderConfig {
     String? Function()? credentialOrigin,
     LlmPrivacy? Function()? privacy,
     String? Function()? routing,
+    String? Function()? reasoningEffort,
   }) => ProviderConfig(
     id: id,
     kind: kind ?? this.kind,
@@ -182,6 +197,9 @@ final class ProviderConfig {
         : credentialOrigin(),
     privacy: privacy == null ? this.privacy : privacy(),
     routing: routing == null ? this.routing : routing(),
+    reasoningEffort: reasoningEffort == null
+        ? this.reasoningEffort
+        : reasoningEffort(),
     extra: extra,
   );
 
@@ -198,6 +216,7 @@ final class ProviderConfig {
     'credential_origin',
     'privacy',
     'routing',
+    'reasoning_effort',
   };
 
   /// Reads one `providers[]` entry. Throws [SettingsFormatException] on a
@@ -237,6 +256,7 @@ final class ProviderConfig {
         credentialOrigin: optional('credential_origin'),
         privacy: privacy,
         routing: optional('routing'),
+        reasoningEffort: optional('reasoning_effort'),
         extra: {
           for (final e in json.entries)
             if (!_known.contains(e.key)) e.key: e.value,
@@ -257,6 +277,7 @@ final class ProviderConfig {
     if (credentialOrigin != null) 'credential_origin': credentialOrigin,
     if (privacy != null) 'privacy': privacy!.name,
     if (routing != null) 'routing': routing,
+    if (reasoningEffort != null) 'reasoning_effort': reasoningEffort,
   });
 
   /// Value equality over the stored form: two configs that would write

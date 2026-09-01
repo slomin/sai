@@ -11,11 +11,13 @@ library;
 
 export 'llm/builtins.dart';
 export 'llm/call.dart';
+export 'llm/codex_app_server/config.dart';
 export 'llm/connection.dart';
 export 'llm/effort.dart';
 export 'llm/failure.dart';
 export 'llm/factory.dart';
 export 'llm/fake.dart';
+export 'llm/openai/openai.dart';
 export 'llm/openai_compatible/dialect.dart';
 export 'llm/openai_compatible/policy.dart' show OpenAiDeadlines;
 export 'llm/openai_compatible/provider.dart';
