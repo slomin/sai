@@ -14,6 +14,7 @@ ProviderContainer testContainer({
   FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
   SecretStore? secrets,
   Uri? openRouterEndpoint,
+  Duration? archivePollEvery,
 }) {
   // Archive and settings both go under one temp dir, whatever the
   // developer's environment says.
@@ -40,6 +41,10 @@ ProviderContainer testContainer({
       // The status row watches the warmer; a test provider must never
       // be sent a background inference (#105).
       warmEnabledProvider.overrideWithValue(false),
+      // The archive follower (#118) is watched too; a periodic timer
+      // would outlive the test, so a test drives `tick()` or brings its
+      // own short interval.
+      archivePollEveryProvider.overrideWithValue(archivePollEvery),
       // The product default (#97) unless a test is about the row leaving;
       // null reads the setting through, for the CLI that sets it.
       if (finishedTasks != null)

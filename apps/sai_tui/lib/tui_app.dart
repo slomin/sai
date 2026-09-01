@@ -65,23 +65,6 @@ class _TuiAppState extends State<TuiApp> {
   /// whenever it is read, so it never points past a shrunken list.
   var _selected = 0;
 
-  /// The archive head count this process last replayed to. The log is
-  /// shared with the app (one store per process, ADR 0004 amendment):
-  /// a count that moved means another writer appended, and a reload
-  /// brings its events in. Own commits move it too and cost one spare
-  /// replay — microseconds per line, not worth tracking apart.
-  int? _replayedCount;
-  Timer? _poll;
-
-  /// How often the head is checked. A read of one tiny file.
-  static const pollEvery = Duration(seconds: 2);
-
-  @override
-  void initState() {
-    super.initState();
-    _poll = Timer.periodic(pollEvery, (_) => _followArchive());
-  }
-
   String _notice = '';
 
   @override
@@ -90,7 +73,6 @@ class _TuiAppState extends State<TuiApp> {
     _chatInput.dispose();
     _chatScroll.dispose();
     _listScroll.dispose();
-    _poll?.cancel();
     super.dispose();
   }
 
@@ -276,29 +258,6 @@ class _TuiAppState extends State<TuiApp> {
     }
   }
 
-  Future<void> _followArchive() async {
-    final container = context.container;
-    try {
-      if (container.read(tasksProvider).value == null) return;
-      final archive = await container.read(archiveProvider.future);
-      final count = (await archive.head()).count;
-      if (count == _replayedCount) return;
-      await container.read(tasksProvider.notifier).reload();
-      _replayedCount = count;
-    } on StateError catch (error) {
-      // The container is gone (riverpod's own wording): the tester never
-      // unmounts, so the timer would otherwise outlive it and fail a
-      // later test. Ending the poll is right in a real run as well.
-      if (error.message.contains('disposed')) {
-        _poll?.cancel();
-        return;
-      }
-      _setNotice('reload failed: $error');
-    } on Object catch (error) {
-      _setNotice('reload failed: $error');
-    }
-  }
-
   void _setNotice(String notice) {
     if (!mounted) return;
     setState(() => _notice = notice);
@@ -396,8 +355,25 @@ class _TuiAppState extends State<TuiApp> {
                     cursor: _laneCursor,
                     focused: _pane == _Pane.lane,
                   ),
-                if (_notice.isNotEmpty)
-                  Text(_notice, style: TextStyle(color: Colors.yellow)),
+                // One notice row. The log is shared with the app (one
+                // store per process, ADR 0004 amendment); the core
+                // follower (#118) replays it when another process wrote,
+                // and watching it here keeps it alive for the interactive
+                // client's life. A failed check shows in the row whenever
+                // no notice of the person's own action holds it.
+                RiverpodConsumer<FollowerState>(
+                  provider: archiveFollowerProvider,
+                  builder: (context, follower) =>
+                      switch (_notice.isNotEmpty ? _notice : follower.notice) {
+                        final notice? when notice.isNotEmpty => Text(
+                          notice,
+                          style: TextStyle(color: Colors.yellow),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        _ => const SizedBox.shrink(),
+                      },
+                ),
                 // One row, whatever the provider is called: a wrapped
                 // status would take its extra rows from the list above.
                 // Watching the warmer also keeps it alive for the

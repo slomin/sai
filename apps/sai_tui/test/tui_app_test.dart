@@ -369,8 +369,12 @@ void main() {
     Future<ProviderContainer> pumpTwo(
       NoctermTester tester, {
       FinishedTaskVisibility finishedTasks = FinishedTaskVisibility.endOfDay,
+      Duration? archivePollEvery,
     }) async {
-      final container = testContainer(finishedTasks: finishedTasks);
+      final container = testContainer(
+        finishedTasks: finishedTasks,
+        archivePollEvery: archivePollEvery,
+      );
       await container.read(tasksProvider.future);
       final store = container.read(tasksProvider.notifier).store;
       final today = container.read(todayProvider);
@@ -517,7 +521,13 @@ void main() {
 
     test("another process's append shows up within the poll", () async {
       await testNocterm('follow', (tester) async {
-        final container = await pumpTwo(tester);
+        // The client keeps the core follower (#118) alive by watching
+        // it, and its timer drives the reload — a short interval here,
+        // the product's two seconds are pinned in core.
+        final container = await pumpTwo(
+          tester,
+          archivePollEvery: const Duration(milliseconds: 100),
+        );
         final root = container.read(archiveRootProvider);
         final other = await Archive.open(root);
         final store = await TaskStore.open(other, source: EventSources.app);
@@ -530,10 +540,29 @@ void main() {
         await pumpUntilText(
           tester,
           'From the app @today',
-          timeout: _TuiAppPoll.twice,
+          timeout: const Duration(seconds: 5),
         );
         expect(tester.terminalState, containsText('Today (3)'));
         expect(tester.terminalState, containsText('› One @today'));
+        expect(container.read(archiveFollowerProvider).reloads, 1);
+      }, size: size);
+    });
+
+    test('a check that fails shows the reload notice until one succeeds '
+        '(#118)', () async {
+      await testNocterm('follow failed', (tester) async {
+        final container = await pumpTwo(tester);
+        final head = File('${container.read(archiveRootProvider).path}/HEAD');
+        final good = head.readAsBytesSync();
+        head.writeAsStringSync('not json\n');
+        final follower = container.read(archiveFollowerProvider.notifier);
+        await follower.tick();
+        await pumpUntilText(tester, 'reload failed:');
+        expect(tester.terminalState, containsText('Today (2)'));
+        head.writeAsBytesSync(good, flush: true);
+        await follower.tick();
+        await pumpFor(tester, const Duration(milliseconds: 100));
+        expect(tester.terminalState, isNot(containsText('reload failed:')));
       }, size: size);
     });
 
@@ -980,10 +1009,6 @@ class _FailingTasks extends TasksNotifier {
   Future<TaskProjection> build() async {
     throw StateError('no archive today');
   }
-}
-
-abstract final class _TuiAppPoll {
-  static const twice = Duration(seconds: 5);
 }
 
 class _TestToday extends TodayNotifier {

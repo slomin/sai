@@ -73,9 +73,12 @@ its upper-right ink corner into one large green field. Their curated
 `swift tool/app-icons.swift prepare` regenerates both macOS catalogs;
 `check` refuses stale sizes or Flutter's retired placeholder.
 
-Both clients of a flavor read and write the same archive. The terminal client
-follows the app's writes as they land (it polls the archive head every
-two seconds); the app picks up the terminal's when it opens.
+Both clients of a flavor read and write the same archive, and each follows
+the other's writes as they land: every two seconds a client reads the
+archive head and replays the log only when another process wrote to it
+(its own lines never make it replay). A task captured in the terminal is
+on the app's board, and in the assistant's next request, within that
+poll — no restart, no refresh.
 
 In the terminal client, the top line captures (Enter saves, `@today`,
 `!2026-09-01`), `↑`/`↓` move the cursor over the tasks below, `^D`

@@ -322,6 +322,68 @@ void main() {
     expect(store.projection.tasks.values.single.title, 'from the app');
   });
 
+  group('hasForeignLines (#118)', () {
+    EventDraft chatLine() => EventDraft(
+      type: EventTypes.chatMessage,
+      actor: Actor.user,
+      source: 'sai/tui',
+      payload: {'text': 'hi'},
+    );
+
+    test('a fresh store, and one after its own commands, has none', () async {
+      expect(await store.hasForeignLines(), isFalse);
+      await store.createTask(title: 'mine');
+      await store.completeTask(store.projection.tasks.keys.single);
+      expect(await store.hasForeignLines(), isFalse);
+    });
+
+    test('lines this process writes past the store are not news', () async {
+      await archive.append(chatLine());
+      await archive.append(chatLine());
+      expect(await store.hasForeignLines(), isFalse);
+      expect((await archive.head()).count, 2);
+    });
+
+    test('another writer\'s line is, until the next reload', () async {
+      final other = await Archive.open(tmp, clock: clock);
+      final otherStore = await TaskStore.open(other, source: 'sai/app');
+      await otherStore.createTask(title: 'from the app');
+      otherStore.dispose();
+      await other.close();
+      expect(await store.hasForeignLines(), isTrue);
+      await store.reload();
+      expect(await store.hasForeignLines(), isFalse);
+      expect(store.projection.tasks.values.single.title, 'from the app');
+    });
+
+    test('a foreign line among own ones still counts', () async {
+      await store.createTask(title: 'mine');
+      final other = await Archive.open(tmp, clock: clock);
+      await other.append(chatLine());
+      await other.close();
+      await archive.append(chatLine());
+      await store.createTask(title: 'mine too');
+      expect(await store.hasForeignLines(), isTrue);
+      await store.reload();
+      expect(await store.hasForeignLines(), isFalse);
+      expect(store.projection.tasks, hasLength(2));
+    });
+
+    test('a store opened over a log with own lines starts clean', () async {
+      await archive.append(chatLine());
+      final second = await TaskStore.open(archive, source: 'sai/tui');
+      expect(await second.hasForeignLines(), isFalse);
+      await archive.append(chatLine());
+      expect(await second.hasForeignLines(), isFalse);
+      second.dispose();
+    });
+
+    test('a disposed store refuses', () async {
+      store.dispose();
+      await expectLater(store.hasForeignLines(), throwsA(isA<StateError>()));
+    });
+  });
+
   test('a command after dispose throws and appends nothing', () async {
     store.dispose();
     await expectLater(store.createTask(title: 'x'), throwsA(isA<StateError>()));

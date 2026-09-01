@@ -35,6 +35,7 @@ import 'settings/settings.dart';
 import 'settings/store.dart';
 import 'settings/workspace.dart';
 import 'tasks/date.dart';
+import 'tasks/follower.dart';
 import 'tasks/lists.dart';
 import 'tasks/model.dart';
 import 'tasks/navigation.dart';
@@ -260,6 +261,21 @@ final connectionProvider = NotifierProvider<Connection, ConnectionStatus>(
 /// tests override it: a periodic timer would outlive the test.
 final connectionProbeEveryProvider = Provider<Duration?>(
   (ref) => Connection.probeEvery,
+);
+
+/// Keeps this process's projection in step with another sai process
+/// writing to the same archive (#118): every [ArchiveFollower.pollEvery]
+/// it asks the store whether the log holds lines this process did not
+/// write ([TaskStore.hasForeignLines]) and replays only then. Nothing
+/// rebuilds on it but the reload notice, so each client's shell watches
+/// it to keep it alive for the process's life.
+final archiveFollowerProvider =
+    NotifierProvider<ArchiveFollower, FollowerState>(ArchiveFollower.new);
+
+/// How often the follower looks — null never looks on a timer. Test
+/// harnesses override it and drive [ArchiveFollower.tick] by hand.
+final archivePollEveryProvider = Provider<Duration?>(
+  (ref) => ArchiveFollower.pollEvery,
 );
 
 final selectedTaskProvider = NotifierProvider<SelectedTask, TaskId?>(
@@ -1465,28 +1481,27 @@ class ArchiveVerify extends Notifier<VerifyState> {
       final report = await archive.verify();
       state = Verified(report.count);
     } on Object catch (error) {
-      state = VerifyFailed(_describe(error));
+      state = VerifyFailed(_describeArchiveError(error));
     } finally {
       _running = false;
     }
   }
-
-  /// The reason and the file's name — never its full path, never a
-  /// line's content.
-  static String _describe(Object error) => switch (error) {
-    ArchiveCorruptionError(:final reason, :final file, :final line) =>
-      file == null
-          ? reason
-          : '$reason (${_basename(file)}${line == null ? '' : ':$line'})',
-    TornTailError(:final file, :final offset) =>
-      'a torn tail at byte $offset of ${_basename(file)}; truncate the '
-          'file to that offset and verify again',
-    _ => '$error',
-  };
-
-  static String _basename(String path) =>
-      path.substring(path.lastIndexOf('/') + 1);
 }
+
+/// The reason and the file's name — never its full path, never a
+/// line's content. What the verify (#40) and the follower (#118) show.
+String _describeArchiveError(Object error) => switch (error) {
+  ArchiveCorruptionError(:final reason, :final file, :final line) =>
+    file == null
+        ? reason
+        : '$reason (${_basename(file)}${line == null ? '' : ':$line'})',
+  TornTailError(:final file, :final offset) =>
+    'a torn tail at byte $offset of ${_basename(file)}; truncate the '
+        'file to that offset and verify again',
+  _ => '$error',
+};
+
+String _basename(String path) => path.substring(path.lastIndexOf('/') + 1);
 
 class Connection extends Notifier<ConnectionStatus> {
   /// How often a probeable provider is asked again.
@@ -1623,6 +1638,96 @@ class Connection extends Notifier<ConnectionStatus> {
       ),
       EndpointHealth.unknown => const ConnectionStatus.ready('ready'),
     };
+  }
+}
+
+/// Owns the archive poll (#118). One check at a time; a check reads one
+/// small file and reloads the store only when another process appended —
+/// this process's own lines, whatever wrote them, are not news. The timer
+/// belongs to the build that armed it and a late answer to a build that
+/// is gone writes nothing, the way [Connection] scopes its probes.
+class ArchiveFollower extends Notifier<FollowerState> {
+  /// How often the head is checked when nothing overrides
+  /// [archivePollEveryProvider]. A read of one tiny file.
+  static const pollEvery = Duration(seconds: 2);
+
+  Timer? _timer;
+  Future<void>? _check;
+  var _epoch = 0;
+
+  /// The head count the last failure was seen at, when it could be
+  /// read: the log is append-only, so the same lines would fail the same
+  /// way — no retry until the log moves. A failure with no readable head
+  /// (`HEAD` itself damaged) is retried each tick; that read is tiny and
+  /// a restored file is how it recovers.
+  int? _failedAt;
+
+  @override
+  FollowerState build() {
+    _timer?.cancel();
+    _timer = null;
+    final epoch = ++_epoch;
+    ref.onDispose(() {
+      _timer?.cancel();
+      _timer = null;
+      _epoch++;
+    });
+    if (ref.watch(archivePollEveryProvider) case final every?) {
+      _timer = Timer.periodic(every, (_) => _tick(epoch));
+    }
+    return const FollowerState();
+  }
+
+  /// Looks now. A check already running is joined, not doubled.
+  Future<void> tick() => _tick(_epoch);
+
+  Future<void> _tick(int epoch) =>
+      _check ??= _run(epoch).whenComplete(() => _check = null);
+
+  Future<void> _run(int epoch) async {
+    if (!ref.mounted) return;
+    // Nothing to follow until the store is open; a store that failed to
+    // open is the shell's error, not this notice.
+    if (ref.read(tasksProvider).value == null) return;
+    final tasks = ref.read(tasksProvider.notifier);
+    final archive = await ref.read(archiveProvider.future);
+    if (epoch != _epoch || !ref.mounted) return;
+    try {
+      final store = tasks.store;
+      if (_failedAt != null && (await archive.head()).count == _failedAt) {
+        return;
+      }
+      if (!await store.hasForeignLines()) {
+        if (epoch == _epoch && ref.mounted && state.failure != null) {
+          state = FollowerState(reloads: state.reloads);
+        }
+        return;
+      }
+      await tasks.reload();
+      if (epoch != _epoch || !ref.mounted) return;
+      _failedAt = null;
+      state = FollowerState(reloads: state.reloads + 1);
+    } on StateError {
+      // The store changed under the check — a rebuild, a disposal: the
+      // next tick finds the new one. Nothing to show.
+      return;
+    } on Object catch (error) {
+      if (epoch != _epoch || !ref.mounted) return;
+      _failedAt = await _headCountOrNull(archive);
+      if (epoch != _epoch || !ref.mounted) return;
+      state = FollowerState(
+        reloads: state.reloads,
+        failure: _describeArchiveError(error),
+      );
+    }
+  }
+
+  static Future<int?> _headCountOrNull(Archive archive) async {
+    try {
+      return (await archive.head()).count;
+    } on Object {
+      return null;
+    }
   }
 }
 

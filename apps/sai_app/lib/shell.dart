@@ -30,6 +30,12 @@ class SaiShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final text = context.saiText;
+    // The log is shared with the terminal client (one store per process,
+    // ADR 0004 amendment); the core follower (#118) replays it when
+    // another process wrote. Listening here brings it up with the shell
+    // and keeps it alive for the app's life; the top bar shows a check
+    // that failed.
+    ref.listen(archiveFollowerProvider, (_, _) {});
     return Scaffold(
       body: switch (ref.watch(tasksProvider)) {
         AsyncData(:final value) => _Workspace(value),

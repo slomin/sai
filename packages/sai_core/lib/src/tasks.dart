@@ -7,6 +7,7 @@ export 'tasks/capture.dart';
 export 'tasks/date.dart';
 export 'tasks/events.dart';
 export 'tasks/find.dart';
+export 'tasks/follower.dart';
 export 'tasks/lists.dart';
 export 'tasks/model.dart';
 export 'tasks/navigation.dart';
