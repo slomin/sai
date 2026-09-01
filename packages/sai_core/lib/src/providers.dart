@@ -21,8 +21,12 @@ import 'llm/builtins.dart';
 import 'llm/factory.dart';
 import 'llm/codex_app_server/config.dart';
 import 'llm/codex_app_server/runtime.dart';
+import 'llm/codex_app_server/protocol.dart';
 import 'llm/codex_app_server/sidecar.dart';
+import 'llm/codex_app_server/state.dart';
+import 'llm/codex_app_server/text.dart';
 import 'llm/openai/openai.dart';
+import 'llm/openai/provider.dart';
 import 'llm/openai_compatible/policy.dart';
 import 'llm/openai_compatible/provider.dart';
 import 'llm/openrouter.dart';
@@ -848,6 +852,289 @@ class OpenRouterCatalogueNotifier extends Notifier<OpenRouterCatalogue> {
       models: answer.models ?? kept,
       failure: answer.failure,
     );
+  }
+}
+
+/// The `openai` model list (#26): the ids the stored key can reach,
+/// read once the block shows with a key and on its own Refresh — never on
+/// the connection watcher's timer — kept for the session, written
+/// nowhere. Guidance, not a gate: the list says nothing about which ids
+/// take the Responses API or an effort; a typed id stands whether or not
+/// it is listed. Forgotten when a key is stored or removed.
+final openAiCatalogueProvider =
+    NotifierProvider<OpenAiCatalogueNotifier, OpenAiCatalogue>(
+      OpenAiCatalogueNotifier.new,
+    );
+
+class OpenAiCatalogueNotifier extends Notifier<OpenAiCatalogue> {
+  Future<void>? _reading;
+  var _epoch = 0;
+
+  @override
+  OpenAiCatalogue build() {
+    ref.listen(credentialsProvider, (_, _) => forget());
+    return const OpenAiCatalogue();
+  }
+
+  Future<void> get done => _reading ?? Future.value();
+
+  /// The session's first reading through the `openai` provider [id]
+  /// names; nothing once one was attempted — Refresh is the retry.
+  Future<void> load(String id) => state.attempted ? done : _read(id);
+
+  /// A new reading; a call while one runs joins it.
+  Future<void> refresh(String id) => _reading ?? _read(id);
+
+  void forget() {
+    if (!state.attempted) return;
+    _epoch++;
+    _reading = null;
+    state = const OpenAiCatalogue();
+  }
+
+  Future<void> _read(String id) {
+    final provider = ref.read(llmRegistryProvider)[id];
+    if (provider is! OpenAiResponsesProvider) return Future.value();
+    final kept = state.models;
+    state = OpenAiCatalogue(models: kept, loading: true);
+    late final Future<void> mine;
+    mine = _fetch(provider, kept, _epoch).whenComplete(() {
+      if (identical(_reading, mine)) _reading = null;
+    });
+    return _reading = mine;
+  }
+
+  Future<void> _fetch(
+    OpenAiResponsesProvider provider,
+    List<String>? kept,
+    int epoch,
+  ) async {
+    OpenAiCatalogueAnswer answer;
+    try {
+      answer = await fetchOpenAiCatalogue(provider);
+    } on Object catch (error) {
+      answer = (
+        models: null,
+        failure: LlmFailure(
+          LlmFailureKind.internal,
+          TransportText.threw(error),
+          endpoint: provider.origin,
+        ),
+      );
+    }
+    if (!ref.mounted || epoch != _epoch) return;
+    if (answer.failure != null && provider.isClosed) {
+      state = OpenAiCatalogue(models: kept);
+      return;
+    }
+    state = OpenAiCatalogue(
+      models: answer.models ?? kept,
+      failure: answer.failure,
+    );
+  }
+}
+
+/// The ChatGPT subscription's live state (#26): the account, the model
+/// list with each model's efforts, the plan's limits and the sign-in
+/// under way — one state for every entry of the kind, since they share
+/// the one runtime and the one login. Read on demand and on Refresh;
+/// concurrent reads join the one under way; the runtime's own
+/// notifications (a login finished, the account changed, the limits
+/// moved) update it as they land. Nothing here is persisted: the email
+/// and the plan word are shown and forgotten.
+final chatGptProvider = NotifierProvider<ChatGptNotifier, ChatGptState>(
+  ChatGptNotifier.new,
+);
+
+class ChatGptNotifier extends Notifier<ChatGptState> {
+  Future<void>? _reading;
+  var _epoch = 0;
+  final _subscriptions = <StreamSubscription<Object?>>[];
+
+  @override
+  ChatGptState build() {
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+    final runtime = ref.watch(appServerRuntimeProvider);
+    if (runtime != null) {
+      _subscriptions.add(
+        runtime.accountUpdates.listen((_) {
+          // Whoever is signed in may have changed: re-read, and drop the
+          // list — it is the account's.
+          if (!ref.mounted) return;
+          _epoch++;
+          _reading = null;
+          state = state.copyWith(models: () => null, limits: () => null);
+          unawaited(_read());
+        }),
+      );
+      _subscriptions.add(
+        runtime.loginCompleted.listen((event) {
+          if (!ref.mounted) return;
+          final login = state.login;
+          // A completion for a cancelled or replaced attempt is not this
+          // one's.
+          if (event.loginId != null &&
+              login.loginId != null &&
+              event.loginId != login.loginId) {
+            return;
+          }
+          if (!login.inProgress) return;
+          state = state.copyWith(
+            login: login.as(
+              event.success
+                  ? ChatGptLoginPhase.completing
+                  : ChatGptLoginPhase.failed,
+            ),
+          );
+          if (event.success) {
+            unawaited(
+              _read().then((_) {
+                if (ref.mounted &&
+                    state.login.phase == ChatGptLoginPhase.completing) {
+                  state = state.copyWith(login: ChatGptLogin.idle);
+                }
+              }),
+            );
+          }
+        }),
+      );
+      _subscriptions.add(
+        runtime.rateLimitUpdates.listen((limits) {
+          if (ref.mounted) state = state.copyWith(limits: () => limits);
+        }),
+      );
+      ref.onDispose(() {
+        for (final sub in _subscriptions) {
+          sub.cancel();
+        }
+      });
+    }
+    return const ChatGptState();
+  }
+
+  Future<void> get done => _reading ?? Future.value();
+
+  /// The session's first reading; nothing once one was attempted.
+  Future<void> load() => state.attempted ? done : _read();
+
+  /// A new reading; a call while one runs joins it.
+  Future<void> refresh() => _reading ?? _read();
+
+  /// Drops what was read, so the next [load] reads again.
+  void forget() {
+    _epoch++;
+    _reading = null;
+    state = ChatGptState(login: state.login);
+  }
+
+  Future<void> _read() {
+    final runtime = ref.read(appServerRuntimeProvider);
+    if (runtime == null) {
+      state = state.copyWith(
+        loading: false,
+        failure: () =>
+            const LlmFailure(LlmFailureKind.credential, CodexText.devRefused),
+      );
+      return Future.value();
+    }
+    state = state.copyWith(loading: true);
+    late final Future<void> mine;
+    mine = _fetch(runtime, _epoch).whenComplete(() {
+      if (identical(_reading, mine)) _reading = null;
+    });
+    return _reading = mine;
+  }
+
+  Future<void> _fetch(AppServerRuntime runtime, int epoch) async {
+    CodexAccount account;
+    List<CodexModel>? models;
+    CodexRateLimits? limits;
+    LlmFailure? failure;
+    try {
+      account = await runtime.account();
+      if (account.isChatGpt) {
+        models = await runtime.models();
+        try {
+          limits = await runtime.rateLimits();
+        } on CodexException {
+          // Limits are a courtesy; the list and the account stand.
+        }
+      }
+    } on CodexException catch (e) {
+      account = const CodexAccount(CodexAccountType.none);
+      failure = LlmFailure(
+        e.credential ? LlmFailureKind.credential : LlmFailureKind.unreachable,
+        e.text,
+      );
+    }
+    if (!ref.mounted || epoch != _epoch) return;
+    state = state.copyWith(
+      account: () => failure == null ? account : state.account,
+      models: () => models ?? (failure == null ? null : state.models),
+      limits: () => limits ?? (failure == null ? null : state.limits),
+      loading: false,
+      failure: () => failure,
+    );
+  }
+
+  /// Starts a sign-in: the browser flow (the URL comes back for the
+  /// client to open) or the device code (the URL and the code come back
+  /// to show). One at a time.
+  Future<ChatGptLogin> signIn({required bool deviceCode}) async {
+    if (state.login.inProgress) {
+      throw const CodexException(CodexText.loginBusy);
+    }
+    final runtime = ref.read(appServerRuntimeProvider);
+    if (runtime == null) {
+      throw const CodexException(CodexText.devRefused, credential: true);
+    }
+    final start = await runtime.startLogin(deviceCode: deviceCode);
+    if (!ref.mounted) return ChatGptLogin.idle;
+    final login = ChatGptLogin(
+      start.isDeviceCode
+          ? ChatGptLoginPhase.deviceCode
+          : ChatGptLoginPhase.browser,
+      loginId: start.loginId,
+      authUrl: start.authUrl,
+      verificationUrl: start.verificationUrl,
+      userCode: start.userCode,
+    );
+    state = state.copyWith(login: login);
+    return login;
+  }
+
+  /// Cancels the sign-in under way, if any.
+  Future<void> cancelSignIn() async {
+    final login = state.login;
+    if (!login.inProgress) return;
+    state = state.copyWith(login: login.as(ChatGptLoginPhase.cancelled));
+    final runtime = ref.read(appServerRuntimeProvider);
+    final id = login.loginId;
+    if (runtime != null && id != null) await runtime.cancelLogin(id);
+  }
+
+  /// Clears a finished, failed or cancelled attempt from view.
+  void dismissLogin() {
+    if (state.login.inProgress) return;
+    state = state.copyWith(login: ChatGptLogin.idle);
+  }
+
+  /// Signs out through the runtime and re-reads: the list and the limits
+  /// go with the account.
+  Future<void> signOut() async {
+    final runtime = ref.read(appServerRuntimeProvider);
+    if (runtime == null) {
+      throw const CodexException(CodexText.devRefused, credential: true);
+    }
+    await runtime.logout();
+    if (!ref.mounted) return;
+    _epoch++;
+    _reading = null;
+    state = ChatGptState();
+    await _read();
   }
 }
 

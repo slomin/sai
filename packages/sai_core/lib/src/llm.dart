@@ -16,6 +16,7 @@ export 'llm/codex_app_server/protocol.dart';
 export 'llm/codex_app_server/provider.dart';
 export 'llm/codex_app_server/runtime.dart';
 export 'llm/codex_app_server/sidecar.dart';
+export 'llm/codex_app_server/state.dart';
 export 'llm/codex_app_server/text.dart';
 export 'llm/connection.dart';
 export 'llm/effort.dart';

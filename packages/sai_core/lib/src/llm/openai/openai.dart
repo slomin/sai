@@ -115,3 +115,52 @@ Future<OpenAiCatalogueAnswer> fetchOpenAiCatalogue(
   }
   return (models: ids, failure: null);
 }
+
+/// What the session knows of the `openai` model list (#26): read once a
+/// key is stored and on Refresh, kept for the session, written nowhere.
+final class OpenAiCatalogue {
+  const OpenAiCatalogue({this.models, this.loading = false, this.failure});
+
+  /// The sorted ids of the last successful reading, or null before one.
+  final List<String>? models;
+
+  /// Whether a reading is under way.
+  final bool loading;
+
+  /// How the last reading failed; null after a success.
+  final LlmFailure? failure;
+
+  /// Whether the session has tried at all, however it went.
+  bool get attempted => models != null || failure != null || loading;
+
+  @override
+  String toString() =>
+      'OpenAiCatalogue(${models?.length ?? 'no'} models'
+      '${loading ? ', loading' : ''}'
+      '${failure == null ? '' : ', ${failure!.message}'})';
+}
+
+/// The suggestions for [query] out of [models]: ids that start with the
+/// lowercased query first, then the ones that contain it, [limit] at
+/// most — the same ranking the OpenRouter picker uses. Nothing for
+/// nothing typed.
+List<String> openAiCatalogueMatches(
+  List<String> models,
+  String query, {
+  int limit = 50,
+}) {
+  final needle = query.trim().toLowerCase();
+  if (needle.isEmpty) return const [];
+  final starts = <String>[];
+  final within = <String>[];
+  for (final id in models) {
+    final lower = id.toLowerCase();
+    if (lower.startsWith(needle)) {
+      starts.add(id);
+      if (starts.length >= limit) break;
+    } else if (lower.contains(needle)) {
+      within.add(id);
+    }
+  }
+  return [...starts, ...within].take(limit).toList();
+}
