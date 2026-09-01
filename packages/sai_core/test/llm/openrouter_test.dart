@@ -158,7 +158,22 @@ void main() {
     expect((await refuse(402)).message, TransportText.noCredit);
     expect((await refuse(401)).message, TransportText.rejectedKey);
     expect((await refuse(429)).message, TransportText.answered(429));
-    for (final f in [TransportText.noRoute, TransportText.noCredit]) {
+    // Under exact routing there is no pin: a 404 is the privacy filters
+    // leaving no endpoint for that model (#115).
+    stub.routes['POST /v1/chat/completions'] = (req) => StubServer.json(req, {
+      'error': {'code': 404, 'message': 'no zdr endpoint $canary'},
+    }, status: 404);
+    final exact = await make(
+      routing: OpenRouterRouting.exact,
+      model: 'qwen/qwen3-8b',
+    ).start(ask('hi')).done;
+    expect(exact.failure!.message, TransportText.noPrivateEndpoint);
+    expect(exact.failure!.toString(), isNot(contains(canary)));
+    for (final f in [
+      TransportText.noRoute,
+      TransportText.noPrivateEndpoint,
+      TransportText.noCredit,
+    ]) {
       expect(TransportText.all, contains(f));
     }
   });

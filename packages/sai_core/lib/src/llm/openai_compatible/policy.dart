@@ -37,6 +37,9 @@ abstract final class TransportText {
   static const errorPayload = 'the endpoint answered with an error';
   static const tooLarge = 'the answer was too large';
   static const noRoute = 'no endpoint matched the pinned route';
+  static const noPrivateEndpoint =
+      'no endpoint for this model meets the privacy filters '
+      '(zero retention, no data collection, every parameter)';
   static const noCredit = 'the account has no credit left';
 
   /// The one non-constant: an unexpected exception's type, never its text.
@@ -67,6 +70,7 @@ abstract final class TransportText {
     errorPayload,
     tooLarge,
     noRoute,
+    noPrivateEndpoint,
     noCredit,
   };
 }

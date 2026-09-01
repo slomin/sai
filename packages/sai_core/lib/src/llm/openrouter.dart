@@ -198,9 +198,16 @@ final class OpenRouterDialect implements OpenAiDialect {
     if (reasoningOff) 'reasoning': const {'enabled': false},
   };
 
+  /// A 404 is OpenRouter saying no endpoint passed the `provider` filters:
+  /// under the preset that is the pin, under exact routing it is the
+  /// privacy filters alone — a model with no zero-retention endpoint can
+  /// never answer, and the words say so (#115).
   @override
   String? refusal(int status) => switch (status) {
-    404 => TransportText.noRoute,
+    404 =>
+      routing == OpenRouterRouting.deepinfraFp8
+          ? TransportText.noRoute
+          : TransportText.noPrivateEndpoint,
     402 => TransportText.noCredit,
     _ => null,
   };

@@ -62,8 +62,11 @@ lacking `stream_options`, which `require_parameters` would refuse.
   with `deepseek/deepseek-v4-flash-0731` and nothing else; `exact`
   sends `{require_parameters: true, data_collection: "deny", zdr: true}`
   with one model id. A route that is not there is a 404 with fixed
-  text, never a retry without the pin. The same model chosen by hand is
-  `exact`, because the person did not say "pinned". Every id under the
+  text, never a retry without the pin — and under exact routing a 404 is
+  the privacy filters alone: a model with no zero-retention endpoint
+  (`qwen/qwen3-8b` at the time of writing) is refused on every call, in
+  words that say so (#115). The same model chosen by hand is `exact`,
+  because the person did not say "pinned". Every id under the
   `openrouter/` owner (`auto`, `auto-beta`, `free`, …) is a router,
   `~latest` is an alias and `:nitro` / `:floor` / `:online` are
   shortcuts — all refused at entry, judged on the lowercased id: each

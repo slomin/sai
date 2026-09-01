@@ -333,7 +333,8 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                 ? '$model — OpenRouter picks among that '
                       "model's endpoints, never another model; the same "
                       'privacy filters apply.'
-                : 'One owner/name id from openrouter.ai/models; the same '
+                : 'One owner/name id from openrouter.ai/models with a '
+                      'zero-retention endpoint (the ZDR list); the same '
                       'privacy filters apply, and never another model.',
           ),
         ),
