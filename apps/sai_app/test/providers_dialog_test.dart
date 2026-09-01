@@ -508,6 +508,14 @@ void main() {
         isNull,
         reason: 'nothing typed yet',
       );
+      expect(
+        find.textContaining(
+          'One owner/name id from openrouter.ai/models with an endpoint that '
+          'meets the privacy filters',
+        ),
+        findsOneWidget,
+        reason: screen(),
+      );
       // The probe is OpenRouter's key check, over the fixed transport.
       await until(tester, () => find.text('asking…').evaluate().isEmpty);
       expect(
@@ -591,6 +599,15 @@ void main() {
       expect(built.privacy, LlmPrivacy.cloud);
       expect(built.origin, stub.origin, reason: 'the fixed origin, stubbed');
       expect(openRouterRoutingOf(built), OpenRouterRouting.exact);
+      // The requirement travels with the selected state (#115).
+      expect(
+        find.textContaining(
+          'qwen/qwen3-8b — needs an endpoint that meets the privacy filters, '
+          'zero retention above all',
+        ),
+        findsOneWidget,
+        reason: screen(),
+      );
 
       // Back to the recommended preset in one tap.
       await tapVisible(tester, find.byKey(openRouterPresetKey));
@@ -673,6 +690,24 @@ void main() {
       expect(find.text('A key is stored in the Keychain.'), findsOneWidget);
       expect(
         find.textContaining('revoke the key at openrouter.ai'),
+        findsOneWidget,
+      );
+      // An entry with no model at all shows the requirement, never "null".
+      container
+          .read(settingsProvider.notifier)
+          .upsertProvider(
+            ProviderConfig(
+              id: 'openrouter',
+              kind: 'openrouter',
+              credential: 'provider:openrouter',
+              routing: 'exact',
+            ),
+          );
+      await tester.pump();
+      expect(find.text('missing its default_model'), findsOneWidget);
+      expect(find.textContaining('null'), findsNothing, reason: screen());
+      expect(
+        find.textContaining('One owner/name id from openrouter.ai/models'),
         findsOneWidget,
       );
       // One tap on the preset rewrites the whole shape.

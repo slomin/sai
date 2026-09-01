@@ -143,11 +143,15 @@ void main() {
   );
 
   test('a missing route, an empty account and a bad key read fixed', () async {
-    Future<LlmFailure> refuse(int status) async {
+    Future<LlmFailure> refuse(
+      int status, {
+      OpenAiCompatibleProvider? via,
+    }) async {
       stub.routes['POST /v1/chat/completions'] = (req) => StubServer.json(req, {
         'error': {'code': status, 'message': 'body $canary'},
       }, status: status);
-      final result = await make().start(ask('hi')).done;
+      final result = await (via ?? make()).start(ask('hi')).done;
+      expect(result.failure!.kind, LlmFailureKind.rejected);
       expect(result.failure!.toString(), isNot(contains(canary)));
       expect(result.failure!.endpoint, stub.origin);
       expect(result.failure!.status, status);
@@ -158,7 +162,28 @@ void main() {
     expect((await refuse(402)).message, TransportText.noCredit);
     expect((await refuse(401)).message, TransportText.rejectedKey);
     expect((await refuse(429)).message, TransportText.answered(429));
-    for (final f in [TransportText.noRoute, TransportText.noCredit]) {
+    // Under exact routing there is no pin: a 404 is the model missing or
+    // the privacy filters leaving no endpoint for it (#115).
+    expect(
+      (await refuse(
+        404,
+        via: make(routing: OpenRouterRouting.exact, model: 'qwen/qwen3-8b'),
+      )).message,
+      TransportText.noExactEndpoint,
+    );
+    expect(
+      OpenRouterRouting.exact.noEndpointText,
+      TransportText.noExactEndpoint,
+    );
+    expect(
+      OpenRouterRouting.deepinfraFp8.noEndpointText,
+      TransportText.noRoute,
+    );
+    for (final f in [
+      TransportText.noRoute,
+      TransportText.noExactEndpoint,
+      TransportText.noCredit,
+    ]) {
       expect(TransportText.all, contains(f));
     }
   });

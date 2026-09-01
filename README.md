@@ -135,7 +135,9 @@ files the key; on its recommended preset every request pins
 `deepseek/deepseek-v4-flash-0731` to DeepInfra fp8 with no fallback,
 denies data collection and requires zero retention, and `provider add
 openrouter --model <owner/name>` chooses one exact model instead;
-`--routing recommended` returns to the preset; `openrouter/*` routers,
+`--routing recommended` returns to the preset (an exact model needs an
+endpoint that meets sai's privacy filters — zero retention above all;
+openrouter.ai lists them — or every call is refused); `openrouter/*` routers,
 `~latest` aliases and `:nitro`/`:floor`/`:online` are refused; removing
 the key in sai removes the Keychain item only, so revoke it at
 openrouter.ai too — use a dedicated key with a spending cap); a

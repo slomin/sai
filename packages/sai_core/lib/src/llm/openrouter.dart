@@ -79,6 +79,15 @@ enum OpenRouterRouting {
     deepinfraFp8 => 'pinned to DeepInfra fp8',
     exact => 'exact model',
   };
+
+  /// What a 404 means under this routing: the pin was not there, or —
+  /// with no pin — the model is not on OpenRouter or none of its endpoints
+  /// passes the privacy filters (#115). Exhaustive, like [wire] and
+  /// [label], so a new mode has to say which.
+  String get noEndpointText => switch (this) {
+    deepinfraFp8 => TransportText.noRoute,
+    exact => TransportText.noExactEndpoint,
+  };
 }
 
 /// One exact OpenRouter model id: `owner/name`, no router, no alias.
@@ -198,9 +207,12 @@ final class OpenRouterDialect implements OpenAiDialect {
     if (reasoningOff) 'reasoning': const {'enabled': false},
   };
 
+  /// A 404 is OpenRouter saying no endpoint was left after the `provider`
+  /// filters (or that the model is not there at all); the routing says
+  /// which words fit (#115).
   @override
   String? refusal(int status) => switch (status) {
-    404 => TransportText.noRoute,
+    404 => routing.noEndpointText,
     402 => TransportText.noCredit,
     _ => null,
   };

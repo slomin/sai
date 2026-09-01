@@ -62,8 +62,11 @@ lacking `stream_options`, which `require_parameters` would refuse.
   with `deepseek/deepseek-v4-flash-0731` and nothing else; `exact`
   sends `{require_parameters: true, data_collection: "deny", zdr: true}`
   with one model id. A route that is not there is a 404 with fixed
-  text, never a retry without the pin. The same model chosen by hand is
-  `exact`, because the person did not say "pinned". Every id under the
+  text, never a retry without the pin — and under exact routing a 404 is
+  the privacy filters alone: a model with no zero-retention endpoint
+  (`qwen/qwen3-8b` at the time of writing) is refused on every call, in
+  words that say so (#115). The same model chosen by hand is `exact`,
+  because the person did not say "pinned". Every id under the
   `openrouter/` owner (`auto`, `auto-beta`, `free`, …) is a router,
   `~latest` is an alias and `:nitro` / `:floor` / `:online` are
   shortcuts — all refused at entry, judged on the lowercased id: each
@@ -76,8 +79,9 @@ lacking `stream_options`, which `require_parameters` would refuse.
   `max_tokens` and `temperature`, the three the preset sends — checked
   on the same day; the human smoke runs with thinking off, the
   default, and so proves it live). Fixed attribution headers. Two chat
-  statuses get their own words: 404 (no endpoint matched) and 402 (no
-  credit); discovery keeps the common ones. The probe is `GET /key`:
+  statuses get their own words: 404 — worded by the routing: the pin
+  missed, or no endpoint answers for that model — and 402 (no credit);
+  discovery keeps the common ones. The probe is `GET /key`:
   zero tokens, says whether the key is good — and, from
   `limit_remaining`, whether a capped key has anything left — and
   reports no model list and no context window.

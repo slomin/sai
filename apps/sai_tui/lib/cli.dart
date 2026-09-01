@@ -49,7 +49,9 @@ immediate drops it into the Logbook at once.
 openrouter is built in: cloud, keyed, fixed to https://openrouter.ai,
 on its recommended preset (DeepSeek V4 Flash 0731 pinned to DeepInfra
 fp8, no fallback). provider add openrouter --model <owner/name> picks
-one exact model instead (routing exact); --routing recommended returns
+one exact model instead (routing exact) — it needs an endpoint that
+meets sai's privacy filters, zero retention above all (openrouter.ai
+lists them), or every call is refused; --routing recommended returns
 to the preset. It takes no --endpoint and no --privacy local (an entry
 changed to this kind drops the endpoint it had and turns cloud), and
 openrouter/* routers, ~latest aliases and :nitro/:floor/:online
@@ -336,7 +338,10 @@ Future<int> runCli(
           '${builtin != null ? ' (over the built-in)' : ''}',
         );
         if (OpenRouterRouting.parse(config.routing) case final r?) {
-          out.writeln('routing: ${r.label}');
+          out.writeln(
+            'routing: ${r.label}'
+            '${r == OpenRouterRouting.exact ? ' — needs an endpoint that meets the privacy filters, zero retention above all' : ''}',
+          );
         }
         if (hadKey && !key) {
           out.writeln(
