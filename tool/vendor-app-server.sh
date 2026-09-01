@@ -88,9 +88,11 @@ place() {
   app=$1 bundle=$2
   [ -d "$app/Contents/MacOS" ] || fail "$app is not an app bundle"
   [ -d "$bundle/bin" ] || fail "$bundle is not the terminal client's bundle"
-  [ -f "$cache/aarch64/codex-app-server" ] && [ -f "$cache/x86_64/codex-app-server" ] || fetch
-  # The pinned digests were checked at fetch time; the slices are checked
-  # to be what lipo expects before they are joined.
+  # Nothing extracted earlier is trusted: the archives are checked against
+  # the pin again (fetched when one is missing or differs) and re-extracted,
+  # so slices a cache holds from another pin are never placed. Then the
+  # slices are checked to be what lipo expects before they are joined.
+  fetch
   a=$(lipo -archs "$cache/aarch64/codex-app-server")
   x=$(lipo -archs "$cache/x86_64/codex-app-server")
   [ "$a" = arm64 ] || fail "the aarch64 slice is $a, not arm64"

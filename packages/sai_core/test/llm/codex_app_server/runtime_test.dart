@@ -6,6 +6,7 @@ import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
 
 import 'package:sai_core/process_testing.dart';
+import 'package:sai_core/src/process/posix.dart';
 
 void main() {
   late Directory tmp;
@@ -169,6 +170,42 @@ void main() {
     );
   });
 
+  test('the temp root and the scratch root are sai\'s alone: a symlink is '
+      'refused before any spawn, an open mode is closed', () async {
+    final data = Directory(p.join(tmp.path, 'data'))..createSync();
+    final elsewhere = Directory(p.join(tmp.path, 'elsewhere'))..createSync();
+    final link = Link(p.join(data.path, 'codex-tmp'))
+      ..createSync(elsewhere.path);
+    final error = await runtime.account().then<Object?>(
+      (_) => null,
+      onError: (Object e) => e,
+    );
+    expect((error as CodexException).text, CodexText.homeUnsafe);
+    expect(server.runner.spawns, isEmpty);
+    // Roots that already exist too open are restricted on every start.
+    link.deleteSync();
+    final root = Directory(p.join(data.path, 'codex-tmp'))..createSync();
+    final scratch = Directory(p.join(root.path, 'scratch'))..createSync();
+    posixChmod(root.path, 0x1ed);
+    posixChmod(scratch.path, 0x1ed);
+    await runtime.account();
+    expect(codexHomeMode(root), 0x1c0);
+    expect(codexHomeMode(scratch), 0x1c0);
+  });
+
+  test('a runtime whose initialize names no home is not used', () async {
+    server.reportHome = false;
+    final error = await runtime.account().then<Object?>(
+      (_) => null,
+      onError: (Object e) => e,
+    );
+    expect((error as CodexException).text, CodexText.wrongHome);
+    expect(
+      server.runner.processes.single.signals,
+      contains(ProcessSignal.sigterm),
+    );
+  });
+
   test('the child failing to initialize is a start failure', () async {
     server.runner.script = (p, line) {
       if (line['method'] == 'initialize') p.fail(line['id'], -32600, 'nope');
@@ -206,6 +243,36 @@ void main() {
         {'loginId': device.loginId},
       ]);
       expect(completed.single, (loginId: device.loginId, success: false));
+    });
+
+    test('a login under way keeps the child busy until it completes, is '
+        'cancelled, or the child goes', () async {
+      final browser = await runtime.startLogin(deviceCode: false);
+      expect(runtime.isBusy, isTrue);
+      await runtime.releaseIdle();
+      expect(runtime.isRunning, isTrue, reason: 'a login under way stays');
+      final process = server.runner.processes.single;
+      expect(process.signals, isEmpty);
+      process.notify('account/login/completed', {
+        'loginId': browser.loginId,
+        'success': true,
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(runtime.isBusy, isFalse);
+      // Cancelling releases it too.
+      final device = await runtime.startLogin(deviceCode: true);
+      expect(runtime.isBusy, isTrue);
+      await runtime.cancelLogin(device.loginId);
+      await Future<void>.delayed(Duration.zero);
+      expect(runtime.isBusy, isFalse);
+      // A child that goes away mid-login leaves nothing counted.
+      await runtime.startLogin(deviceCode: false);
+      expect(runtime.isBusy, isTrue);
+      process.exit(0);
+      while (runtime.isRunning) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(runtime.isBusy, isFalse);
     });
 
     test('login completion and account updates are relayed', () async {
@@ -657,6 +724,35 @@ void main() {
       expect((await other.account()).isChatGpt, isTrue);
       await other.close();
     });
+
+    test(
+      'close while starting waits for the start and ends its child',
+      () async {
+        final hold = Completer<void>();
+        server.holdInitialize = hold.future;
+        final starting = runtime.account();
+        while (server.runner.processes.isEmpty) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        final process = server.runner.processes.single;
+        final closing = runtime.close();
+        hold.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        process.exit(0);
+        final error = await starting.then<Object?>(
+          (_) => null,
+          onError: (Object e) => e,
+        );
+        expect((error as CodexException).text, CodexText.closed);
+        await closing;
+        expect(process.signals, contains(ProcessSignal.sigterm));
+        expect(runtime.isRunning, isFalse);
+        // The lock is free: another runtime on the same home starts.
+        final other = AppServerRuntime(launch());
+        expect((await other.account()).isChatGpt, isTrue);
+        await other.close();
+      },
+    );
 
     test('close terminates, then kills a child that lingers', () async {
       final quick = AppServerRuntime(launch(data: 'data3'));

@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../../process/lock.dart';
-import '../../process/posix.dart';
 import '../../process/runner.dart';
 import '../call.dart';
 import 'config.dart';
@@ -105,6 +104,16 @@ final class AppServerRuntime {
   var _closed = false;
   var _busy = 0;
 
+  /// Logins started and not yet completed or cancelled: each holds the
+  /// child busy, so `releaseIdle` cannot end it while a person is still
+  /// in the browser or typing a device code.
+  final _pendingLogins = <String>{};
+  final _loginBounds = <String, Timer>{};
+
+  /// How long a started login may hold the child before it is let go
+  /// unfinished — the runtime's own flow has expired by then.
+  static const loginBound = Duration(minutes: 15);
+
   final _accountUpdates = StreamController<void>.broadcast();
   final _loginCompleted =
       StreamController<({String? loginId, bool success})>.broadcast();
@@ -143,13 +152,18 @@ final class AppServerRuntime {
     if (!launch.sidecar.exists) {
       throw const CodexException(CodexText.sidecarMissing, credential: true);
     }
+    // The home, the temp root and the scratch root are the directories
+    // the profile opens read-write: each is checked to be sai's own —
+    // no symlink in its place, 0700 — on every start, not only the
+    // first.
     final Directory home;
+    final Directory scratchRoot;
     try {
       home = prepareCodexHome(launch.home);
-      if (!launch.tempRoot.existsSync()) {
-        launch.tempRoot.createSync(recursive: true);
-        posixChmod(launch.tempRoot.path, 0x1c0);
-      }
+      preparePrivateDir(launch.tempRoot);
+      scratchRoot = preparePrivateDir(
+        Directory(p.join(launch.tempRoot.path, 'scratch')),
+      );
     } on FileSystemException {
       throw const CodexException(CodexText.homeUnsafe);
     }
@@ -158,11 +172,6 @@ final class AppServerRuntime {
     );
     if (lock == null) {
       throw const CodexException(CodexText.inUse, credential: true);
-    }
-    final scratchRoot = Directory(p.join(launch.tempRoot.path, 'scratch'));
-    if (!scratchRoot.existsSync()) {
-      scratchRoot.createSync(recursive: true);
-      posixChmod(scratchRoot.path, 0x1c0);
     }
     final RunningProcess process;
     try {
@@ -211,19 +220,25 @@ final class AppServerRuntime {
           ],
         },
       });
-      // The server names the home it opened; anything but ours is a
-      // runtime that read another configuration, and is not used.
-      if (init is Map<String, Object?> && init['codexHome'] is String) {
-        final opened = Directory(init['codexHome'] as String);
-        if (_canonical(opened) != _canonical(home)) {
-          throw const CodexException(CodexText.wrongHome, credential: true);
-        }
+      // The server names the home it opened; anything but ours — or no
+      // name at all — is a runtime that may have read another
+      // configuration, and is not used.
+      final opened = init is Map<String, Object?> && init['codexHome'] is String
+          ? Directory(init['codexHome'] as String)
+          : null;
+      if (opened == null || _canonical(opened) != _canonical(home)) {
+        throw const CodexException(CodexText.wrongHome, credential: true);
       }
       rpc.notify('initialized', null);
     } on Object catch (error) {
       await _terminate(session);
       if (error is CodexException) rethrow;
       throw const CodexException(CodexText.startFailed);
+    }
+    if (_closed) {
+      // Closed while starting: the child that start produced ends here.
+      await _terminate(session);
+      throw const CodexException(CodexText.closed);
     }
     _session = session;
     return session;
@@ -242,10 +257,12 @@ final class AppServerRuntime {
       case 'account/updated':
         _accountUpdates.add(null);
       case 'account/login/completed':
+        final loginId = n.params['loginId'] is String
+            ? n.params['loginId'] as String
+            : null;
+        _releaseLogin(loginId);
         _loginCompleted.add((
-          loginId: n.params['loginId'] is String
-              ? n.params['loginId'] as String
-              : null,
+          loginId: loginId,
           success: n.params['success'] == true,
         ));
       case 'account/rateLimits/updated':
@@ -254,8 +271,31 @@ final class AppServerRuntime {
   }
 
   Future<void> _onSessionEnded(_Session session) async {
-    if (identical(_session, session)) _session = null;
+    if (identical(_session, session)) {
+      _session = null;
+      _releaseLogin(null);
+    }
     await session.lock.release();
+  }
+
+  /// A started login holds the child busy until `account/login/completed`
+  /// names it, it is cancelled, the child goes, or [loginBound] passes.
+  void _ownLogin(String loginId) {
+    _pendingLogins.add(loginId);
+    _loginBounds.remove(loginId)?.cancel();
+    _loginBounds[loginId] = Timer(loginBound, () => _releaseLogin(loginId));
+  }
+
+  /// Lets go of one pending login, or of all of them for null.
+  void _releaseLogin(String? loginId) {
+    final ids = loginId == null
+        ? _pendingLogins.toList()
+        : [if (_pendingLogins.contains(loginId)) loginId];
+    for (final id in ids) {
+      _pendingLogins.remove(id);
+      _loginBounds.remove(id)?.cancel();
+      _busy--;
+    }
   }
 
   /// `account/read`: who is signed in, a fresh answer each time.
@@ -267,19 +307,24 @@ final class AppServerRuntime {
   }
 
   /// `account/login/start`: the browser URL or the device code — public
-  /// values sai shows or opens; no token ever comes back this way.
+  /// values sai shows or opens; no token ever comes back this way. The
+  /// child stays busy — never ended by `releaseIdle` — until the login
+  /// completes, is cancelled, or [loginBound] passes.
   Future<CodexLoginStart> startLogin({required bool deviceCode}) async {
     final s = await _ensure();
     _busy++;
+    var owned = false;
     try {
       final answer = await _call(s, 'account/login/start', {
         'type': deviceCode ? 'chatgptDeviceCode' : 'chatgpt',
       }, timeout: const Duration(seconds: 30));
       final start = CodexLoginStart.fromJson(answer);
       if (start == null) throw const CodexException(CodexText.loginFailed);
+      _ownLogin(start.loginId);
+      owned = true;
       return start;
     } finally {
-      _busy--;
+      if (!owned) _busy--;
     }
   }
 
@@ -291,6 +336,8 @@ final class AppServerRuntime {
       await _call(s, 'account/login/cancel', {'loginId': loginId});
     } on CodexException {
       // A login that already finished cannot be cancelled; that is fine.
+    } finally {
+      _releaseLogin(loginId);
     }
   }
 
@@ -501,6 +548,16 @@ final class AppServerRuntime {
   /// nothing started again.
   Future<void> close() async {
     _closed = true;
+    // A start under way is joined, not raced: it sees the close and ends
+    // the child it produced, or fails on its own.
+    final starting = _starting;
+    if (starting != null) {
+      try {
+        await starting;
+      } on Object {
+        // Either way there is no live session to keep.
+      }
+    }
     final s = _session;
     if (s != null) await _terminate(s);
     await _accountUpdates.close();
@@ -509,7 +566,10 @@ final class AppServerRuntime {
   }
 
   Future<void> _terminate(_Session s) async {
-    if (identical(_session, s)) _session = null;
+    if (identical(_session, s)) {
+      _session = null;
+      _releaseLogin(null);
+    }
     await s.rpc.close();
     if (s.process.kill(ProcessSignal.sigterm)) {
       final exited = await Future.any([

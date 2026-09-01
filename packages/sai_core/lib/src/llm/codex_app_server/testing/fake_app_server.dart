@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../../process/testing/scripted_runner.dart';
 
 /// One model as the fake lists it.
@@ -53,6 +55,14 @@ final class FakeAppServer {
   /// What `initialize` reports as `codexHome`; null echoes the env.
   String? codexHome;
 
+  /// Whether `initialize` reports a `codexHome` at all; a runtime that
+  /// names none must not be used.
+  bool reportHome = true;
+
+  /// When set, `initialize` is answered only after this completes — a
+  /// start caught mid-way.
+  Future<void>? holdInitialize;
+
   /// The `account` of `account/read`; null is signed out.
   Map<String, Object?>? account;
   List<Map<String, Object?>> models;
@@ -92,12 +102,19 @@ final class FakeAppServer {
     if (method is! String) return;
     switch (method) {
       case 'initialize':
-        p.reply(id, {
+        final reply = {
           'userAgent': 'codex_app_server/0.152.0 fake',
-          'codexHome': codexHome ?? p.spawn.environment['CODEX_HOME'],
+          if (reportHome)
+            'codexHome': codexHome ?? p.spawn.environment['CODEX_HOME'],
           'platformFamily': 'unix',
           'platformOs': 'macos',
-        });
+        };
+        final hold = holdInitialize;
+        if (hold == null) {
+          p.reply(id, reply);
+        } else {
+          unawaited(hold.then((_) => p.reply(id, reply)));
+        }
       case 'initialized':
         break;
       case 'account/read':

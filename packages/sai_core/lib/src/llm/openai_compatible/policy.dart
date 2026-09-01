@@ -48,6 +48,7 @@ abstract final class TransportText {
       'Model default';
   static const noSuchModel = 'the model is not available to this key';
   static const toolCalled = 'the model tried to call a tool; sai sent none';
+  static const refused = 'the model declined to answer';
   static const notModels = 'the answer was not a list of models';
 
   /// The one non-constant: an unexpected exception's type, never its text.
@@ -84,6 +85,7 @@ abstract final class TransportText {
     effortRefused,
     noSuchModel,
     toolCalled,
+    refused,
     notModels,
   };
 }

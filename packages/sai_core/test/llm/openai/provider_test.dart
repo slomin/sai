@@ -376,6 +376,45 @@ void main() {
     expect(result.text, 'let me run ');
   });
 
+  test(
+    'a refusal streamed as content is a failure, its words not kept',
+    () async {
+      const refusal = 'I cannot help with that request.';
+      stub.routes['POST /v1/responses'] = (req) async {
+        final response = StubServer.sse(req);
+        emit(response, {
+          'type': 'response.output_item.added',
+          'output_index': 0,
+          'item': {'type': 'message', 'id': 'msg_1', 'role': 'assistant'},
+        });
+        emit(response, {
+          'type': 'response.content_part.added',
+          'item_id': 'msg_1',
+          'part': {'type': 'refusal', 'refusal': ''},
+        });
+        emit(response, {
+          'type': 'response.refusal.delta',
+          'item_id': 'msg_1',
+          'delta': refusal,
+        });
+        emit(response, {
+          'type': 'response.refusal.done',
+          'item_id': 'msg_1',
+          'refusal': refusal,
+        });
+        emit(response, completed());
+        await response.close();
+      };
+      final result = await make().start(ask('x')).done;
+      expect(result.finish, LlmFinish.failed);
+      expect(result.failure!.kind, LlmFailureKind.rejected);
+      expect(result.failure!.message, TransportText.refused);
+      expect(result.text, isEmpty);
+      expect(result.toString(), isNot(contains('cannot help')));
+      expect(stub.requests, hasLength(1), reason: 'nothing re-sent');
+    },
+  );
+
   test('a stream that ends without a terminal response ended early', () async {
     stub.routes['POST /v1/responses'] = (req) async {
       final response = StubServer.sse(req);

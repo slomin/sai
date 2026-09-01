@@ -7,7 +7,8 @@ import '../call.dart';
 /// says the same and is not relied on), never by position: text deltas,
 /// reasoning-summary deltas, one of three terminal events, an error, an
 /// output item sai did not ask for — and everything else, which is
-/// passive and skipped.
+/// passive and skipped. A refusal streamed as content is a failure, not
+/// an answer.
 enum ResponsesEventKind {
   /// `response.output_text.delta`: answer text.
   text,
@@ -31,6 +32,12 @@ enum ResponsesEventKind {
   /// `response.output_item.added` with an item that is not a message or
   /// reasoning — a tool call sai never asked for. Fail closed.
   unexpectedItem,
+
+  /// `response.refusal.delta`, `response.refusal.done`, or a
+  /// `response.content_part.added` whose part is a `refusal`: the model
+  /// declined to answer. The call fails; nothing of the refusal's words
+  /// is kept.
+  refused,
 
   /// A `response.created`, `response.in_progress`, `…done` marker or any
   /// type sai does not know: nothing to do.
@@ -99,6 +106,17 @@ final class ResponsesEvent {
       case 'response.failed':
       case 'error':
         return const ResponsesEvent(ResponsesEventKind.failed);
+      case 'response.refusal.delta':
+      case 'response.refusal.done':
+        return const ResponsesEvent(ResponsesEventKind.refused);
+      case 'response.content_part.added':
+        final part = json['part'];
+        final partType = part is Map<String, Object?> ? part['type'] : null;
+        return ResponsesEvent(
+          partType == 'refusal'
+              ? ResponsesEventKind.refused
+              : ResponsesEventKind.other,
+        );
       case 'response.output_item.added':
         final item = json['item'];
         final itemType = item is Map<String, Object?> ? item['type'] : null;

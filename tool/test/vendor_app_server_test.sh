@@ -152,12 +152,29 @@ grep -q "placed codex-app-server rust-v0.0.0-fixture" "$work/out" || fail "place
 [ ! -e "$tripwire" ] || fail "the placed binary was executed"
 pass "place joins a universal helper for the app, the host's slice for the client, with LICENSE, NOTICE and the tag under Resources and libexec"
 
-# --- a place with an unreadable slice refuses ----------------------------------
+# --- a cache extracted for another pin is not trusted: place re-verifies ---
 rm -rf "$work/cache"; mkdir -p "$work/cache/aarch64" "$work/cache/x86_64"
 cp "$work/fixtures/codex-app-server-arm64" "$work/cache/aarch64/codex-app-server"
 cp "$work/fixtures/codex-app-server-arm64" "$work/cache/x86_64/codex-app-server"
+: > "$work/fixtures/curl.log"
+pin
+vendor place "$work/app" "$work/tui/bundle" || { cat "$work/out"; fail "place over a stale cache failed"; }
+grep -q 'codex-app-server-x86_64-apple-darwin.tar.gz' "$work/fixtures/curl.log" || fail "a stale cache was placed without fetching the pinned archives"
+[ "$(lipo -archs "$work/cache/x86_64/codex-app-server")" = x86_64 ] || fail "the stale slice was kept"
+case "$(lipo -archs "$helper")" in
+  *x86_64*arm64*|*arm64*x86_64*) ;;
+  *) fail "the helper is not universal after a stale cache" ;;
+esac
+pass "place trusts no slice it did not verify this run: the pinned archives are fetched and re-extracted"
+
+# --- an archive whose slice is not the pinned architecture is refused -------
+cp "$work/fixtures/codex-app-server-x86_64-apple-darwin.tar.gz" "$work/x86_64.tar.gz.good"
+tar -C "$work/fixtures/aarch64" -czf "$work/fixtures/codex-app-server-x86_64-apple-darwin.tar.gz" codex-app-server-aarch64-apple-darwin
+rm -rf "$work/cache"; mkdir -p "$work/cache"
+pin
 if vendor place "$work/app" "$work/tui/bundle"; then fail "place joined two slices of one arch"; fi
 grep -q "the x86_64 slice is arm64, not x86_64" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
+mv "$work/x86_64.tar.gz.good" "$work/fixtures/codex-app-server-x86_64-apple-darwin.tar.gz"
 pass "place refuses a slice that is not the architecture the pin names"
 
 # --- prepare's rule: the dev flavor carries no sidecar ----------------------------

@@ -119,6 +119,42 @@ void main() {
     );
   });
 
+  test('a refusal — a delta, a done, or a refusal part — fails closed', () {
+    for (final event in [
+      {
+        'type': 'response.refusal.delta',
+        'item_id': 'msg_1',
+        'delta': 'I cannot help with',
+      },
+      {
+        'type': 'response.refusal.done',
+        'item_id': 'msg_1',
+        'refusal': 'I cannot help with that.',
+      },
+      {
+        'type': 'response.content_part.added',
+        'item_id': 'msg_1',
+        'part': {'type': 'refusal', 'refusal': ''},
+      },
+    ]) {
+      final parsed = ResponsesEvent.parse(jsonEncode(event));
+      expect(
+        parsed.kind,
+        ResponsesEventKind.refused,
+        reason: event['type'] as String,
+      );
+      expect(parsed.delta, isNull, reason: 'nothing of the refusal is kept');
+    }
+    // A text part is the ordinary shape and stays passive.
+    final text = ResponsesEvent.parse(
+      jsonEncode({
+        'type': 'response.content_part.added',
+        'part': {'type': 'output_text', 'text': ''},
+      }),
+    );
+    expect(text.kind, ResponsesEventKind.other);
+  });
+
   test('lifecycle markers and unknown types are passive', () {
     for (final type in [
       'response.created',

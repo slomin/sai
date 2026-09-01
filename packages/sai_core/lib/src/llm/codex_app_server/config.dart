@@ -156,6 +156,21 @@ Directory prepareCodexHome(Directory home) {
   return home;
 }
 
+/// A directory of sai's that the Seatbelt profile opens read-write for
+/// the child — its temp root, the scratch root — made 0700 on every
+/// start and refused when a symlink stands in its place or its parent's
+/// (#26): what the profile grants must resolve to sai's own directory.
+Directory preparePrivateDir(Directory dir) {
+  final parent = dir.parent;
+  if (!parent.existsSync()) parent.createSync(recursive: true);
+  if (_isLink(parent) || _isLink(dir)) {
+    throw FileSystemException('symlink in a private directory path', dir.path);
+  }
+  if (!dir.existsSync()) dir.createSync();
+  _restrict(dir, directory: true);
+  return dir;
+}
+
 bool _isLink(FileSystemEntity entity) =>
     FileSystemEntity.typeSync(entity.path, followLinks: false) ==
     FileSystemEntityType.link;

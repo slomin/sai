@@ -273,6 +273,12 @@ final class OpenAiResponsesProvider
                     TransportText.toolCalled,
                   ),
                 );
+              case ResponsesEventKind.refused:
+                // The model declined to answer. Its words about that are
+                // not kept; nothing is re-sent.
+                stop(
+                  _http.refuse(LlmFailureKind.rejected, TransportText.refused),
+                );
               case ResponsesEventKind.other:
                 break;
             }
