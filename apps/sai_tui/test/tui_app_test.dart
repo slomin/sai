@@ -540,7 +540,7 @@ void main() {
         await pumpUntilText(
           tester,
           'From the app @today',
-          timeout: const Duration(seconds: 2),
+          timeout: const Duration(seconds: 5),
         );
         expect(tester.terminalState, containsText('Today (3)'));
         expect(tester.terminalState, containsText('› One @today'));

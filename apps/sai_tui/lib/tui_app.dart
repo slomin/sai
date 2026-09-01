@@ -355,25 +355,25 @@ class _TuiAppState extends State<TuiApp> {
                     cursor: _laneCursor,
                     focused: _pane == _Pane.lane,
                   ),
-                // The log is shared with the app (one store per process,
-                // ADR 0004 amendment); the core follower (#118) replays
-                // it when another process wrote. Watching it here keeps
-                // it alive for the interactive client's life and shows
-                // a check that failed.
+                // One notice row. The log is shared with the app (one
+                // store per process, ADR 0004 amendment); the core
+                // follower (#118) replays it when another process wrote,
+                // and watching it here keeps it alive for the interactive
+                // client's life. A failed check shows in the row whenever
+                // no notice of the person's own action holds it.
                 RiverpodConsumer<FollowerState>(
                   provider: archiveFollowerProvider,
-                  builder: (context, follower) => switch (follower.failure) {
-                    final failure? => Text(
-                      'reload failed: $failure',
-                      style: TextStyle(color: Colors.yellow),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    null => const SizedBox.shrink(),
-                  },
+                  builder: (context, follower) =>
+                      switch (_notice.isNotEmpty ? _notice : follower.notice) {
+                        final notice? when notice.isNotEmpty => Text(
+                          notice,
+                          style: TextStyle(color: Colors.yellow),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        _ => const SizedBox.shrink(),
+                      },
                 ),
-                if (_notice.isNotEmpty)
-                  Text(_notice, style: TextStyle(color: Colors.yellow)),
                 // One row, whatever the provider is called: a wrapped
                 // status would take its extra rows from the list above.
                 // Watching the warmer also keeps it alive for the
