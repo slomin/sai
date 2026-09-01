@@ -851,6 +851,7 @@ void main() {
           'deepseek/deepseek-v4-flash-0731',
           'qwen/qwen3-235b-a22b',
         ];
+        const id = openRouterProviderId;
 
         setUp(() async {
           stub = await StubServer.start();
@@ -880,29 +881,29 @@ void main() {
             isFalse,
           );
           expect(stub.requests, isEmpty, reason: 'nothing asks on build');
-          await catalogue.load();
+          await catalogue.load(id);
           var state = container.read(openRouterCatalogueProvider);
           expect(state.models, listed);
           expect(state.failure, isNull);
           expect(state.loading, isFalse);
           expect(asked(), ['/v1/endpoints/zdr']);
           // Loaded is loaded: a second load asks nothing more.
-          await catalogue.load();
+          await catalogue.load(id);
           expect(asked(), ['/v1/endpoints/zdr']);
           // A refresh asks again; a failed one keeps the list it had.
           stub.routes['GET /v1/endpoints/zdr'] = (req) =>
               StubServer.json(req, {'error': 'down'}, status: 503);
-          await catalogue.refresh();
+          await catalogue.refresh(id);
           state = container.read(openRouterCatalogueProvider);
           expect(state.models, listed);
           expect(state.failure!.message, 'the endpoint answered 503');
           expect(asked(), ['/v1/endpoints/zdr', '/v1/endpoints/zdr']);
-          // Configuring the entry (a key, a model) keeps the session's list.
+          // Configuring the entry (a model, a routing) keeps the list.
           container
               .read(settingsProvider.notifier)
               .upsertProvider(
                 ProviderConfig(
-                  id: openRouterProviderId,
+                  id: id,
                   kind: openRouterKind,
                   defaultModel: 'qwen/qwen3-235b-a22b',
                   credential: 'provider:openrouter',
@@ -911,8 +912,7 @@ void main() {
               );
           expect(container.read(openRouterCatalogueProvider).models, listed);
           // The probe, however it is driven, never asks for the list.
-          await (container.read(llmRegistryProvider)[openRouterProviderId]!
-                  as LlmEndpointProbe)
+          await (container.read(llmRegistryProvider)[id]! as LlmEndpointProbe)
               .probe();
           expect(asked().last, '/v1/key');
           // Nothing of the answer reaches the disk — not the archive, not
@@ -926,19 +926,19 @@ void main() {
 
         test('a failed first reading leaves nothing but the failure', () async {
           final container = stubbed(store: InMemorySecretStore());
-          await container.read(openRouterCatalogueProvider.notifier).load();
+          await container.read(openRouterCatalogueProvider.notifier).load(id);
           final state = container.read(openRouterCatalogueProvider);
           expect(state.models, isNull);
           expect(state.failure!.kind, LlmFailureKind.credential);
           expect(state.attempted, isTrue);
           expect(stub.requests, isEmpty, reason: 'no key, no request');
           // Once attempted, only Refresh asks again.
-          await container.read(openRouterCatalogueProvider.notifier).load();
+          await container.read(openRouterCatalogueProvider.notifier).load(id);
           expect(stub.requests, isEmpty);
         });
 
         test(
-          'a call while one runs joins it: one request, one answer',
+          'a call while one runs joins it and waits for its answer',
           () async {
             final release = Completer<void>();
             stub.routes['GET /v1/endpoints/zdr'] = (req) async {
@@ -949,24 +949,163 @@ void main() {
             final catalogue = container.read(
               openRouterCatalogueProvider.notifier,
             );
-            final first = catalogue.refresh();
+            final first = catalogue.refresh(id);
             await stub.seen.first;
             expect(container.read(openRouterCatalogueProvider).loading, isTrue);
-            final second = catalogue.refresh();
-            final third = catalogue.load();
+            final second = catalogue.refresh(id);
+            final third = catalogue.load(id);
+            expect(
+              identical(first, second),
+              isTrue,
+              reason: 'the same reading',
+            );
+            expect(identical(first, third), isTrue);
+            var landed = false;
+            unawaited(second.then((_) => landed = true));
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+            expect(landed, isFalse, reason: 'a joined caller waits');
             release.complete();
             await Future.wait([first, second, third]);
+            expect(landed, isTrue);
+            final state = container.read(openRouterCatalogueProvider);
+            expect(state.loading, isFalse);
+            expect(state.models, listed);
             expect(asked(), ['/v1/endpoints/zdr']);
-            expect(container.read(openRouterCatalogueProvider).models, listed);
           },
         );
+
+        test(
+          'reads through the provider the block shows, whatever its id',
+          () async {
+            // An openrouter-kind entry under its own id has its own key;
+            // the built-in stays installed beside it, keyless.
+            final store = InMemorySecretStore()
+              ..write('provider:work', 'sk-or-w');
+            final container = stubbed(store: store);
+            container
+                .read(settingsProvider.notifier)
+                .upsertProvider(
+                  ProviderConfig(
+                    id: 'work',
+                    kind: openRouterKind,
+                    defaultModel: 'qwen/qwen3-235b-a22b',
+                    credential: 'provider:work',
+                    routing: 'exact',
+                  ),
+                );
+            expect(container.read(llmRegistryProvider).keys, contains('work'));
+            expect(container.read(llmRegistryProvider).keys, contains(id));
+            final catalogue = container.read(
+              openRouterCatalogueProvider.notifier,
+            );
+            await catalogue.load('work');
+            expect(container.read(openRouterCatalogueProvider).models, listed);
+            expect(
+              stub.requests.single.header('authorization'),
+              'Bearer sk-or-w',
+            );
+            // The keyless built-in would have refused before a socket.
+            catalogue.forget();
+            await catalogue.load(id);
+            expect(
+              container.read(openRouterCatalogueProvider).failure!.message,
+              'no key stored for this endpoint',
+            );
+            expect(stub.requests, hasLength(1));
+          },
+        );
+
+        test('a key stored or removed forgets the list', () async {
+          final container = stubbed();
+          final catalogue = container.read(
+            openRouterCatalogueProvider.notifier,
+          );
+          await catalogue.load(id);
+          expect(container.read(openRouterCatalogueProvider).models, listed);
+          container.read(credentialsProvider.notifier).clear(id);
+          final forgotten = container.read(openRouterCatalogueProvider);
+          expect(forgotten.attempted, isFalse);
+          expect(forgotten.models, isNull);
+          // Without a key the next load refuses before a socket …
+          await catalogue.load(id);
+          expect(
+            container.read(openRouterCatalogueProvider).failure!.kind,
+            LlmFailureKind.credential,
+          );
+          expect(stub.requests, hasLength(1));
+          // … and a new key forgets that too, so the block reads again.
+          container.read(credentialsProvider.notifier).set(id, 'sk-or-new');
+          expect(
+            container.read(openRouterCatalogueProvider).attempted,
+            isFalse,
+          );
+          await catalogue.load(id);
+          expect(container.read(openRouterCatalogueProvider).models, listed);
+          expect(stub.requests, hasLength(2));
+          expect(
+            stub.requests.last.header('authorization'),
+            'Bearer sk-or-new',
+          );
+        });
+
+        test('a reading that throws still lands, in fixed words', () async {
+          final container = stubbed(store: _ThrowingStore());
+          await container.read(openRouterCatalogueProvider.notifier).load(id);
+          final state = container.read(openRouterCatalogueProvider);
+          expect(state.loading, isFalse, reason: 'never stuck loading');
+          expect(state.failure!.kind, LlmFailureKind.internal);
+          expect(state.failure!.message, 'transport threw: StateError');
+          expect(state.failure!.message, isNot(contains('sk-')));
+          expect(stub.requests, isEmpty);
+        });
+
+        test('a provider rebuilt under a reading is asked again, not '
+            'reported', () async {
+          final release = Completer<void>();
+          stub.routes['GET /v1/endpoints/zdr'] = (req) async {
+            await release.future;
+            await StubServer.json(req, {'data': rows});
+          };
+          final container = stubbed();
+          ProviderConfig entry(String model) => ProviderConfig(
+            id: id,
+            kind: openRouterKind,
+            defaultModel: model,
+            credential: 'provider:openrouter',
+            routing: 'exact',
+          );
+          // A configured entry: editing it rebuilds (and closes) the
+          // provider, where a built-in would only be hidden.
+          container
+              .read(settingsProvider.notifier)
+              .upsertProvider(entry('a/b'));
+          final before = container.read(llmRegistryProvider)[id]!;
+          final catalogue = container.read(
+            openRouterCatalogueProvider.notifier,
+          );
+          final reading = catalogue.load(id);
+          await stub.seen.first;
+          // The edit closes the provider the reading went through.
+          container
+              .read(settingsProvider.notifier)
+              .upsertProvider(entry('c/d'));
+          expect(container.read(llmRegistryProvider)[id], isNot(same(before)));
+          expect((before as OpenAiCompatibleProvider).isClosed, isTrue);
+          release.complete();
+          await reading;
+          final state = container.read(openRouterCatalogueProvider);
+          expect(state.failure, isNull, reason: 'not a failure of the network');
+          expect(state.attempted, isFalse, reason: 'the block asks again');
+          await catalogue.load(id);
+          expect(container.read(openRouterCatalogueProvider).models, listed);
+        });
 
         test(
           'without an OpenRouter provider there is nothing to read',
           () async {
             // The fake alone: no built-in of that id, no entry.
             final container = make();
-            await container.read(openRouterCatalogueProvider.notifier).load();
+            await container.read(openRouterCatalogueProvider.notifier).load(id);
             expect(
               container.read(openRouterCatalogueProvider).attempted,
               isFalse,
@@ -977,17 +1116,16 @@ void main() {
                 .read(settingsProvider.notifier)
                 .upsertProvider(
                   ProviderConfig(
-                    id: openRouterProviderId,
+                    id: id,
                     kind: openRouterKind,
                     defaultModel: openRouterPresetModel,
                     routing: 'cheapest',
                   ),
                 );
-            expect(
-              refused.read(llmRegistryProvider),
-              isNot(contains('openrouter')),
-            );
-            await refused.read(openRouterCatalogueProvider.notifier).refresh();
+            expect(refused.read(llmRegistryProvider), isNot(contains(id)));
+            await refused
+                .read(openRouterCatalogueProvider.notifier)
+                .refresh(id);
             expect(
               refused.read(openRouterCatalogueProvider).attempted,
               isFalse,
@@ -1763,6 +1901,18 @@ final class _RefusingStore implements SecretStore {
   @override
   void write(String account, String value) =>
       throw const SecretStoreException('refused');
+  @override
+  bool delete(String account) => false;
+}
+
+/// A store of another kind that fails outside the transport's vocabulary.
+final class _ThrowingStore implements SecretStore {
+  @override
+  String? read(String account) => throw StateError('sk-throwing $account');
+  @override
+  bool has(String account) => false;
+  @override
+  void write(String account, String value) {}
   @override
   bool delete(String account) => false;
 }

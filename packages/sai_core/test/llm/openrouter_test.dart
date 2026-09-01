@@ -402,8 +402,9 @@ void main() {
         'qwen/qwen3-32b',
         'z-ai/glm-5.2:free',
       ];
-      expect(openRouterCatalogueMatches(sorted, ''), sorted);
-      expect(openRouterCatalogueMatches(sorted, '', limit: 2), sorted.take(2));
+      // Nothing typed, nothing offered: the list comes as one types.
+      expect(openRouterCatalogueMatches(sorted, ''), isEmpty);
+      expect(openRouterCatalogueMatches(sorted, '   '), isEmpty);
       // Prefix matches first, then the ones that merely contain it.
       expect(openRouterCatalogueMatches(sorted, 'QWEN'), [
         'qwen/qwen3-235b-a22b',

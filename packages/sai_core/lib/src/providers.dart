@@ -17,6 +17,7 @@ import 'llm/connection.dart';
 import 'llm/failure.dart';
 import 'llm/builtins.dart';
 import 'llm/factory.dart';
+import 'llm/openai_compatible/policy.dart';
 import 'llm/openai_compatible/provider.dart';
 import 'llm/openrouter.dart';
 import 'llm/privacy.dart';
@@ -656,45 +657,98 @@ class ContextWindows extends Notifier<Map<String, int>> {
 /// OpenRouter's zero-retention model list for the session (#112): read
 /// on demand — the first time the app's OpenRouter block opens with a
 /// key stored, and on Refresh — never on the probe's timer, never on a
-/// task or chat change, never written anywhere. One reading at a time; a
-/// failed refresh keeps the last list beside its failure. The container's
-/// lifetime is the cache's: a restart forgets it.
+/// task or chat change, never written anywhere. One reading at a time,
+/// joined by every call made while it runs; a failed refresh keeps the
+/// last list beside its failure; a key stored or removed forgets the
+/// list, since it was read under another key. The container's lifetime
+/// is the cache's: a restart forgets it.
 final openRouterCatalogueProvider =
     NotifierProvider<OpenRouterCatalogueNotifier, OpenRouterCatalogue>(
       OpenRouterCatalogueNotifier.new,
     );
 
 class OpenRouterCatalogueNotifier extends Notifier<OpenRouterCatalogue> {
+  /// The reading under way, or null.
+  Future<void>? _reading;
+
+  /// Which forgetting the state belongs to: a reading that started
+  /// before a [forget] lands nothing.
+  var _epoch = 0;
+
   @override
-  OpenRouterCatalogue build() => const OpenRouterCatalogue();
-
-  /// The session's first reading; nothing once one was attempted,
-  /// however it went — Refresh is the retry.
-  Future<void> load() async {
-    if (state.attempted) return;
-    await _read();
+  OpenRouterCatalogue build() {
+    ref.listen(credentialsProvider, (_, _) => forget());
+    return const OpenRouterCatalogue();
   }
 
-  /// A new reading. A call while one runs joins it: one request, one
-  /// answer, so nothing older can land over something newer.
-  Future<void> refresh() async {
-    if (state.loading) return;
-    await _read();
+  /// The reading under way, or nothing to wait for.
+  Future<void> get done => _reading ?? Future.value();
+
+  /// The session's first reading, through the OpenRouter provider [id]
+  /// names — the built-in or a configured entry of that kind, whichever
+  /// the block shows; nothing once one was attempted, however it went —
+  /// Refresh is the retry.
+  Future<void> load(String id) => state.attempted ? done : _read(id);
+
+  /// A new reading through [id]. A call while one runs joins it: one
+  /// request, one answer, and every caller waits for that answer.
+  Future<void> refresh(String id) => _reading ?? _read(id);
+
+  /// Drops what the session read (and any reading under way), so the
+  /// next [load] reads again — or the block says a key is needed.
+  void forget() {
+    if (!state.attempted) return;
+    _epoch++;
+    _reading = null;
+    state = const OpenRouterCatalogue();
   }
 
-  /// Through the installed OpenRouter provider — the built-in or the
-  /// configured entry — and not at all when there is none (a refused
-  /// entry has no provider; the block's button is disabled then).
-  Future<void> _read() async {
-    final provider = ref.read(llmRegistryProvider)[openRouterProviderId];
+  /// Not at all when [id] is not an installed OpenRouter provider (a
+  /// refused entry has none; the block's button is disabled then).
+  Future<void> _read(String id) {
+    final provider = ref.read(llmRegistryProvider)[id];
     if (provider is! OpenAiCompatibleProvider ||
         openRouterRoutingOf(provider) == null) {
-      return;
+      return Future.value();
     }
     final kept = state.models;
     state = OpenRouterCatalogue(models: kept, loading: true);
-    final answer = await fetchOpenRouterCatalogue(provider);
-    if (!ref.mounted) return;
+    late final Future<void> mine;
+    mine = _fetch(provider, kept, _epoch).whenComplete(() {
+      if (identical(_reading, mine)) _reading = null;
+    });
+    return _reading = mine;
+  }
+
+  Future<void> _fetch(
+    OpenAiCompatibleProvider provider,
+    List<String>? kept,
+    int epoch,
+  ) async {
+    OpenRouterCatalogueAnswer answer;
+    try {
+      answer = await fetchOpenRouterCatalogue(provider);
+    } on Object catch (error) {
+      // The transport answers its own failures in fixed words; whatever
+      // else can throw (a secret store of another kind) is still an
+      // answer — never a reading left "under way" for the session.
+      answer = (
+        models: null,
+        failure: LlmFailure(
+          LlmFailureKind.internal,
+          TransportText.threw(error),
+          endpoint: provider.origin,
+        ),
+      );
+    }
+    if (!ref.mounted || epoch != _epoch) return;
+    if (answer.failure != null && provider.isClosed) {
+      // A settings edit rebuilt the provider under the reading and cut
+      // its socket: nothing about the network, so nothing to show — the
+      // block asks again through the provider that replaced it.
+      state = OpenRouterCatalogue(models: kept);
+      return;
+    }
     state = OpenRouterCatalogue(
       models: answer.models ?? kept,
       failure: answer.failure,

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../../archive/event.dart';
 import '../../secrets/secret_store.dart';
@@ -606,7 +607,9 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
   /// The body as text, or null once it passes [maxBytes] — the
   /// subscription is cancelled there, and on the inter-token deadline.
   Future<String?> _readCapped(HttpClientResponse response, int maxBytes) async {
-    final bytes = <int>[];
+    // Chunks kept as they came, one copy at the end: a catalogue is
+    // megabytes, and a growable list of bytes would be several of it.
+    final bytes = BytesBuilder(copy: false);
     var over = false;
     final done = Completer<void>();
     late final StreamSubscription<List<int>> sub;
@@ -614,7 +617,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         .timeout(deadlines.interToken)
         .listen(
           (chunk) {
-            bytes.addAll(chunk);
+            bytes.add(chunk);
             if (bytes.length > maxBytes) {
               over = true;
               _quietly(sub.cancel());
@@ -631,7 +634,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
           cancelOnError: true,
         );
     await done.future;
-    return over ? null : utf8.decode(bytes, allowMalformed: true);
+    return over ? null : utf8.decode(bytes.takeBytes(), allowMalformed: true);
   }
 
   /// Whether [close] has been called.

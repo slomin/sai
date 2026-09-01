@@ -119,18 +119,19 @@ List<String>? zdrModelIds(Object? json) {
   return ids.toList()..sort();
 }
 
-/// The suggestions for [query] out of [models], a sorted id list: with
-/// nothing typed the first [limit]; else the ids that start with the
-/// lowercased query, then the ones that contain it, [limit] at most, in
-/// the list's order within each rank — the same answer for the same
-/// input, always.
+/// The suggestions for [query] out of [models], a sorted id list: the
+/// ids that start with the lowercased query, then the ones that contain
+/// it, [limit] at most, in the list's order within each rank — the same
+/// answer for the same input, always. Nothing for nothing typed: the
+/// list is offered as one types, never dropped over what sits below the
+/// field because it was clicked or cleared.
 List<String> openRouterCatalogueMatches(
   List<String> models,
   String query, {
   int limit = openRouterCatalogueMatchLimit,
 }) {
   final needle = query.trim().toLowerCase();
-  if (needle.isEmpty) return models.take(limit).toList();
+  if (needle.isEmpty) return const [];
   final starts = <String>[];
   final within = <String>[];
   for (final id in models) {
