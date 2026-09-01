@@ -493,12 +493,38 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     );
   }
 
+  /// One bounded GET of [path] under the endpoint, on demand (#112): the
+  /// same prepared path as a probe — closed and plaintext guards, the
+  /// key read now, the dialect's headers, no redirects, the deadlines —
+  /// with a body cap of the caller's, since a catalogue is bigger than
+  /// a probe answer. A refusal comes back as an answer with a failure and
+  /// no request made. Nothing here reaches the archive or the usage
+  /// totals: discovery is not an inference call.
+  Future<DiscoveryAnswer> fetch(
+    String path, {
+    int maxBytes = maxProbeBytes,
+  }) async {
+    final (refused, auth) = _prepare();
+    if (refused != null) return DiscoveryAnswer(0, failure: refused);
+    return _get(
+      _client,
+      _endpoint.replace(path: '${_endpoint.path}$path'),
+      auth,
+      maxBytes: maxBytes,
+    );
+  }
+
   /// One bounded GET. A non-2xx answer is a failure only for the caller
   /// to judge (a 404 on `/health` just means "not llama.cpp").
   /// The most a discovery answer may be; a model list is kilobytes.
   static const maxProbeBytes = 1 << 20;
 
-  Future<DiscoveryAnswer> _get(HttpClient client, Uri uri, String? auth) async {
+  Future<DiscoveryAnswer> _get(
+    HttpClient client,
+    Uri uri,
+    String? auth, {
+    int maxBytes = maxProbeBytes,
+  }) async {
     HttpClientRequest? req;
     try {
       req = await client.getUrl(uri);
@@ -522,7 +548,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
           ),
         );
       }
-      final text = await _readCapped(response);
+      final text = await _readCapped(response, maxBytes);
       if (text == null) {
         return DiscoveryAnswer(
           status,
@@ -577,9 +603,9 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
     }
   }
 
-  /// The body as text, or null once it passes [maxProbeBytes] — the
+  /// The body as text, or null once it passes [maxBytes] — the
   /// subscription is cancelled there, and on the inter-token deadline.
-  Future<String?> _readCapped(HttpClientResponse response) async {
+  Future<String?> _readCapped(HttpClientResponse response, int maxBytes) async {
     final bytes = <int>[];
     var over = false;
     final done = Completer<void>();
@@ -589,7 +615,7 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         .listen(
           (chunk) {
             bytes.addAll(chunk);
-            if (bytes.length > maxProbeBytes) {
+            if (bytes.length > maxBytes) {
               over = true;
               _quietly(sub.cancel());
               if (!done.isCompleted) done.complete();

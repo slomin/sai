@@ -653,6 +653,55 @@ class ContextWindows extends Notifier<Map<String, int>> {
   }
 }
 
+/// OpenRouter's zero-retention model list for the session (#112): read
+/// on demand — the first time the app's OpenRouter block opens with a
+/// key stored, and on Refresh — never on the probe's timer, never on a
+/// task or chat change, never written anywhere. One reading at a time; a
+/// failed refresh keeps the last list beside its failure. The container's
+/// lifetime is the cache's: a restart forgets it.
+final openRouterCatalogueProvider =
+    NotifierProvider<OpenRouterCatalogueNotifier, OpenRouterCatalogue>(
+      OpenRouterCatalogueNotifier.new,
+    );
+
+class OpenRouterCatalogueNotifier extends Notifier<OpenRouterCatalogue> {
+  @override
+  OpenRouterCatalogue build() => const OpenRouterCatalogue();
+
+  /// The session's first reading; nothing once one was attempted,
+  /// however it went — Refresh is the retry.
+  Future<void> load() async {
+    if (state.attempted) return;
+    await _read();
+  }
+
+  /// A new reading. A call while one runs joins it: one request, one
+  /// answer, so nothing older can land over something newer.
+  Future<void> refresh() async {
+    if (state.loading) return;
+    await _read();
+  }
+
+  /// Through the installed OpenRouter provider — the built-in or the
+  /// configured entry — and not at all when there is none (a refused
+  /// entry has no provider; the block's button is disabled then).
+  Future<void> _read() async {
+    final provider = ref.read(llmRegistryProvider)[openRouterProviderId];
+    if (provider is! OpenAiCompatibleProvider ||
+        openRouterRoutingOf(provider) == null) {
+      return;
+    }
+    final kept = state.models;
+    state = OpenRouterCatalogue(models: kept, loading: true);
+    final answer = await fetchOpenRouterCatalogue(provider);
+    if (!ref.mounted) return;
+    state = OpenRouterCatalogue(
+      models: answer.models ?? kept,
+      failure: answer.failure,
+    );
+  }
+}
+
 /// Whether the cache warmer runs at all. Test harnesses switch it off
 /// so a probeable provider in a widget test never fires an inference.
 final warmEnabledProvider = Provider<bool>((ref) => true);

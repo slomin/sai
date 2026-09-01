@@ -839,6 +839,164 @@ void main() {
         );
       });
 
+      group('the zero-retention list (#112)', () {
+        late StubServer stub;
+        const rows = [
+          {'model_id': 'qwen/qwen3-235b-a22b', 'provider_name': 'DeepInfra'},
+          {'model_id': 'deepseek/deepseek-v4-flash-0731'},
+          {'model_id': 'deepseek/deepseek-v4-flash-0731', 'tag': 'other'},
+          {'model_id': 'openrouter/auto'},
+        ];
+        const listed = [
+          'deepseek/deepseek-v4-flash-0731',
+          'qwen/qwen3-235b-a22b',
+        ];
+
+        setUp(() async {
+          stub = await StubServer.start();
+          stub.routes['GET /v1/endpoints/zdr'] = (req) =>
+              StubServer.json(req, {'data': rows});
+          stub.routes['GET /v1/key'] = (req) =>
+              StubServer.json(req, {'data': <String, Object?>{}});
+          secrets.write('provider:openrouter', 'sk-or-test-key');
+        });
+        tearDown(() => stub.close());
+
+        ProviderContainer stubbed({SecretStore? store}) => make(
+          shipped: true,
+          store: store,
+          overrides: [openRouterEndpointProvider.overrideWithValue(stub.v1)],
+        );
+
+        Iterable<String> asked() => stub.requests.map((r) => r.path);
+
+        test('is read on demand, once, and kept for the session', () async {
+          final container = stubbed();
+          final catalogue = container.read(
+            openRouterCatalogueProvider.notifier,
+          );
+          expect(
+            container.read(openRouterCatalogueProvider).attempted,
+            isFalse,
+          );
+          expect(stub.requests, isEmpty, reason: 'nothing asks on build');
+          await catalogue.load();
+          var state = container.read(openRouterCatalogueProvider);
+          expect(state.models, listed);
+          expect(state.failure, isNull);
+          expect(state.loading, isFalse);
+          expect(asked(), ['/v1/endpoints/zdr']);
+          // Loaded is loaded: a second load asks nothing more.
+          await catalogue.load();
+          expect(asked(), ['/v1/endpoints/zdr']);
+          // A refresh asks again; a failed one keeps the list it had.
+          stub.routes['GET /v1/endpoints/zdr'] = (req) =>
+              StubServer.json(req, {'error': 'down'}, status: 503);
+          await catalogue.refresh();
+          state = container.read(openRouterCatalogueProvider);
+          expect(state.models, listed);
+          expect(state.failure!.message, 'the endpoint answered 503');
+          expect(asked(), ['/v1/endpoints/zdr', '/v1/endpoints/zdr']);
+          // Configuring the entry (a key, a model) keeps the session's list.
+          container
+              .read(settingsProvider.notifier)
+              .upsertProvider(
+                ProviderConfig(
+                  id: openRouterProviderId,
+                  kind: openRouterKind,
+                  defaultModel: 'qwen/qwen3-235b-a22b',
+                  credential: 'provider:openrouter',
+                  routing: 'exact',
+                ),
+              );
+          expect(container.read(openRouterCatalogueProvider).models, listed);
+          // The probe, however it is driven, never asks for the list.
+          await (container.read(llmRegistryProvider)[openRouterProviderId]!
+                  as LlmEndpointProbe)
+              .probe();
+          expect(asked().last, '/v1/key');
+          // Nothing of the answer reaches the disk — not the archive, not
+          // settings (the model the person chose is theirs to keep).
+          for (final f in tmp.listSync(recursive: true).whereType<File>()) {
+            final text = f.readAsStringSync();
+            expect(text, isNot(contains('DeepInfra')), reason: f.path);
+            expect(text, isNot(contains('endpoints/zdr')), reason: f.path);
+          }
+        });
+
+        test('a failed first reading leaves nothing but the failure', () async {
+          final container = stubbed(store: InMemorySecretStore());
+          await container.read(openRouterCatalogueProvider.notifier).load();
+          final state = container.read(openRouterCatalogueProvider);
+          expect(state.models, isNull);
+          expect(state.failure!.kind, LlmFailureKind.credential);
+          expect(state.attempted, isTrue);
+          expect(stub.requests, isEmpty, reason: 'no key, no request');
+          // Once attempted, only Refresh asks again.
+          await container.read(openRouterCatalogueProvider.notifier).load();
+          expect(stub.requests, isEmpty);
+        });
+
+        test(
+          'a call while one runs joins it: one request, one answer',
+          () async {
+            final release = Completer<void>();
+            stub.routes['GET /v1/endpoints/zdr'] = (req) async {
+              await release.future;
+              await StubServer.json(req, {'data': rows});
+            };
+            final container = stubbed();
+            final catalogue = container.read(
+              openRouterCatalogueProvider.notifier,
+            );
+            final first = catalogue.refresh();
+            await stub.seen.first;
+            expect(container.read(openRouterCatalogueProvider).loading, isTrue);
+            final second = catalogue.refresh();
+            final third = catalogue.load();
+            release.complete();
+            await Future.wait([first, second, third]);
+            expect(asked(), ['/v1/endpoints/zdr']);
+            expect(container.read(openRouterCatalogueProvider).models, listed);
+          },
+        );
+
+        test(
+          'without an OpenRouter provider there is nothing to read',
+          () async {
+            // The fake alone: no built-in of that id, no entry.
+            final container = make();
+            await container.read(openRouterCatalogueProvider.notifier).load();
+            expect(
+              container.read(openRouterCatalogueProvider).attempted,
+              isFalse,
+            );
+            // An entry the factory refused has no provider either.
+            final refused = stubbed();
+            refused
+                .read(settingsProvider.notifier)
+                .upsertProvider(
+                  ProviderConfig(
+                    id: openRouterProviderId,
+                    kind: openRouterKind,
+                    defaultModel: openRouterPresetModel,
+                    routing: 'cheapest',
+                  ),
+                );
+            expect(
+              refused.read(llmRegistryProvider),
+              isNot(contains('openrouter')),
+            );
+            await refused.read(openRouterCatalogueProvider.notifier).refresh();
+            expect(
+              refused.read(openRouterCatalogueProvider).attempted,
+              isFalse,
+            );
+            expect(stub.requests, isEmpty);
+          },
+        );
+      });
+
       test('storing a key for the OpenRouter built-in configures it first '
           '(#24)', () {
         const canary = 'sk-canary-0f1e2d3c4b5a69788796a5b4c3d2e1f0';

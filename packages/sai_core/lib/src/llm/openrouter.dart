@@ -90,6 +90,123 @@ enum OpenRouterRouting {
   };
 }
 
+/// The zero-retention endpoint list (#112): every endpoint OpenRouter
+/// would route to under `zdr: true`, one row per endpoint, public. Read
+/// on demand only — never on the probe — for `model_id` and nothing else.
+const openRouterZdrPath = '/endpoints/zdr';
+
+/// The most the list may be: ~0.7 MB for 816 rows on 2026-09-01, so
+/// eleven times that before it is refused as too large.
+const maxOpenRouterCatalogueBytes = 8 << 20;
+
+/// How many suggestions the picker shows at most.
+const openRouterCatalogueMatchLimit = 50;
+
+/// The exact model ids in a `/endpoints/zdr` answer — the strings under
+/// `data[].model_id` that pass [openRouterModelProblem], deduplicated
+/// (several endpoints serve one model) and sorted — or null when the
+/// answer is not a list of endpoints at all. A malformed row is skipped,
+/// never fatal; every other field is ignored.
+List<String>? zdrModelIds(Object? json) {
+  if (json is! Map<String, Object?> || json['data'] is! List) return null;
+  final ids = <String>{};
+  for (final row in json['data'] as List) {
+    if (row is Map<String, Object?> && row['model_id'] is String) {
+      final id = row['model_id'] as String;
+      if (openRouterModelProblem(id) == null) ids.add(id);
+    }
+  }
+  return ids.toList()..sort();
+}
+
+/// The suggestions for [query] out of [models], a sorted id list: with
+/// nothing typed the first [limit]; else the ids that start with the
+/// lowercased query, then the ones that contain it, [limit] at most, in
+/// the list's order within each rank — the same answer for the same
+/// input, always.
+List<String> openRouterCatalogueMatches(
+  List<String> models,
+  String query, {
+  int limit = openRouterCatalogueMatchLimit,
+}) {
+  final needle = query.trim().toLowerCase();
+  if (needle.isEmpty) return models.take(limit).toList();
+  final starts = <String>[];
+  final within = <String>[];
+  for (final id in models) {
+    final lower = id.toLowerCase();
+    if (lower.startsWith(needle)) {
+      starts.add(id);
+      if (starts.length >= limit) break;
+    } else if (lower.contains(needle)) {
+      within.add(id);
+    }
+  }
+  return [...starts, ...within].take(limit).toList();
+}
+
+/// What one reading of the zero-retention list came to: the sorted ids,
+/// or the failure in fixed words.
+typedef OpenRouterCatalogueAnswer = ({
+  List<String>? models,
+  LlmFailure? failure,
+});
+
+/// Reads the zero-retention list through [provider] — an OpenRouter one,
+/// or [ArgumentError]. One GET on the provider's prepared path (no key,
+/// no request; the dev copy refuses before a socket), bounded by
+/// [maxBytes]; the body is parsed for ids and dropped.
+Future<OpenRouterCatalogueAnswer> fetchOpenRouterCatalogue(
+  OpenAiCompatibleProvider provider, {
+  int maxBytes = maxOpenRouterCatalogueBytes,
+}) async {
+  if (openRouterRoutingOf(provider) == null) {
+    throw ArgumentError('the zero-retention list is OpenRouter\'s alone');
+  }
+  final answer = await provider.fetch(openRouterZdrPath, maxBytes: maxBytes);
+  if (answer.failure != null) return (models: null, failure: answer.failure);
+  final ids = zdrModelIds(answer.json);
+  if (ids == null) {
+    return (
+      models: null,
+      failure: LlmFailure(
+        LlmFailureKind.protocol,
+        TransportText.notEndpoints,
+        endpoint: provider.origin,
+      ),
+    );
+  }
+  return (models: ids, failure: null);
+}
+
+/// What the running sai knows of OpenRouter's zero-retention models
+/// (#112): the last list read, whether one is being read now, and how
+/// the last attempt failed, if it did. Session state, written nowhere;
+/// a failed refresh keeps the last list beside its failure, and a list
+/// is guidance — an endpoint listed now may be gone by the next call.
+final class OpenRouterCatalogue {
+  const OpenRouterCatalogue({this.models, this.loading = false, this.failure});
+
+  /// The sorted exact ids of the last successful reading, or null
+  /// before one.
+  final List<String>? models;
+
+  /// Whether a reading is under way.
+  final bool loading;
+
+  /// How the last reading failed; null after a success.
+  final LlmFailure? failure;
+
+  /// Whether the session has tried at all, however it went.
+  bool get attempted => models != null || failure != null || loading;
+
+  @override
+  String toString() =>
+      'OpenRouterCatalogue(${models?.length ?? 'no'} models'
+      '${loading ? ', loading' : ''}'
+      '${failure == null ? '' : ', ${failure!.message}'})';
+}
+
 /// One exact OpenRouter model id: `owner/name`, no router, no alias.
 final openRouterModelForm = RegExp(
   r'^[a-z0-9][a-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:-]*$',
@@ -240,8 +357,10 @@ final class OpenRouterDialect implements OpenAiDialect {
         ),
       );
     }
-    // No model list and no context window: the catalogue is a later
-    // ticket, and a cloud provider's budget stays the conservative one.
+    // No model list here — the zero-retention list is read on demand
+    // (#112, [fetchOpenRouterCatalogue]), never on the probe's timer —
+    // and no context window: a cloud provider's budget stays the
+    // conservative one.
     return const EndpointInfo(
       health: EndpointHealth.ok,
       serverKind: openRouterKind,

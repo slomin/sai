@@ -342,6 +342,192 @@ void main() {
     });
   });
 
+  group('the zero-retention list (#112)', () {
+    // One row per endpoint, as OpenRouter answers: two hosts for one
+    // model, a router, a shortcut, two malformed rows, a `:free` variant
+    // and the metadata sai never reads.
+    void listWith(List<Object?> rows, {int status = 200}) {
+      stub.routes['GET /v1/endpoints/zdr'] = (req) =>
+          StubServer.json(req, {'data': rows}, status: status);
+    }
+
+    final rows = <Object?>[
+      {
+        'model_id': 'qwen/qwen3-235b-a22b',
+        'model_name': 'Qwen3 235B',
+        'provider_name': 'DeepInfra',
+        'tag': 'deepinfra/fp8',
+        'pricing': {'prompt': '0.00000013'},
+        'context_length': 40960,
+      },
+      {'model_id': 'deepseek/deepseek-v4-flash-0731', 'tag': 'deepinfra/fp8'},
+      {'model_id': 'deepseek/deepseek-v4-flash-0731', 'tag': 'gmicloud'},
+      {'model_id': 'openrouter/auto'},
+      {'model_id': 'meta-llama/llama-4-scout:nitro'},
+      {'model_id': 7},
+      {'name': 'no id at all'},
+      'not even a row',
+      {'model_id': 'z-ai/glm-5.2:free'},
+    ];
+
+    test('is read once, for the ids alone, deduplicated and sorted', () async {
+      listWith(rows);
+      final answer = await fetchOpenRouterCatalogue(make());
+      expect(answer.failure, isNull);
+      expect(answer.models, [
+        'deepseek/deepseek-v4-flash-0731',
+        'qwen/qwen3-235b-a22b',
+        'z-ai/glm-5.2:free',
+      ]);
+      final sent = stub.requests.single;
+      expect(sent.path, '/v1/endpoints/zdr');
+      expect(sent.method, 'GET');
+      expect(sent.header('authorization'), 'Bearer $canary');
+      expect(sent.header('http-referer'), openRouterReferer);
+      expect(sent.header('x-openrouter-title'), openRouterTitle);
+      expect(sent.header('accept'), 'application/json');
+      expect(answer.toString(), isNot(contains('DeepInfra')));
+    });
+
+    test('an empty list is a success; every parse is pure', () {
+      expect(zdrModelIds({'data': <Object?>[]}), isEmpty);
+      expect(zdrModelIds({'data': 'rows'}), isNull);
+      expect(zdrModelIds(<Object?>[]), isNull);
+      expect(zdrModelIds(null), isNull);
+      expect(zdrModelIds({'data': rows}), hasLength(3));
+      const sorted = [
+        'anthropic/claude-3.5-haiku',
+        'deepseek/deepseek-v4-flash-0731',
+        'qwen/qwen3-235b-a22b',
+        'qwen/qwen3-32b',
+        'z-ai/glm-5.2:free',
+      ];
+      expect(openRouterCatalogueMatches(sorted, ''), sorted);
+      expect(openRouterCatalogueMatches(sorted, '', limit: 2), sorted.take(2));
+      // Prefix matches first, then the ones that merely contain it.
+      expect(openRouterCatalogueMatches(sorted, 'QWEN'), [
+        'qwen/qwen3-235b-a22b',
+        'qwen/qwen3-32b',
+      ]);
+      expect(openRouterCatalogueMatches(sorted, ' A '), [
+        'anthropic/claude-3.5-haiku',
+        'deepseek/deepseek-v4-flash-0731',
+        'qwen/qwen3-235b-a22b',
+        'z-ai/glm-5.2:free',
+      ]);
+      expect(openRouterCatalogueMatches(sorted, 'deep', limit: 1), [
+        'deepseek/deepseek-v4-flash-0731',
+      ]);
+      expect(openRouterCatalogueMatches(sorted, 'gpt'), isEmpty);
+      expect(openRouterCatalogueMatches(const [], 'q'), isEmpty);
+    });
+
+    test('a bad answer fails in fixed words, never quoting it', () async {
+      listWith(['nothing usable']);
+      expect((await fetchOpenRouterCatalogue(make())).models, isEmpty);
+      stub.routes['GET /v1/endpoints/zdr'] = (req) =>
+          StubServer.json(req, {'data': 'body $canary'});
+      final shape = await fetchOpenRouterCatalogue(make());
+      expect(shape.models, isNull);
+      expect(shape.failure!.kind, LlmFailureKind.protocol);
+      expect(shape.failure!.message, TransportText.notEndpoints);
+      expect(shape.failure!.endpoint, stub.origin);
+      stub.routes['GET /v1/endpoints/zdr'] = (req) async {
+        req.response.write('<html>$canary</html>');
+        await req.response.close();
+      };
+      final html = await fetchOpenRouterCatalogue(make());
+      expect(html.failure!.message, TransportText.notJson);
+      listWith(rows);
+      final big = await fetchOpenRouterCatalogue(make(), maxBytes: 64);
+      expect(big.failure!.message, TransportText.tooLarge);
+      expect(big.models, isNull);
+      listWith([
+        {
+          'error': {'code': 401, 'message': 'bad $canary'},
+        },
+      ], status: 401);
+      final bad = await fetchOpenRouterCatalogue(make());
+      expect(bad.failure!.message, TransportText.rejectedKey);
+      expect(bad.failure!.status, 401);
+      listWith([], status: 500);
+      expect(
+        (await fetchOpenRouterCatalogue(make())).failure!.message,
+        TransportText.answered(500),
+      );
+      final elsewhere = await StubServer.start();
+      addTearDown(elsewhere.close);
+      elsewhere.routes['GET /v1/endpoints/zdr'] = (req) =>
+          StubServer.json(req, {'data': <Object?>[]});
+      stub.routes['GET /v1/endpoints/zdr'] = (req) async {
+        req.response
+          ..statusCode = 302
+          ..headers.set('location', '${elsewhere.origin}/v1/endpoints/zdr');
+        await req.response.close();
+      };
+      final moved = await fetchOpenRouterCatalogue(make());
+      expect(moved.failure!.message, TransportText.redirected);
+      expect(elsewhere.requests, isEmpty);
+      for (final f in [shape, html, big, bad, moved]) {
+        expect(f.toString(), isNot(contains(canary)));
+      }
+      expect(TransportText.all, contains(TransportText.notEndpoints));
+    });
+
+    test('no key, no request — and only OpenRouter has a list', () async {
+      listWith(rows);
+      final none = await fetchOpenRouterCatalogue(
+        make(store: InMemorySecretStore()),
+      );
+      expect(none.failure!.kind, LlmFailureKind.credential);
+      expect(none.failure!.message, TransportText.noKey);
+      final dev = await fetchOpenRouterCatalogue(
+        make(store: const NoSecretStore(devSecretsMessage)),
+      );
+      expect(dev.failure!.kind, LlmFailureKind.credential);
+      expect(dev.failure!.message, devSecretsMessage);
+      final closed = make();
+      await closed.close();
+      expect(
+        (await fetchOpenRouterCatalogue(closed)).failure!.message,
+        TransportText.closed,
+      );
+      expect(stub.requests, isEmpty, reason: 'nothing was sent');
+      final local = OpenAiCompatibleProvider(
+        id: 'local',
+        endpoint: stub.v1,
+        defaultModel: 'qwen',
+        secrets: secrets,
+        deadlines: quick,
+      );
+      addTearDown(local.close);
+      expect(() => fetchOpenRouterCatalogue(local), throwsArgumentError);
+      // The probe is the probe: it never asks for the list.
+      stub.routes['GET /v1/key'] = (req) =>
+          StubServer.json(req, {'data': <String, Object?>{}});
+      await make().probe();
+      expect(stub.requests.map((r) => r.path), ['/v1/key']);
+    });
+
+    test('the session state says what it knows', () {
+      const fresh = OpenRouterCatalogue();
+      expect(fresh.attempted, isFalse);
+      expect(fresh.models, isNull);
+      expect(fresh.toString(), 'OpenRouterCatalogue(no models)');
+      const loading = OpenRouterCatalogue(loading: true);
+      expect(loading.attempted, isTrue);
+      const failed = OpenRouterCatalogue(
+        models: ['a/b'],
+        failure: LlmFailure(LlmFailureKind.rejected, TransportText.noCredit),
+      );
+      expect(failed.attempted, isTrue);
+      expect(
+        failed.toString(),
+        'OpenRouterCatalogue(1 models, ${TransportText.noCredit})',
+      );
+    });
+  });
+
   group('the configuration', () {
     ProviderConfig config({
       String? model = openRouterPresetModel,
