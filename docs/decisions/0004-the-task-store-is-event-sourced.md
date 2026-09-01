@@ -70,3 +70,9 @@ and the disposable-projection consequence are unchanged; only the
 projection's medium is deferred, tracked in #49, until replay cost or
 query needs earn it. The task model and payload contract live in
 [task-model-v0](../tasks/task-model-v0.md).
+
+One projection per process means another process's appends reach it
+only on a replay. Since #118 (2026-09-01) both clients replay through
+one core follower that polls the log's `HEAD` count every two seconds
+and reloads only when a line this process did not write has landed —
+its own lines, whatever wrote them, never trigger a replay.

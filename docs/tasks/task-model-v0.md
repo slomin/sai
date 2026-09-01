@@ -424,12 +424,17 @@ are unchanged; only the medium is deferred, tracked in
 query needs earn it (#12 measured replay at microseconds per line).
 
 Consequences: one store per process; a concurrent writer's appends
-become visible on `reload()` or reopen, not live. The terminal client
-(#41) drives `reload()` from a poll of the archive's `HEAD` count
-(`Archive.head()`, a lock-free read of one small file, every two
-seconds); the app still reads the log at open — its poll is a follow-up.
-Date-derived providers do roll over at local midnight, independently of
-archive writes.
+become visible on `reload()` or reopen, not live. Both clients follow
+the log through one core follower (`archiveFollowerProvider`, #118,
+first the terminal's own poll in #41): every two seconds it reads the
+archive's `HEAD` count (`Archive.head()`, a lock-free read of one small
+file) and replays only when the count grew by more than this process
+appended since its last read (`TaskStore.hasForeignLines()`) — its own
+task commands, chat and provider lines are not news, another process's
+are. A reload the reducer refuses leaves the cursor where it was, so the
+next check tries again and the clients show the failure until one
+succeeds. Date-derived providers do roll over at local midnight,
+independently of archive writes.
 
 ## What the assistant sees (#105)
 
