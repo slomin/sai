@@ -136,8 +136,9 @@ files the key; on its recommended preset every request pins
 denies data collection and requires zero retention, and `provider add
 openrouter --model <owner/name>` chooses one exact model instead;
 `--routing recommended` returns to the preset (an exact model needs an
-endpoint that meets sai's privacy filters — zero retention above all;
-openrouter.ai lists them — or every call is refused); `openrouter/*` routers,
+endpoint that meets sai's privacy filters — zero retention above all —
+or every call is refused; the app's model field suggests the models
+OpenRouter currently lists with such an endpoint, #112); `openrouter/*` routers,
 `~latest` aliases and `:nitro`/`:floor`/`:online` are refused; removing
 the key in sai removes the Keychain item only, so revoke it at
 openrouter.ai too — use a dedicated key with a spending cap); a
@@ -157,8 +158,10 @@ provider is still configured.
 The app reads the same settings and keys: Settings › Providers (⌘,)
 lists every provider, switches the active one in a click, refreshes an endpoint's
 health, models and context window, runs a recorded streaming test (the
-result and llama.cpp tokens/s land in the archive), and enters or
-removes a key. `sai_tui help` lists every command.
+result and llama.cpp tokens/s land in the archive), suggests the
+OpenRouter models that have a zero-retention endpoint (read once a key
+is stored and on Refresh, kept for the session, written nowhere), and
+enters or removes a key. `sai_tui help` lists every command.
 
 Every provider is tagged `local` or `cloud`, and the tag is always on
 the status line and in `provider list`. A cloud provider sees your task

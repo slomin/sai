@@ -87,6 +87,17 @@ there on every install, inactive, on its recommended preset.
    Refresh, `ok · openrouter · no models listed · context unavailable`.
    `settings.json` now holds the entry with `"routing":"deepinfra_fp8"`
    and no key.
+2a. The zero-retention list (#112). Saving the key read it: the line
+   under "Exact model" reads `N models with zero retention` (the
+   dashboard's activity shows no generation for it — a list costs no
+   tokens). Type a letter into the model field, then delete it: the
+   whole list, exact ids only, no `openrouter/*`; type a few letters,
+   take one with ↓ and Enter, then Enter again (or Apply). The row reads `<id> — cloud · exact
+   model · key set`; Test answers — a listed model has an endpoint that
+   meets the filters. Wi-Fi off, Refresh: `Could not refresh (…);
+   showing N models cached`, the suggestions still there; Wi-Fi on,
+   Refresh: the count again. Tap the recommended preset before going
+   on.
 3. Test, then Use and send one short chat. Both stream; the archive
    holds, per call, `policy.decision` (tasks withheld — sharing is off
    by default), `provider.request`, `provider.response`,
@@ -99,7 +110,8 @@ there on every install, inactive, on its recommended preset.
 5. Confirm "Allow cloud providers to see my tasks" is off and the
    requests carried no task list; confirm no key in `settings.json`,
    the archive, the screenshots or any error text (grep the scratch
-   dir for the key's first characters).
+   dir for the key's first characters), and nothing of the list's
+   body either (grep for `provider_name` and `endpoints/zdr`).
 6. Remove in sai (the Keychain item goes; the entry stays), then
    revoke the key at openrouter.ai.
 

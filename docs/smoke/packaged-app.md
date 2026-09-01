@@ -49,6 +49,13 @@ the commit under test;
    server: the dot leaves green and the text says why. Start it again:
    green without relaunching sai. Evidence: three screenshots and the
    `provider.*` lines if a prompt was sent.
+7b. **OpenRouter without a key (#112).** In the dev copy, Settings ›
+   Providers › openrouter: the line under "Exact model" reads `Save an
+   OpenRouter key to load models`, its Refresh is disabled, and a typed
+   `owner/name` id still applies (`settings.json` gains
+   `"routing":"exact"`). Nothing leaves the machine — the dev copy holds
+   no credentials. Evidence: a screenshot per state and the settings
+   file. The keyed pass is `docs/smoke/cloud.md`, route K, 2a.
 7a. **Propose and confirm (#35).** With the `fake` provider selected
    (keyless), type a request and press **Propose**: the waiting state
    says proposing, then the lane shows cards. Accept one — the task

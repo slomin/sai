@@ -119,10 +119,28 @@ filters over providers' stated policies; sai asks, it cannot verify.
   through `provider add openrouter [--model …] [--routing …]` and
   `secret set openrouter`; there is still no in-terminal settings
   screen.
-- The catalogue picker (a fetched, searchable model list) is #112:
-  the preset plus a typed id covers the function, and `GET /models` is
-  ~2 MB — not something the connection watcher should re-fetch every
-  minute.
+- The model list (#112, amending what first deferred it here): the
+  app's exact-model field suggests the ids from
+  `GET /api/v1/endpoints/zdr` — every endpoint OpenRouter would route
+  to under `zdr: true`, one row per endpoint; ~0.7 MB for 816 rows and
+  294 models on 2026-09-01 (Context7 `/websites/openrouter_ai` and a
+  live read). That list, not `GET /models` (~2 MB, every model whether
+  or not any endpoint keeps nothing): a model with no zero-retention
+  endpoint is one sai refuses on every call, so it is never offered.
+  Read on demand only — the first time the block shows with a key
+  stored, and on its own Refresh — never on the connection watcher's
+  timer, never on a task or chat change. The list is public; the
+  request still goes down the provider's prepared path, key and all,
+  because that path is the one rule set that already says "no key, no
+  request" and keeps the dev copy off the network — a keyless second
+  path would be more code for no privacy gained. Its own body cap (8
+  MiB; the probe's stays 1 MiB); only `data[].model_id` is kept,
+  filtered as a typed id is, deduplicated, sorted; one list for the
+  session, a failed refresh keeping the last one beside its failure in
+  the transport's fixed words; nothing of it in settings, the archive
+  or the usage totals. Guidance, not a gate: a typed id that is not
+  listed still applies, and a listed one may still be refused later —
+  the list is the moment's.
 - Rejected: a locked-down `openai_compatible` entry (cannot say the
   dialect, the pin or the fixed origin, and an edit could move it);
   OpenRouter's OAuth PKCE "connect" flow (a browser round-trip and a
