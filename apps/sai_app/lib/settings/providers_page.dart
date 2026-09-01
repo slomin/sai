@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
@@ -29,6 +30,16 @@ const openRouterExactKey = ValueKey('openrouter-exact');
 const openRouterModelFieldKey = ValueKey('openrouter-model-field');
 const openRouterApplyKey = ValueKey('openrouter-apply');
 
+/// The endpoint block's Refresh, for tests — OpenRouter's block has one
+/// of its own (#112).
+const endpointRefreshKey = ValueKey('endpoint-refresh');
+
+/// The zero-retention list (#112), for tests: its status line, its
+/// Refresh and the suggestions under the model field.
+const openRouterCatalogueStatusKey = ValueKey('openrouter-catalogue-status');
+const openRouterRefreshKey = ValueKey('openrouter-refresh');
+const openRouterOptionsKey = ValueKey('openrouter-options');
+
 /// Settings › Providers (#40, the dialog of #29 as a page): every
 /// provider this build can offer, the active one switched in one click,
 /// an endpoint's health, models and context refreshed on demand, a
@@ -46,6 +57,7 @@ class ProvidersPage extends ConsumerStatefulWidget {
 class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   final _controller = TextEditingController();
   final _model = TextEditingController();
+  final _modelFocus = FocusNode(debugLabel: 'openrouter-model');
   String? _selected;
 
   RecordedCall? _test;
@@ -63,6 +75,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     _resetTest();
     _controller.dispose();
     _model.dispose();
+    _modelFocus.dispose();
     super.dispose();
   }
 
@@ -196,6 +209,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
         _selected = id;
         _controller.clear();
         _model.clear();
+        _modelFocus.unfocus();
         _resetTest();
       }),
     );
@@ -216,6 +230,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
           children: [
             Expanded(child: Text(line, maxLines: 2)),
             TextButton(
+              key: endpointRefreshKey,
               onPressed: info.isLoading
                   ? null
                   : () => ref.invalidate(endpointInfoProvider(id)),
@@ -289,7 +304,11 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   /// shipped first, or repairing an entry the factory refused); the
   /// routing is stored, never inferred from the id. [routing] is null
   /// for an entry whose word this sai does not know: neither row is
-  /// checked, and either tap writes a good one.
+  /// checked, and either tap writes a good one. Under the field, the
+  /// zero-retention list (#112): the models OpenRouter reports at least
+  /// one zero-retention endpoint for, read once a key is stored and on
+  /// Refresh, offered as suggestions — guidance, since an endpoint listed
+  /// now may be gone later; a typed id that is not listed still applies.
   Widget _openRouterModel(
     String id,
     LlmProvider? provider,
@@ -299,6 +318,17 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   }) {
     final exact = routing == OpenRouterRouting.exact;
     final preset = routing == OpenRouterRouting.deepinfraFp8;
+    final catalogue = ref.watch(openRouterCatalogueProvider);
+    final keyed =
+        ref.watch(credentialStatusProvider(id)) == CredentialStatus.set;
+    final readable = keyed && provider != null;
+    // The session's one first reading, once the block shows with a key:
+    // after this frame, never during it; nothing once it was attempted.
+    if (readable && !catalogue.attempted) {
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(openRouterCatalogueProvider.notifier).load();
+      });
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -343,22 +373,77 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _catalogueLine(catalogue, keyed: keyed, readable: readable),
+                  key: openRouterCatalogueStatusKey,
+                  maxLines: 2,
+                ),
+              ),
+              TextButton(
+                key: openRouterRefreshKey,
+                onPressed: readable && !catalogue.loading
+                    ? () => ref
+                          .read(openRouterCatalogueProvider.notifier)
+                          .refresh()
+                    : null,
+                child: const Text('Refresh'),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           child: ValueListenableBuilder(
             valueListenable: _model,
             builder: (context, value, _) => Row(
               children: [
                 Expanded(
-                  child: TextField(
-                    key: openRouterModelFieldKey,
-                    controller: _model,
-                    enableSuggestions: false,
-                    autocorrect: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Model id',
-                      hintText: 'owner/name',
-                      isDense: true,
+                  // RawAutocomplete asks for options on a text change
+                  // only: the suggestions come as the person types (or
+                  // clears the field), never on focus alone.
+                  child: RawAutocomplete<String>(
+                    textEditingController: _model,
+                    focusNode: _modelFocus,
+                    optionsBuilder: (value) => openRouterCatalogueMatches(
+                      catalogue.models ?? const [],
+                      value.text,
                     ),
-                    onSubmitted: (_) => _applyModel(id, provider, config),
+                    // Choosing fills the field; Apply stays the act.
+                    onSelected: (_) {},
+                    fieldViewBuilder:
+                        (context, controller, focus, onFieldSubmitted) =>
+                            TextField(
+                              key: openRouterModelFieldKey,
+                              controller: controller,
+                              focusNode: focus,
+                              enableSuggestions: false,
+                              autocorrect: false,
+                              decoration: const InputDecoration(
+                                labelText: 'Model id',
+                                hintText: 'owner/name',
+                                isDense: true,
+                              ),
+                              // Enter takes the highlighted suggestion while
+                              // the list is open; otherwise — no list, or
+                              // the suggestion is what was typed — it
+                              // applies the id, listed or not. The field
+                              // keeps the focus either way (the default
+                              // would drop it on Enter), so a taken
+                              // suggestion is one more Enter from applied;
+                              // an apply leaves the field itself.
+                              onEditingComplete: () {},
+                              onSubmitted: (_) {
+                                final before = controller.text;
+                                onFieldSubmitted();
+                                if (controller.text == before) {
+                                  _applyModel(id, provider, config);
+                                }
+                              },
+                            ),
+                    optionsViewBuilder: _options,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -375,6 +460,80 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
         ),
         const SizedBox(height: 8),
       ],
+    );
+  }
+
+  /// One line on the zero-retention list: what is being read, what was
+  /// read, and how the last reading failed — in the transport's fixed
+  /// words, never the answer's own.
+  static String _catalogueLine(
+    OpenRouterCatalogue catalogue, {
+    required bool keyed,
+    required bool readable,
+  }) {
+    String count(List<String> models) =>
+        '${models.length} model${models.length == 1 ? '' : 's'}';
+    final models = catalogue.models;
+    final failure = catalogue.failure;
+    if (catalogue.loading) return 'Loading zero-retention models…';
+    if (failure != null && models != null) {
+      return 'Could not refresh (${failure.message}); showing '
+          '${count(models)} cached';
+    }
+    if (failure != null) {
+      return 'Could not load models (${failure.message}); manual entry '
+          'still works';
+    }
+    if (models != null) return '${count(models)} with zero retention';
+    if (readable) return 'Loading zero-retention models…';
+    if (!keyed) return 'Save an OpenRouter key to load models';
+    return 'Repair the entry to load models';
+  }
+
+  /// The suggestions under the model field: at most the match limit,
+  /// the highlighted one kept in view, a tap or Enter choosing it.
+  Widget _options(
+    BuildContext context,
+    void Function(String) onSelected,
+    Iterable<String> options,
+  ) {
+    final highlighted = AutocompleteHighlightedOption.of(context);
+    return Align(
+      alignment: Alignment.topLeft,
+      child: Material(
+        elevation: 4,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 240, maxWidth: 480),
+          child: ListView.builder(
+            key: openRouterOptionsKey,
+            shrinkWrap: true,
+            padding: EdgeInsets.zero,
+            itemCount: options.length,
+            itemBuilder: (context, index) {
+              final option = options.elementAt(index);
+              final isHighlighted = index == highlighted;
+              if (isHighlighted) {
+                SchedulerBinding.instance.addPostFrameCallback((_) {
+                  if (context.mounted) {
+                    Scrollable.ensureVisible(context, alignment: 0.5);
+                  }
+                });
+              }
+              return InkWell(
+                onTap: () => onSelected(option),
+                child: Container(
+                  color: isHighlighted ? Theme.of(context).focusColor : null,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  child: Text(option),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
     );
   }
 
@@ -422,7 +581,10 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       notice.show(e.message);
       return;
     }
+    // Cleared and left: an empty, focused field would offer the whole
+    // list over the key row below.
     _model.clear();
+    _modelFocus.unfocus();
     notice.show('$id: $model · ${routing.label}');
   }
 

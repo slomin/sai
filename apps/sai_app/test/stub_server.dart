@@ -12,6 +12,7 @@ final class StubServer {
   List<String> words = const ['ready'];
   double? tokensPerSecond = 33.3;
   int chatStatus = 200;
+  int zdrStatus = 200;
 
   static Future<StubServer> start() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -46,6 +47,37 @@ final class StubServer {
           ..write(
             jsonEncode({
               'data': {'limit': 1, 'usage': 0},
+            }),
+          );
+      case 'GET /v1/endpoints/zdr' when zdrStatus != 200:
+        response
+          ..statusCode = zdrStatus
+          ..write('{"error":"no"}');
+      case 'GET /v1/endpoints/zdr':
+        // OpenRouter's zero-retention list (#112): one row per endpoint —
+        // two hosts for one model, a router, a malformed row, a variant.
+        response
+          ..headers.contentType = ContentType.json
+          ..write(
+            jsonEncode({
+              'data': [
+                {
+                  'model_id': 'qwen/qwen3-235b-a22b',
+                  'model_name': 'Qwen3 235B',
+                  'provider_name': 'DeepInfra',
+                },
+                {
+                  'model_id': 'deepseek/deepseek-v4-flash-0731',
+                  'provider_name': 'DeepInfra',
+                },
+                {
+                  'model_id': 'deepseek/deepseek-v4-flash-0731',
+                  'provider_name': 'GMICloud',
+                },
+                {'model_id': 'openrouter/auto'},
+                {'name': 'no id'},
+                {'model_id': 'z-ai/glm-5.2:free'},
+              ],
             }),
           );
       case 'POST /v1/chat/completions' when chatStatus != 200:

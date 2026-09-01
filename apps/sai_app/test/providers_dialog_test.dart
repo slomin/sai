@@ -459,7 +459,7 @@ void main() {
       );
       expect(stub.requests, contains('GET /v1/models'));
       final before = stub.requests.length;
-      await tester.tap(find.text('Refresh'));
+      await tester.tap(find.byKey(endpointRefreshKey));
       await until(tester, () => stub.requests.length > before);
       await until(tester, () => find.text('asking…').evaluate().isEmpty);
       expect(find.text('ok · 2 models · context unavailable'), findsOneWidget);
@@ -547,7 +547,7 @@ void main() {
         find.textContaining('revoke the key at openrouter.ai'),
         findsOneWidget,
       );
-      await tester.tap(find.text('Refresh'));
+      await tester.tap(find.byKey(endpointRefreshKey));
       await until(tester, () => stub.requests.contains('GET /v1/key'));
       await until(tester, () => find.text('asking…').evaluate().isEmpty);
       expect(
@@ -784,7 +784,196 @@ void main() {
         container.read(settingsProvider).provider('openrouter')!.routing,
         'exact',
       );
+      // No key, no list (#112): the line says so and nothing is asked.
+      expect(
+        find.text('Save an OpenRouter key to load models'),
+        findsOneWidget,
+        reason: screen(),
+      );
+      expect(
+        tester.widget<TextButton>(find.byKey(openRouterRefreshKey)).onPressed,
+        isNull,
+      );
       expect(stub.requests, isNot(contains('GET /v1/key')));
+      expect(stub.requests, isNot(contains('GET /v1/endpoints/zdr')));
+      await container.read(llmRegistryProvider)['openrouter']!.close();
+      await tester.pump();
+    });
+
+    testWidgets('OpenRouter suggests zero-retention models and applies one '
+        '(#112)', (tester) async {
+      final store = InMemorySecretStore();
+      final endpoint = Uri.parse(stub.v1);
+      final container = await pumpApp(
+        tester,
+        secrets: store,
+        builtins: [
+          FakeLlmProvider.new,
+          () => openRouterBuiltin(store, endpoint: endpoint),
+        ],
+        openRouterEndpoint: endpoint,
+      );
+      int listed() =>
+          stub.requests.where((r) => r == 'GET /v1/endpoints/zdr').length;
+      ProviderConfig entry() =>
+          container.read(settingsProvider).provider('openrouter')!;
+      await open(tester);
+      await select(tester, 'openrouter');
+      // Without a key nothing is asked; the line says what would help.
+      expect(
+        find.text('Save an OpenRouter key to load models'),
+        findsOneWidget,
+        reason: screen(),
+      );
+      expect(
+        tester.widget<TextButton>(find.byKey(openRouterRefreshKey)).onPressed,
+        isNull,
+      );
+      await until(tester, () => find.text('asking…').evaluate().isEmpty);
+      expect(listed(), 0);
+
+      // A stored key reads the list once, for the session.
+      await tester.ensureVisible(find.byKey(apiKeyFieldKey));
+      await tester.enterText(find.byKey(apiKeyFieldKey), canary);
+      await tester.pump();
+      await tapVisible(tester, find.text('Save'));
+      await until(tester, () => listed() == 1);
+      await until(
+        tester,
+        () => find.text('3 models with zero retention').evaluate().isNotEmpty,
+      );
+      expect(listed(), 1);
+      expect(container.read(openRouterCatalogueProvider).models, [
+        'deepseek/deepseek-v4-flash-0731',
+        'qwen/qwen3-235b-a22b',
+        'z-ai/glm-5.2:free',
+      ]);
+
+      // The field suggests as one types: focus alone offers nothing,
+      // a few letters narrow, an empty field offers the whole list —
+      // deduplicated, no router, sorted, ids alone.
+      await tester.ensureVisible(find.byKey(openRouterModelFieldKey));
+      await tester.tap(find.byKey(openRouterModelFieldKey));
+      await tester.pump();
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
+      await tester.enterText(find.byKey(openRouterModelFieldKey), 'glm');
+      await tester.pump();
+      expect(
+        find.byKey(openRouterOptionsKey),
+        findsOneWidget,
+        reason: screen(),
+      );
+      expect(find.text('z-ai/glm-5.2:free'), findsOneWidget);
+      expect(find.text('qwen/qwen3-235b-a22b'), findsNothing);
+      await tester.enterText(find.byKey(openRouterModelFieldKey), '');
+      await tester.pump();
+      expect(find.text('deepseek/deepseek-v4-flash-0731'), findsOneWidget);
+      expect(find.text('qwen/qwen3-235b-a22b'), findsOneWidget);
+      expect(find.text('z-ai/glm-5.2:free'), findsOneWidget);
+      expect(find.text('openrouter/auto'), findsNothing);
+      expect(screen(), isNot(contains('Qwen3 235B')));
+      expect(screen(), isNot(contains('GMICloud')));
+
+      // ↓ moves the highlight; Enter takes it into the field without
+      // applying; Enter again applies it.
+      // Which row is highlighted, by its colour.
+      List<bool> lit() => find
+          .descendant(
+            of: find.byKey(openRouterOptionsKey),
+            matching: find.byType(Container),
+          )
+          .evaluate()
+          .map((e) => (e.widget as Container).color != null)
+          .toList();
+      expect(lit(), [true, false, false]);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(lit(), [false, true, false]);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      expect(lit(), [false, true, false]);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(openRouterModelFieldKey))
+            .controller!
+            .text,
+        'qwen/qwen3-235b-a22b',
+      );
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'openrouter-model',
+        reason: 'taking a suggestion keeps the person in the field',
+      );
+      expect(entry().defaultModel, openRouterPresetModel, reason: 'not yet');
+      expect(find.byKey(openRouterOptionsKey), findsNothing, reason: screen());
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(entry().defaultModel, 'qwen/qwen3-235b-a22b');
+      expect(entry().routing, 'exact');
+
+      // A tapped suggestion fills the field the same way; Apply writes it.
+      await tester.ensureVisible(find.byKey(openRouterModelFieldKey));
+      await tester.enterText(find.byKey(openRouterModelFieldKey), 'glm');
+      await tester.pump();
+      await tester.tap(find.text('z-ai/glm-5.2:free'));
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(find.byKey(openRouterModelFieldKey))
+            .controller!
+            .text,
+        'z-ai/glm-5.2:free',
+      );
+      expect(entry().defaultModel, 'qwen/qwen3-235b-a22b', reason: 'not yet');
+      await tapVisible(tester, find.byKey(openRouterApplyKey));
+      expect(entry().defaultModel, 'z-ai/glm-5.2:free');
+
+      // An id the list does not have still applies on Enter: guidance,
+      // not a gate.
+      await tester.ensureVisible(find.byKey(openRouterModelFieldKey));
+      await tester.enterText(
+        find.byKey(openRouterModelFieldKey),
+        'qwen/qwen3-8b',
+      );
+      await tester.pump();
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(entry().defaultModel, 'qwen/qwen3-8b');
+      expect(listed(), 1, reason: 'choosing never re-reads the list');
+
+      // A failed refresh keeps the list and says why, in fixed words.
+      stub.zdrStatus = 500;
+      await tapVisible(tester, find.byKey(openRouterRefreshKey));
+      await until(tester, () => listed() == 2);
+      await until(
+        tester,
+        () => find
+            .text(
+              'Could not refresh (the endpoint answered 500); showing 3 '
+              'models cached',
+            )
+            .evaluate()
+            .isNotEmpty,
+      );
+      await tester.ensureVisible(find.byKey(openRouterModelFieldKey));
+      await tester.enterText(find.byKey(openRouterModelFieldKey), 'glm');
+      await tester.pump();
+      expect(find.text('z-ai/glm-5.2:free'), findsOneWidget, reason: screen());
+      expect(screen(), isNot(contains(canary)));
+      expect(screen(), isNot(contains('model_name')));
+      expect(
+        container.read(settingsFileProvider).readAsStringSync(),
+        isNot(contains('Qwen3 235B')),
+      );
+      for (final line in archiveLines(container.read(archiveRootProvider))) {
+        expect(line, isNot(contains('endpoints/zdr')));
+        expect(line, isNot(contains('Qwen3 235B')));
+      }
       await container.read(llmRegistryProvider)['openrouter']!.close();
       await tester.pump();
     });
