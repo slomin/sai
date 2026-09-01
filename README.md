@@ -93,11 +93,12 @@ entry point and lands as `sai_tui-dev`) — `tool/build-tui.sh
 point `SAI_ARCHIVE_ROOT` at a throwaway directory, e.g.
 `SAI_ARCHIVE_ROOT=/tmp/sai-demo/archive`. Non-secret settings live in
 `settings.json` in the same data directory as the default archive;
-`SAI_SETTINGS_FILE` moves them, and a scratch run sets both. Three
+`SAI_SETTINGS_FILE` moves them, and a scratch run sets both. Four
 providers are built in and need no configuration: `lmstudio` (LM
 Studio's server on this Mac, `http://127.0.0.1:1234/v1`, whatever model
-it has loaded), `lan` (the LAN inference box, #23) and `fake` (answers
-offline). A first run — no settings file yet — selects `lmstudio`;
+it has loaded), `lan` (the LAN inference box, #23), `fake` (answers
+offline) and `openrouter` (the cloud broker, #24 — inactive until a
+key is stored). A first run — no settings file yet — selects `lmstudio`;
 `provider use lan|fake|none` changes that, and `{"version":0,"llm":"fake"}`
 in the settings file is the offline choice. The app's first launch
 (#40) asks once — start empty, or import from Things 3 after a
@@ -126,9 +127,19 @@ dart run apps/sai_tui/bin/sai_tui.dart provider add lan --kind openai_compatible
 dart run apps/sai_tui/bin/sai_tui.dart provider list
 ```
 
-Two kinds exist: `fake` (offline) and `openai_compatible` (any `/v1`
-endpoint: `llama-server`, LM Studio, the LAN server); a configured
-provider with a built-in's id replaces it. Plain
+Three kinds exist: `fake` (offline), `openai_compatible` (any `/v1`
+endpoint: `llama-server`, LM Studio, the LAN server) and `openrouter`
+(ADR 0022: fixed to `https://openrouter.ai/api/v1`, always `cloud`,
+always keyed — `secret set openrouter` configures the built-in and
+files the key; on its recommended preset every request pins
+`deepseek/deepseek-v4-flash-0731` to DeepInfra fp8 with no fallback,
+denies data collection and requires zero retention, and `provider add
+openrouter --model <owner/name>` chooses one exact model instead;
+`--routing recommended` returns to the preset; `openrouter/auto`,
+`~latest` aliases and `:nitro`/`:floor`/`:online` are refused; removing
+the key in sai removes the Keychain item only, so revoke it at
+openrouter.ai too — use a dedicated key with a spending cap); a
+configured provider with a built-in's id replaces it. Plain
 `http://` is accepted only on this machine or the LAN (loopback and
 private addresses, `.local`-style and dotless names — ADR 0012);
 anything else must be `https://` with a certificate this Mac trusts —
