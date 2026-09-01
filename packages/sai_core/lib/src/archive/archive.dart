@@ -79,6 +79,14 @@ final class Archive {
 
   final ArchiveStore _store;
   final DateTime Function() _clock;
+  var _appended = 0;
+
+  /// How many events this instance has appended since it opened. Every
+  /// writer in a process shares one instance, so against the `HEAD` count
+  /// this tells the process's own lines from another writer's (#118):
+  /// read it right before [head] — both are synchronous, and [append]
+  /// advances `HEAD` and this counter in one synchronous step.
+  int get appended => _appended;
 
   /// Opens (creating if needed) the archive at [root].
   ///
@@ -138,6 +146,7 @@ final class Archive {
     _store.writeHead(
       HeadRecord(count: tail.count + 1, head: id, updated: formatTs(_clock())),
     );
+    _appended++;
     return stored;
   });
 
@@ -233,7 +242,9 @@ final class Archive {
   /// files — a cheap "has the log grown?" probe for a process that shares
   /// the root with another writer (a count that moved means a [events]
   /// re-read, or a `TaskStore.reload`, will see more). Not a check:
-  /// [verify] is the locked, recomputed read.
+  /// [verify] is the locked, recomputed read. The file is read before the
+  /// first suspension point, so a caller that reads [appended] just
+  /// before sees the two as one instant.
   Future<ArchiveReport> head() async {
     final head = _readHead();
     return ArchiveReport(count: head.count, head: head.head);

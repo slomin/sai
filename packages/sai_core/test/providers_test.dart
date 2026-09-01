@@ -332,6 +332,233 @@ void main() {
     });
   });
 
+  group('the archive follower (#118)', () {
+    late Directory tmp;
+    const today = CalendarDate(2026, 8, 24);
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('sai_follower_test');
+    });
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    Future<ProviderContainer> make({
+      List<Override> overrides = const [],
+    }) async {
+      final container = ProviderContainer.test(
+        overrides: [
+          archiveRootProvider.overrideWithValue(tmp),
+          settingsFileProvider.overrideWithValue(File('${tmp.path}/s.json')),
+          eventSourceProvider.overrideWithValue('sai/test'),
+          secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+          clockProvider.overrideWithValue(() => DateTime(2026, 8, 24, 12)),
+          connectionProbeEveryProvider.overrideWithValue(null),
+          archivePollEveryProvider.overrideWithValue(null),
+          ...overrides,
+        ],
+      );
+      await container.read(tasksProvider.future);
+      return container;
+    }
+
+    /// Another process: its own archive handle and store over the root.
+    Future<T> foreign<T>(Future<T> Function(TaskStore store) act) async {
+      final other = await Archive.open(tmp);
+      final store = await TaskStore.open(other, source: 'sai/app');
+      try {
+        return await act(store);
+      } finally {
+        store.dispose();
+        await other.close();
+      }
+    }
+
+    EventDraft ownLine(String type) => EventDraft(
+      type: type,
+      actor: Actor.user,
+      source: 'sai/test',
+      payload: const {'text': 'mine'},
+    );
+
+    test('reloads on a foreign line, never on this process\'s own', () async {
+      final container = await make();
+      final follower = container.read(archiveFollowerProvider.notifier);
+      await follower.tick();
+      expect(container.read(archiveFollowerProvider).reloads, 0);
+
+      final store = container.read(tasksProvider.notifier).store;
+      await store.createTask(title: 'mine');
+      final archive = await container.read(archiveProvider.future);
+      await archive.append(ownLine(EventTypes.chatMessage));
+      await archive.append(ownLine(EventTypes.providerUsage));
+      final before = container.read(tasksProvider).requireValue;
+      await follower.tick();
+      expect(container.read(archiveFollowerProvider).reloads, 0);
+      expect(
+        identical(container.read(tasksProvider).requireValue, before),
+        isTrue,
+      );
+
+      await foreign((other) => other.createTask(title: 'from the app'));
+      expect(container.read(tasksProvider).requireValue.tasks, hasLength(1));
+      await follower.tick();
+      final state = container.read(archiveFollowerProvider);
+      expect(state.reloads, 1);
+      expect(state.failure, isNull);
+      expect(
+        container
+            .read(tasksProvider)
+            .requireValue
+            .tasks
+            .values
+            .map((t) => t.title),
+        containsAll(['mine', 'from the app']),
+      );
+      await follower.tick();
+      expect(container.read(archiveFollowerProvider).reloads, 1);
+    });
+
+    test('two ticks during one check are one check', () async {
+      final container = await make();
+      await foreign((other) => other.createTask(title: 'from the app'));
+      final follower = container.read(archiveFollowerProvider.notifier);
+      final first = follower.tick();
+      final second = follower.tick();
+      expect(identical(first, second), isTrue);
+      await Future.wait([first, second]);
+      expect(container.read(archiveFollowerProvider).reloads, 1);
+      expect(container.read(tasksProvider).requireValue.tasks, hasLength(1));
+    });
+
+    test('a failed check keeps the projection and says so; '
+        'the next good one clears it', () async {
+      final container = await make();
+      await foreign((other) => other.createTask(title: 'from the app'));
+      final head = File('${tmp.path}/HEAD');
+      final good = head.readAsBytesSync();
+      head.writeAsStringSync('not json\n');
+      final follower = container.read(archiveFollowerProvider.notifier);
+      await follower.tick();
+      var state = container.read(archiveFollowerProvider);
+      expect(state.reloads, 0);
+      expect(state.failure, contains('restore HEAD'));
+      expect(container.read(tasksProvider).requireValue.tasks, isEmpty);
+
+      head.writeAsBytesSync(good, flush: true);
+      await follower.tick();
+      state = container.read(archiveFollowerProvider);
+      expect(state.reloads, 1);
+      expect(state.failure, isNull);
+      expect(
+        container.read(tasksProvider).requireValue.tasks.values.single.title,
+        'from the app',
+      );
+    });
+
+    test('the timer follows archivePollEveryProvider and disposal', () {
+      expect(ArchiveFollower.pollEvery, const Duration(seconds: 2));
+      fakeAsync((async) {
+        final container = ProviderContainer.test(
+          overrides: [tasksProvider.overrideWith(_StuckTasks.new)],
+        );
+        final sub = container.listen(archiveFollowerProvider, (_, _) {});
+        expect(async.periodicTimerCount, 1);
+        // The store never opens: ticks pass without a read or a write.
+        async.elapse(const Duration(seconds: 7));
+        expect(container.read(archiveFollowerProvider).reloads, 0);
+        sub.close();
+        container.dispose();
+        expect(async.pendingTimers, isEmpty);
+
+        final quiet = ProviderContainer.test(
+          overrides: [
+            tasksProvider.overrideWith(_StuckTasks.new),
+            archivePollEveryProvider.overrideWithValue(null),
+          ],
+        );
+        quiet.listen(archiveFollowerProvider, (_, _) {});
+        expect(async.periodicTimerCount, 0);
+        quiet.dispose();
+      });
+    });
+
+    test('every mutation from a second store lands tick by tick', () async {
+      final container = await make();
+      final follower = container.read(archiveFollowerProvider.notifier);
+      final other = await Archive.open(tmp);
+      final store = await TaskStore.open(other, source: 'sai/app');
+      addTearDown(() async {
+        store.dispose();
+        await other.close();
+      });
+      Task seen(TaskId id) =>
+          container.read(tasksProvider).requireValue.task(id)!;
+
+      final id = await store.createTask(title: 'walk');
+      await follower.tick();
+      expect(seen(id).title, 'walk');
+      await store.editTask(id, title: const Patch('walked'));
+      await follower.tick();
+      expect(seen(id).title, 'walked');
+      await store.editTask(id, when: const Patch(TaskWhen.date(today)));
+      await follower.tick();
+      expect(
+        container
+            .read(tasksProvider)
+            .requireValue
+            .list(TaskList.today, today: today)
+            .map((t) => t.id),
+        [id],
+      );
+      await store.completeTask(id);
+      await follower.tick();
+      expect(seen(id).status, TaskStatus.completed);
+      await store.reopenTask(id);
+      await follower.tick();
+      expect(seen(id).status, TaskStatus.open);
+      await store.cancelTask(id);
+      await follower.tick();
+      expect(seen(id).status, TaskStatus.cancelled);
+      await store.deleteTask(id);
+      await follower.tick();
+      expect(seen(id).deletedAt, isNotNull);
+      await store.restoreTask(id);
+      await follower.tick();
+      expect(seen(id).deletedAt, isNull);
+      final project = await store.createProject(title: 'P');
+      await store.moveTask(id, project: project);
+      await follower.tick();
+      expect(seen(id).project, project);
+      expect(container.read(archiveFollowerProvider).reloads, 9);
+    });
+
+    test('the assistant\'s next turn carries a foreign task; '
+        'the turn before it did not', () async {
+      String echo(LlmRequest r) => r.messages.map((m) => m.text).join(' | ');
+      final container = await make(
+        overrides: [
+          builtinLlmsProvider.overrideWithValue([
+            () => FakeLlmProvider(script: echo),
+          ]),
+          warmEnabledProvider.overrideWithValue(false),
+        ],
+      );
+      container.read(settingsProvider.notifier).selectLlm('fake');
+      await foreign((other) => other.createTask(title: 'From the app'));
+      final chat = container.read(chatProvider.notifier);
+      await chat.send('what is there?');
+      expect(
+        container.read(chatProvider).turns.last.text,
+        isNot(contains('From the app')),
+      );
+      await container.read(archiveFollowerProvider.notifier).tick();
+      await chat.send('and now?');
+      expect(
+        container.read(chatProvider).turns.last.text,
+        contains('From the app'),
+      );
+    });
+  });
+
   group('shell providers', () {
     final taskA = BlobRef.sha256OfBytes([1]);
 
@@ -1915,4 +2142,11 @@ final class _ThrowingStore implements SecretStore {
   void write(String account, String value) {}
   @override
   bool delete(String account) => false;
+}
+
+/// A store that never opens, so a follower test can watch its timer
+/// without touching a file.
+class _StuckTasks extends TasksNotifier {
+  @override
+  Future<TaskProjection> build() => Completer<TaskProjection>().future;
 }

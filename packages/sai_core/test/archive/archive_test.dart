@@ -54,6 +54,26 @@ void main() {
     await other.close();
   });
 
+  test('appended counts this instance\'s appends only (#118)', () async {
+    final archive = await Archive.open(tmp, clock: clock);
+    expect(archive.appended, 0);
+    await archive.append(draft());
+    expect(archive.appended, 1);
+    final other = await Archive.open(tmp, clock: clock);
+    await other.append(draft('from another process'));
+    expect(archive.appended, 1, reason: 'another writer moves HEAD only');
+    expect(other.appended, 1);
+    expect((await archive.head()).count, 2);
+    // A refused append advances neither.
+    await expectLater(
+      archive.append(draft(), validate: (_) => throw StateError('no')),
+      throwsStateError,
+    );
+    expect(archive.appended, 1);
+    expect((await archive.head()).count, 2);
+    await other.close();
+  });
+
   test('pre-write validation sees the final event and is atomic', () async {
     final archive = await Archive.open(tmp, clock: clock);
     final first = await archive.append(draft('first'));

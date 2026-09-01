@@ -35,7 +35,8 @@ final class TaskStore {
   }) async {
     final events = await _readEvents(archive);
     return TaskStore._(archive, source, TaskProjection.replay(events))
-      .._readCount = events.length;
+      .._readCount = events.length
+      .._appendedAtRead = archive.appended;
   }
 
   /// Reads the whole log, tolerating a torn tail. A tear can also be the
@@ -109,14 +110,34 @@ final class TaskStore {
     if (barrier) _undoStack.clear();
     _projection = next;
     _readCount = events.length;
+    _appendedAtRead = _archive.appended;
     _ownSinceRead.clear();
     _notify();
   });
 
+  /// Whether the log holds lines this process did not write since the
+  /// last full read — another writer's work, which only [reload] brings
+  /// in (#118). One small file: `HEAD`'s count against [_readCount], less
+  /// the appends this process made through the shared [Archive] since
+  /// that read — its own task commands, chat and provider lines move the
+  /// head without being news. A read that a foreign line's reducer
+  /// refuses leaves the cursor where it was, so this stays true and the
+  /// next attempt replays again.
+  Future<bool> hasForeignLines() async {
+    _checkOpen();
+    // Both reads happen before the first suspension point, so the pair
+    // is one instant: an own append cannot land between them.
+    final appended = _archive.appended;
+    final head = await _archive.head();
+    return head.count - _readCount > appended - _appendedAtRead;
+  }
+
   /// How many lines the last full read of the log returned, and the ids
   /// this store appended since — together, the cursor [reload] uses to
-  /// tell another writer's lines from its own.
+  /// tell another writer's lines from its own. [_appendedAtRead] is the
+  /// archive's own-append count at that read, for [hasForeignLines].
   var _readCount = 0;
+  var _appendedAtRead = 0;
   final _ownSinceRead = <BlobRef>{};
 
   static bool _isSystemTaskMutation(StoredEvent stored) =>
