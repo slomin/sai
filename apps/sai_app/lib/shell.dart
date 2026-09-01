@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'assistant/assistant_band.dart';
+import 'commands.dart';
 import 'inspector/task_inspector.dart';
 import 'sidebar.dart';
 import 'theme/motion.dart';
@@ -30,6 +31,16 @@ class SaiShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final text = context.saiText;
+    // The log is shared with the terminal client (one store per process,
+    // ADR 0004 amendment); the core follower (#118) replays it when
+    // another process wrote. Watching keeps it alive for the app's life,
+    // the way the band keeps the warmer; a check that fails is a notice.
+    ref.watch(archiveFollowerProvider);
+    ref.listen(archiveFollowerProvider, (previous, next) {
+      if (next.failure case final failure? when failure != previous?.failure) {
+        ref.read(noticeProvider.notifier).show('reload failed: $failure');
+      }
+    });
     return Scaffold(
       body: switch (ref.watch(tasksProvider)) {
         AsyncData(:final value) => _Workspace(value),

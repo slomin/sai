@@ -194,6 +194,9 @@ List<Override> appOverrides({
   // The band watches the warmer; a test provider must never be sent a
   // background inference, and its timers would outlive the test (#105).
   warmEnabledProvider.overrideWithValue(false),
+  // The shell watches the archive follower (#118); a periodic timer would
+  // outlive the test, so a test drives `tick()` by hand.
+  archivePollEveryProvider.overrideWithValue(null),
 ];
 
 /// Pumps and lets real async run until [ready] — for a dialog that
