@@ -1,6 +1,6 @@
 # 22. OpenRouter is its own kind, on one origin, with the routing said
 
-Date: 2026-09-01 · Status: accepted · Issue: #24 · Builds on: [0008](0008-secrets-live-in-the-file-keychain.md), [0009](0009-provider-transport-is-direct-and-bounded.md), [0010](0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md), [0013](0013-subscription-logins-belong-to-the-vendor-runtime.md) · Amends: [0013](0013-subscription-logins-belong-to-the-vendor-runtime.md) · Schema: [settings-v0](../settings/settings-v0.md)
+Date: 2026-09-01 · Status: accepted · Issue: #24 · Builds on: [0008](0008-secrets-live-in-the-file-keychain.md), [0009](0009-provider-transport-is-direct-and-bounded.md), [0010](0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md), [0013](0013-subscription-logins-belong-to-the-vendor-runtime.md) · Amends: [0013](0013-subscription-logins-belong-to-the-vendor-runtime.md), [0009](0009-provider-transport-is-direct-and-bounded.md) · Schema: [settings-v0](../settings/settings-v0.md)
 
 ## Context
 
@@ -134,13 +134,17 @@ filters over providers' stated policies; sai asks, it cannot verify.
   because that path is the one rule set that already says "no key, no
   request" and keeps the dev copy off the network — a keyless second
   path would be more code for no privacy gained. Its own body cap (8
-  MiB; the probe's stays 1 MiB); only `data[].model_id` is kept,
-  filtered as a typed id is, deduplicated, sorted; one list for the
-  session, a failed refresh keeping the last one beside its failure in
-  the transport's fixed words; nothing of it in settings, the archive
-  or the usage totals. Guidance, not a gate: a typed id that is not
-  listed still applies, and a listed one may still be refused later —
-  the list is the moment's.
+  MiB — amending 0009's 1 MiB for this one read; the probe's stays);
+  only `data[].model_id` is kept, filtered as a typed id is,
+  deduplicated, sorted; one list for the session, read through the
+  provider the block shows (the built-in or an entry of the kind under
+  any id), a failed refresh keeping the last one beside its failure in
+  the transport's fixed words, a key stored or removed forgetting it;
+  nothing of it in settings, the archive or the usage totals. Offered
+  as one types — never for an empty field, never on focus alone — with
+  Escape closing the list and keeping the field. Guidance, not a gate:
+  a typed id that is not listed still applies, and a listed one may
+  still be refused later — the list is the moment's.
 - Rejected: a locked-down `openai_compatible` entry (cannot say the
   dialect, the pin or the fixed origin, and an edit could move it);
   OpenRouter's OAuth PKCE "connect" flow (a browser round-trip and a

@@ -90,9 +90,11 @@ there on every install, inactive, on its recommended preset.
 2a. The zero-retention list (#112). Saving the key read it: the line
    under "Exact model" reads `N models with zero retention` (the
    dashboard's activity shows no generation for it — a list costs no
-   tokens). Type a letter into the model field, then delete it: the
-   whole list, exact ids only, no `openrouter/*`; type a few letters,
-   take one with ↓ and Enter, then Enter again (or Apply). The row reads `<id> — cloud · exact
+   tokens). Type a few letters into the model field: exact ids only,
+   no `openrouter/*`, the highlight following ↓ down a list taller than
+   its box; take one with Enter, then Enter again (or Apply). Escape
+   closes the list and keeps the field — Enter then applies what was
+   typed, even an id a listed one begins with. The row reads `<id> — cloud · exact
    model · key set`; Test answers — a listed model has an endpoint that
    meets the filters. Wi-Fi off, Refresh: `Could not refresh (…);
    showing N models cached`, the suggestions still there; Wi-Fi on,
