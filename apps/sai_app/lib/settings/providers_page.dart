@@ -83,7 +83,14 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
         : ids.first;
     final config = settings.provider(selected);
     final provider = registry[selected];
-    final routing = provider == null ? null : openRouterRoutingOf(provider);
+    // OpenRouter's block shows for the built provider and for an entry of
+    // that kind the factory refused: the block is how it is repaired.
+    final openRouter =
+        (provider != null && openRouterRoutingOf(provider) != null) ||
+        config?.kind == openRouterKind;
+    final routing = provider == null
+        ? OpenRouterRouting.parse(config?.routing)
+        : openRouterRoutingOf(provider);
     // A configured entry names its account; an unconfigured built-in that
     // ships taking a key (OpenRouter) says so itself.
     final takesKey =
@@ -138,9 +145,15 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
             if (provider != null &&
                 (config?.endpoint != null || provider is LlmEndpointProbe))
               _endpoint(selected, provider),
-            if (routing != null)
-              _openRouterModel(selected, provider!, config, routing),
-            if (takesKey) _key(selected, revokeElsewhere: routing != null),
+            if (openRouter)
+              _openRouterModel(
+                selected,
+                provider,
+                config,
+                routing,
+                model: config?.defaultModel ?? provider?.defaultModel,
+              ),
+            if (takesKey) _key(selected, revokeElsewhere: openRouter),
           ],
         ),
       ],
@@ -273,36 +286,41 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   /// OpenRouter's model (#24): the recommended preset — one model pinned
   /// to one host and quantization, no fallback — or one exact id of the
   /// person's own. Either writes the entry (configuring the built-in as
-  /// shipped first); the routing is stored, never inferred from the id.
+  /// shipped first, or repairing an entry the factory refused); the
+  /// routing is stored, never inferred from the id. [routing] is null
+  /// for an entry whose word this sai does not know: neither row is
+  /// checked, and either tap writes a good one.
   Widget _openRouterModel(
     String id,
-    LlmProvider provider,
+    LlmProvider? provider,
     ProviderConfig? config,
-    OpenRouterRouting routing,
-  ) {
+    OpenRouterRouting? routing, {
+    required String? model,
+  }) {
     final exact = routing == OpenRouterRouting.exact;
+    final preset = routing == OpenRouterRouting.deepinfraFp8;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ListTile(
           key: openRouterPresetKey,
           dense: true,
-          selected: !exact,
-          leading: Icon(exact ? null : Icons.check, size: 18),
+          selected: preset,
+          leading: Icon(preset ? Icons.check : null, size: 18),
           title: const Text('Recommended: $openRouterPresetModel'),
           subtitle: const Text(
             'Pinned to DeepInfra, FP8, no fallback; data collection denied, '
             'zero retention required.',
           ),
-          onTap: exact
-              ? () => _route(
+          onTap: preset
+              ? null
+              : () => _route(
                   id,
                   provider,
                   config,
                   OpenRouterRouting.deepinfraFp8,
                   openRouterPresetModel,
-                )
-              : null,
+                ),
         ),
         ListTile(
           key: openRouterExactKey,
@@ -312,7 +330,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
           title: const Text('Exact model'),
           subtitle: Text(
             exact
-                ? '${provider.defaultModel} — OpenRouter picks among that '
+                ? '$model — OpenRouter picks among that '
                       "model's endpoints, never another model; the same "
                       'privacy filters apply.'
                 : 'One owner/name id from openrouter.ai/models; the same '
@@ -356,7 +374,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     );
   }
 
-  void _applyModel(String id, LlmProvider provider, ProviderConfig? config) {
+  void _applyModel(String id, LlmProvider? provider, ProviderConfig? config) {
     final model = _model.text.trim();
     if (model.isEmpty) return;
     final problem = openRouterModelProblem(model);
@@ -369,19 +387,26 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
 
   void _route(
     String id,
-    LlmProvider provider,
+    LlmProvider? provider,
     ProviderConfig? config,
     OpenRouterRouting routing,
     String model,
   ) {
     final notice = ref.read(noticeProvider.notifier);
-    final base = config ?? configFor(provider);
+    final base = config ?? (provider == null ? null : configFor(provider));
     if (base == null) return;
     try {
+      // The whole shape the kind wants, so an entry that came in wrong
+      // (an endpoint, a local tag) leaves right.
       ref
           .read(settingsProvider.notifier)
           .upsertProvider(
             base.copyWith(
+              kind: openRouterKind,
+              endpoint: () => null,
+              privacy: () => LlmPrivacy.cloud,
+              credential: () =>
+                  base.credential ?? ProviderConfig.credentialFor(id),
               defaultModel: () => model,
               routing: () => routing.word,
             ),
@@ -401,8 +426,12 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     final status = ref.watch(credentialStatusProvider(id));
     final config = ref.watch(settingsProvider).provider(id);
     final statusText = switch (status) {
+      // An origin that never moves has no "other endpoint" to speak of.
       CredentialStatus.set =>
-        config != null && config.endpoint != null && !config.keyBound
+        !revokeElsewhere &&
+                config != null &&
+                config.endpoint != null &&
+                !config.keyBound
             ? 'A key is stored, but for another endpoint: enter it again.'
             : 'A key is stored in the Keychain.',
       CredentialStatus.missing => 'No key stored yet.',

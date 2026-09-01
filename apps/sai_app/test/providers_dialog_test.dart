@@ -477,7 +477,7 @@ void main() {
           FakeLlmProvider.new,
           () => openRouterBuiltin(store, endpoint: endpoint),
         ],
-        overrides: [openRouterEndpointProvider.overrideWithValue(endpoint)],
+        openRouterEndpoint: endpoint,
       );
       final settingsFile = container.read(settingsFileProvider);
       await open(tester);
@@ -563,7 +563,7 @@ void main() {
         container.read(settingsProvider).provider('openrouter')!.defaultModel,
         openRouterPresetModel,
       );
-      expect(screen(), contains('lets the router pick the model'));
+      expect(screen(), contains('routers that pick the model'));
       await tester.ensureVisible(find.byKey(openRouterModelFieldKey));
       await tester.enterText(
         find.byKey(openRouterModelFieldKey),
@@ -619,6 +619,86 @@ void main() {
       await tester.pump();
     });
 
+    testWidgets('a refused OpenRouter entry keeps its block and is repaired '
+        'from it (#24)', (tester) async {
+      final store = InMemorySecretStore();
+      final endpoint = Uri.parse(stub.v1);
+      final container = await pumpApp(
+        tester,
+        secrets: store,
+        builtins: [
+          FakeLlmProvider.new,
+          () => openRouterBuiltin(store, endpoint: endpoint),
+        ],
+        openRouterEndpoint: endpoint,
+      );
+      store.write('provider:openrouter', canary);
+      // As a hand edit or an older sai would leave it: an endpoint, a
+      // local tag, a routing word this sai does not know.
+      container
+          .read(settingsProvider.notifier)
+          .upsertProvider(
+            ProviderConfig(
+              id: 'openrouter',
+              kind: 'openrouter',
+              endpoint: 'https://other.example/v1',
+              defaultModel: 'qwen/qwen3-8b',
+              credential: 'provider:openrouter',
+              privacy: LlmPrivacy.local,
+              routing: 'cheapest',
+            ),
+          );
+      await tester.pump();
+      expect(
+        container.read(llmRegistryProvider),
+        isNot(contains('openrouter')),
+      );
+      await open(tester);
+      await select(tester, 'openrouter');
+      expect(
+        find.text('carrying an endpoint, but openrouter has a fixed one'),
+        findsOneWidget,
+        reason: screen(),
+      );
+      // The block and the revocation note are there for the entry itself.
+      expect(find.byKey(openRouterPresetKey), findsOneWidget);
+      expect(
+        tester.widget<ListTile>(find.byKey(openRouterPresetKey)).selected,
+        isFalse,
+      );
+      expect(
+        tester.widget<ListTile>(find.byKey(openRouterExactKey)).selected,
+        isFalse,
+      );
+      expect(find.text('A key is stored in the Keychain.'), findsOneWidget);
+      expect(
+        find.textContaining('revoke the key at openrouter.ai'),
+        findsOneWidget,
+      );
+      // One tap on the preset rewrites the whole shape.
+      await tapVisible(tester, find.byKey(openRouterPresetKey));
+      final fixed = container.read(settingsProvider).provider('openrouter')!;
+      expect(fixed.toJson(), {
+        'id': 'openrouter',
+        'kind': 'openrouter',
+        'default_model': openRouterPresetModel,
+        'credential': 'provider:openrouter',
+        'privacy': 'cloud',
+        'routing': 'deepinfra_fp8',
+      });
+      final built =
+          container.read(llmRegistryProvider)['openrouter']!
+              as OpenAiCompatibleProvider;
+      expect(built.origin, stub.origin);
+      expect(
+        tester.widget<ListTile>(find.byKey(openRouterPresetKey)).selected,
+        isTrue,
+      );
+      expect(screen(), isNot(contains(canary)));
+      await built.close();
+      await tester.pump();
+    });
+
     testWidgets('the dev copy shows OpenRouter but holds no key (#95, #24)', (
       tester,
     ) async {
@@ -632,7 +712,7 @@ void main() {
           FakeLlmProvider.new,
           () => openRouterBuiltin(store, endpoint: endpoint),
         ],
-        overrides: [openRouterEndpointProvider.overrideWithValue(endpoint)],
+        openRouterEndpoint: endpoint,
       );
       await open(tester, app: 'sai dev');
       await select(tester, 'openrouter');

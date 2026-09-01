@@ -86,6 +86,7 @@ Future<ProviderContainer> pumpApp(
   SaiIdentity identity = SaiIdentity.stable,
   FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
   SecretStore? secrets,
+  Uri? openRouterEndpoint,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
   // real data directory, whatever the developer's environment says. A
@@ -103,6 +104,7 @@ Future<ProviderContainer> pumpApp(
         identity: identity,
         finishedTasks: finishedTasks,
         secrets: secrets,
+        openRouterEndpoint: openRouterEndpoint,
       ),
       ...overrides,
     ],
@@ -140,6 +142,7 @@ List<Override> appOverrides({
   SaiIdentity identity = SaiIdentity.stable,
   FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
   SecretStore? secrets,
+  Uri? openRouterEndpoint,
 }) => [
   // Stable unless a test asks for dev: the goldens show the plain
   // header, and `appFlavor` is unset under `flutter test` anyway.
@@ -158,6 +161,11 @@ List<Override> appOverrides({
   // or the LAN box unless it asks for them.
   builtinLlmsProvider.overrideWithValue(builtins),
   defaultLlmIdProvider.overrideWithValue(null),
+  // Never the real OpenRouter from a test: an unroutable loopback port
+  // unless the test brings its stub (#24).
+  openRouterEndpointProvider.overrideWithValue(
+    openRouterEndpoint ?? Uri.parse('http://127.0.0.1:1/v1'),
+  ),
   // Widget tests must finish with no pending timers. Core exercises the
   // real midnight scheduler with fake_async; app tests pin the same read
   // contract without creating a day-long timer in Flutter's fake clock.
