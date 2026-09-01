@@ -313,6 +313,14 @@ final requestedEffortProvider = Provider<ReasoningEffort?>((ref) {
   return requestedEffortFor(provider, reasoningOn: on);
 });
 
+/// Whether the clients show the model's reasoning (#26): what the next
+/// request carries is not `none` — the switch for most kinds; for an
+/// OpenAI kind its entry's own effort, where Model default may reason
+/// and the switch is not its.
+final reasoningShownProvider = Provider<bool>(
+  (ref) => ref.watch(requestedEffortProvider) != ReasoningEffort.none,
+);
+
 /// When a finished task leaves its working views (#97), as settings hold
 /// it (`finished_task_visibility`, end of the local day by default).
 final finishedTaskVisibilityProvider = Provider<FinishedTaskVisibility>(
@@ -463,6 +471,11 @@ final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>((ref) {
   final openRouter = ref.watch(openRouterEndpointProvider);
   final openAi = ref.watch(openAiEndpointProvider);
   final runtime = ref.watch(appServerRuntimeProvider);
+  // No runtime has a reason: the dev copy runs none, or the home named
+  // for it was refused. The ChatGPT kind says which.
+  final noRuntimeText = ref.watch(codexHomeRefusedProvider)
+      ? CodexText.homeUnsafe
+      : CodexText.devRefused;
   return {
     'fake': fakeProviderFactory,
     'openai_compatible': openAiCompatibleFactory,
@@ -470,7 +483,8 @@ final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>((ref) {
         openRouterFactory(config, secrets, endpoint: openRouter),
     openAiKind: (config, secrets) =>
         openAiFactory(config, secrets, endpoint: openAi),
-    chatGptKind: (config, secrets) => chatGptFactory(config, runtime: runtime),
+    chatGptKind: (config, secrets) =>
+        chatGptFactory(config, runtime: runtime, noRuntimeText: noRuntimeText),
   };
 });
 
@@ -489,14 +503,38 @@ final sidecarLocatorProvider = Provider<SidecarLocator?>(
   (ref) => SidecarLocator.beside(Platform.resolvedExecutable),
 );
 
-/// The credential home the runtime owns, or null in the dev flavor
-/// (#95): `<data dir>/codex`, or `SAI_CODEX_HOME` for a scratch smoke.
+/// The credential home as resolved, and whether it was refused: a
+/// `SAI_CODEX_HOME` that is relative, or the person's own `~/.codex`, is
+/// refused — and the refusal reaches the ChatGPT kind alone, in fixed
+/// words, never the registry every other provider lives in.
+final _codexHomeResolutionProvider =
+    Provider<({Directory? home, bool refused})>((ref) {
+      try {
+        return (
+          home: resolveCodexHome(
+            environment: ref.watch(environmentProvider),
+            operatingSystem: Platform.operatingSystem,
+            identity: ref.watch(identityProvider),
+          ),
+          refused: false,
+        );
+      } on ArgumentError {
+        return (home: null, refused: true);
+      } on StateError {
+        return (home: null, refused: true);
+      }
+    });
+
+/// The credential home the runtime owns, or null: the dev flavor (#95),
+/// or an override that was refused. `<data dir>/codex`, or
+/// `SAI_CODEX_HOME` for a scratch smoke.
 final codexHomeProvider = Provider<Directory?>(
-  (ref) => resolveCodexHome(
-    environment: ref.watch(environmentProvider),
-    operatingSystem: Platform.operatingSystem,
-    identity: ref.watch(identityProvider),
-  ),
+  (ref) => ref.watch(_codexHomeResolutionProvider).home,
+);
+
+/// Whether `SAI_CODEX_HOME` named a home sai refuses to use.
+final codexHomeRefusedProvider = Provider<bool>(
+  (ref) => ref.watch(_codexHomeResolutionProvider).refused,
 );
 
 /// The one App Server runtime of this process (#26): one child, one
@@ -878,12 +916,17 @@ class OpenAiCatalogueNotifier extends Notifier<OpenAiCatalogue> {
 
   Future<void> get done => _reading ?? Future.value();
 
-  /// The session's first reading through the `openai` provider [id]
-  /// names; nothing once one was attempted — Refresh is the retry.
-  Future<void> load(String id) => state.attempted ? done : _read(id);
+  String? _readingId;
 
-  /// A new reading; a call while one runs joins it.
-  Future<void> refresh(String id) => _reading ?? _read(id);
+  /// The session's first reading through the `openai` provider [id]
+  /// names; nothing once one was attempted for that entry — Refresh is
+  /// the retry. Another entry is another key: it is read afresh.
+  Future<void> load(String id) =>
+      state.attempted && state.id == id ? done : _read(id);
+
+  /// A new reading; a call while one runs for the same entry joins it.
+  Future<void> refresh(String id) =>
+      _reading != null && _readingId == id ? _reading! : _read(id);
 
   void forget() {
     if (!state.attempted) return;
@@ -895,8 +938,12 @@ class OpenAiCatalogueNotifier extends Notifier<OpenAiCatalogue> {
   Future<void> _read(String id) {
     final provider = ref.read(llmRegistryProvider)[id];
     if (provider is! OpenAiResponsesProvider) return Future.value();
-    final kept = state.models;
-    state = OpenAiCatalogue(models: kept, loading: true);
+    // A reading for another entry under way is superseded: its answer
+    // is dropped when it lands.
+    if (_reading != null && _readingId != id) _epoch++;
+    _readingId = id;
+    final kept = state.id == id ? state.models : null;
+    state = OpenAiCatalogue(id: id, models: kept, loading: true);
     late final Future<void> mine;
     mine = _fetch(provider, kept, _epoch).whenComplete(() {
       if (identical(_reading, mine)) _reading = null;
@@ -924,10 +971,11 @@ class OpenAiCatalogueNotifier extends Notifier<OpenAiCatalogue> {
     }
     if (!ref.mounted || epoch != _epoch) return;
     if (answer.failure != null && provider.isClosed) {
-      state = OpenAiCatalogue(models: kept);
+      state = OpenAiCatalogue(id: provider.id, models: kept);
       return;
     }
     state = OpenAiCatalogue(
+      id: provider.id,
       models: answer.models ?? kept,
       failure: answer.failure,
     );

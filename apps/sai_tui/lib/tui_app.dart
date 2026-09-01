@@ -16,7 +16,7 @@ final _listStateProvider = Provider(
 final _chatViewProvider = Provider(
   (ref) => (
     chat: ref.watch(chatProvider),
-    reasoningOn: ref.watch(reasoningProvider),
+    reasoningOn: ref.watch(reasoningShownProvider),
     views: ref.watch(suggestionViewsProvider),
     note: ref.watch(proposalsProvider.select((s) => s.current?.note ?? '')),
   ),

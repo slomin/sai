@@ -217,7 +217,7 @@ class _ChatBodyState extends ConsumerState<_ChatBody> {
   Widget build(BuildContext context) {
     ref.listen(chatProvider, (_, _) => _follow());
     final state = ref.watch(chatProvider);
-    final reasoningOn = ref.watch(reasoningProvider);
+    final reasoningOn = ref.watch(reasoningShownProvider);
     // Presence only: the lane watches the full list itself, and a task
     // mutation elsewhere must not rebuild the whole transcript (#109).
     final lane = ref.watch(

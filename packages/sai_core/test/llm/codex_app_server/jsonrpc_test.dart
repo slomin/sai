@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:sai_core/sai_core.dart';
 import 'package:sai_core/src/llm/codex_app_server/jsonrpc.dart';
@@ -165,6 +166,18 @@ void main() {
     process.exit(1);
     expect(await client.closed, CodexText.childExited);
     expect(((await pending) as JsonRpcException).text, CodexText.childExited);
+  });
+
+  test('stdin breaking — the child gone mid-write — ends the connection as '
+      'the child exited, never as an uncaught error', () async {
+    final pending = client.request('m', null);
+    process.breakStdin(const SocketException('Broken pipe'));
+    final error = await pending.then<Object?>(
+      (_) => null,
+      onError: (Object e) => e,
+    );
+    expect((error as JsonRpcException).text, CodexText.childExited);
+    expect(await client.closed, CodexText.childExited);
   });
 
   test('stderr is counted, kept bounded, never surfaced', () async {

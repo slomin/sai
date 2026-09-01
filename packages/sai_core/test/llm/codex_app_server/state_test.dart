@@ -23,13 +23,16 @@ void main() {
 
   tearDown(() => tmp.deleteSync(recursive: true));
 
-  ProviderContainer make({bool dev = false}) => ProviderContainer.test(
+  ProviderContainer make({
+    bool dev = false,
+    Map<String, String>? environment,
+  }) => ProviderContainer.test(
     overrides: [
       archiveRootProvider.overrideWithValue(Directory('${tmp.path}/archive')),
       settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
       eventSourceProvider.overrideWithValue('sai/test'),
       secretStoreProvider.overrideWithValue(InMemorySecretStore()),
-      environmentProvider.overrideWithValue({'HOME': tmp.path}),
+      environmentProvider.overrideWithValue(environment ?? {'HOME': tmp.path}),
       identityProvider.overrideWithValue(
         dev ? SaiIdentity.dev : SaiIdentity.stable,
       ),
@@ -100,6 +103,31 @@ void main() {
       container.dispose();
     },
   );
+
+  test('a refused SAI_CODEX_HOME takes down nothing but the ChatGPT kind, '
+      'which says so', () async {
+    final container = make(
+      environment: {'HOME': tmp.path, codexHomeVariable: 'relative/codex'},
+    );
+    expect(container.read(appServerRuntimeProvider), isNull);
+    expect(container.read(llmRegistryProvider), contains('fake'));
+    container
+        .read(settingsProvider.notifier)
+        .upsertProvider(
+          ProviderConfig(
+            id: 'chatgpt',
+            kind: chatGptKind,
+            defaultModel: 'gpt-5.6-sol',
+          ),
+        );
+    final provider = container.read(llmRegistryProvider)['chatgpt']!;
+    final result = await provider
+        .start(providerTestRequest(temperature: null))
+        .done;
+    expect(result.failure!.kind, LlmFailureKind.credential);
+    expect(result.failure!.message, CodexText.homeUnsafe);
+    expect(server.runner.spawns, isEmpty);
+  });
 
   test('load reads the account, the models and the limits once; refresh '
       'reads again; concurrent reads join', () async {

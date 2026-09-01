@@ -725,6 +725,24 @@ void main() {
       await other.close();
     });
 
+    test('a connection that ends on a bad line ends the child too; no '
+        'orphan keeps the login', () async {
+      await runtime.account();
+      final process = server.runner.processes.single;
+      process.emitRaw('thread panicked: not a line the protocol knows\n');
+      while (process.signals.isEmpty) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(process.signals, [ProcessSignal.sigterm]);
+      expect(runtime.isRunning, isFalse);
+      process.exit(0);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // The home is free again: another runtime starts on it.
+      final other = AppServerRuntime(launch());
+      expect((await other.account()).isChatGpt, isTrue);
+      await other.close();
+    });
+
     test(
       'close while starting waits for the start and ends its child',
       () async {

@@ -270,13 +270,11 @@ final class AppServerRuntime {
     }
   }
 
-  Future<void> _onSessionEnded(_Session session) async {
-    if (identical(_session, session)) {
-      _session = null;
-      _releaseLogin(null);
-    }
-    await session.lock.release();
-  }
+  /// The connection is gone — the child exited, or broke the protocol.
+  /// The child may still be alive in the second case: it is ended too,
+  /// and the lock goes only with it. An orphan on the home is what the
+  /// lock exists to prevent.
+  Future<void> _onSessionEnded(_Session session) => _terminate(session);
 
   /// A started login holds the child busy until `account/login/completed`
   /// names it, it is cancelled, the child goes, or [loginBound] passes.
@@ -456,14 +454,20 @@ final class AppServerRuntime {
         onReasoning: onReasoning,
         initialModel: actualModel,
       );
-      final started = await _call(s, 'turn/start', {
-        'threadId': threadId,
-        'input': [
-          {'type': 'text', 'text': messages[last].text},
-        ],
-        'effort': ?effort?.word,
-        'outputSchema': ?outputSchema,
-      });
+      final Object? started;
+      try {
+        started = await _call(s, 'turn/start', {
+          'threadId': threadId,
+          'input': [
+            {'type': 'text', 'text': messages[last].text},
+          ],
+          'effort': ?effort?.word,
+          'outputSchema': ?outputSchema,
+        });
+      } on Object {
+        outcome.dispose();
+        rethrow;
+      }
       final turnId = started is Map<String, Object?>
           ? ((started['turn'] as Map<String, Object?>?)?['id'] as String?)
           : null;
@@ -565,18 +569,30 @@ final class AppServerRuntime {
     await _rateLimitUpdates.close();
   }
 
-  Future<void> _terminate(_Session s) async {
+  /// Ends [s] once, however many paths ask: a second caller joins the
+  /// first's work rather than signalling the child again.
+  Future<void> _terminate(_Session s) => s.ending ??= _terminateNow(s);
+
+  Future<void> _terminateNow(_Session s) async {
     if (identical(_session, s)) {
       _session = null;
       _releaseLogin(null);
     }
     await s.rpc.close();
     if (s.process.kill(ProcessSignal.sigterm)) {
-      final exited = await Future.any([
-        s.process.exitCode.then((_) => true),
-        Future<void>.delayed(terminateGrace).then((_) => false),
-      ]);
-      if (!exited) s.process.kill(ProcessSignal.sigkill);
+      // A timer, cancelled once the child is gone, so a terminal client
+      // is not kept alive for the grace after its last command.
+      final exited = Completer<bool>();
+      final grace = Timer(terminateGrace, () {
+        if (!exited.isCompleted) exited.complete(false);
+      });
+      unawaited(
+        s.process.exitCode.then((_) {
+          if (!exited.isCompleted) exited.complete(true);
+        }),
+      );
+      if (!await exited.future) s.process.kill(ProcessSignal.sigkill);
+      grace.cancel();
     }
     await s.lock.release();
   }
@@ -590,6 +606,9 @@ final class _Session {
   final JsonRpcClient rpc;
   final ExclusiveLock lock;
   final Directory scratchRoot;
+
+  /// The one termination under way, once there is one.
+  Future<void>? ending;
 }
 
 /// How a turn ended: the status upstream said, the error class when it

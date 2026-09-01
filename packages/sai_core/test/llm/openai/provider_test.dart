@@ -520,6 +520,22 @@ void main() {
       );
     });
 
+    test('a refusal whose body never finishes is still the status, not a '
+        'throw', () async {
+      stub.routes['POST /v1/responses'] = (req) async {
+        req.response.statusCode = 429;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write('{"error": {"code": "insuff');
+        await req.response.flush();
+        await Future<void>.delayed(const Duration(seconds: 1));
+        await req.response.close();
+      };
+      final result = await make().start(ask('x')).done;
+      expect(result.finish, LlmFinish.failed);
+      expect(result.failure!.kind, isNot(LlmFailureKind.internal));
+      expect(result.failure!.message, 'the endpoint answered 429');
+    });
+
     test('a refusal that is not JSON, or not an error object', () async {
       stub.routes['POST /v1/responses'] = (req) async {
         req.response

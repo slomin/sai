@@ -503,6 +503,12 @@ codesign --force --sign - "$work/sidecar/stage/sai.app" >/dev/null 2>&1
 repack "$work/sidecar" 0.0.4
 if tool/install-local.sh "$work/sidecar" >"$work/out" 2>&1; then fail "a helper without its NOTICE installed"; fi
 grep -q "without its LICENSE and NOTICE" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
+fixture "$work/sidecar-none" 0.0.4 sidecar4 stable
+rm "$work/sidecar-none/stage/sai.app/Contents/Helpers/codex-app-server" "$work/sidecar-none/tui/bundle/libexec/codex-app-server"
+codesign --force --sign - "$work/sidecar-none/stage/sai.app" >/dev/null 2>&1
+repack "$work/sidecar-none" 0.0.4
+if tool/install-local.sh "$work/sidecar-none" >"$work/out" 2>&1; then fail "a stable release without the runtime installed"; fi
+grep -q "carries no codex-app-server" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
 fixture "$work/sidecar-dev" 0.0.4 sidecar4 dev
 mkdir -p "$work/sidecar-dev/tui/bundle/libexec"
 cc -o "$work/sidecar-dev/tui/bundle/libexec/codex-app-server" "$work/sai.c"
@@ -510,6 +516,6 @@ codesign --force --sign - "$work/sidecar-dev/tui/bundle/libexec/codex-app-server
 repack "$work/sidecar-dev" 0.0.4
 if tool/install-local.sh "$work/sidecar-dev" >"$work/out" 2>&1; then fail "a dev release with a sidecar installed"; fi
 grep -q "a dev release carries a codex-app-server" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
-pass "the sidecar must be universal and shipped with its notices in stable, and absent from dev"
+pass "the sidecar must be there, universal and with its notices in stable, and absent from dev"
 
 echo "# $passed passed; scratch under $work removed"

@@ -14,7 +14,7 @@ what the runtime boundary needed to be exact about:
 - The Responses API is not chat completions: another path, another body
   (`input` items, `max_output_tokens`, `reasoning.effort`, `text.format`),
   another stream (`type`-tagged events, a terminal `response.completed`
-  carrying the usage), other refusals. An `openai_compatible` entry could
+  carrying the usage), other refusals — some streamed as content. An `openai_compatible` entry could
   carry none of that, and an edit could move its endpoint.
 - Reasoning is not a boolean. OpenAI's models advertise which efforts
   they take, per model; the App Server lists them; the Responses API
@@ -57,7 +57,8 @@ in order (`system` as `developer`), `stream: true`, `store: false`,
 or `previous_response_id`, no metadata; `maxTokens` as
 `max_output_tokens`; a temperature only when the caller set one; a schema
 as the strict `text.format`. The stream is read by event type; any output
-item sai did not ask for fails the call closed. A refusal is one bounded
+item sai did not ask for fails the call closed, and so does a refusal
+streamed as content, its words not kept. A refusal is one bounded
 failure read from `error.param`/`error.code` alone — the model does not
 take the effort, the model is not this key's, the schema was refused, no
 credit — and nothing is re-sent. `store: false` is a request-storage

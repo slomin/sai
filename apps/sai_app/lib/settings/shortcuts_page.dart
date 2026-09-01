@@ -25,7 +25,8 @@ const shortcutRows = <(String, String)>[
   ('⌘Z', 'Undo the last change'),
   (
     '⌘R',
-    'Let the model think before it answers, or not (an OpenAI\n      provider: set its reasoning effort)',
+    'Let the model think before it answers, or not (an OpenAI '
+        'provider: set its reasoning effort)',
   ),
   ('⌘,', 'Settings'),
   ('⏎', 'Send the message to the assistant'),

@@ -494,11 +494,15 @@ Future<int> runCli(
           case []:
             break;
           case [final word]:
+            final effort = word.trim();
+            if (effort.isEmpty) {
+              throw _Usage('provider reasoning takes a word, or default');
+            }
             container
                 .read(settingsProvider.notifier)
                 .upsertProvider(
                   config.copyWith(
-                    reasoningEffort: () => word == 'default' ? null : word,
+                    reasoningEffort: () => effort == 'default' ? null : effort,
                   ),
                 );
           default:
@@ -704,6 +708,14 @@ Future<int> runCli(
         };
         container.read(settingsProvider.notifier).setReasoning(show);
         out.writeln(reasoningLine(container.read(reasoningProvider)));
+        final active = container.read(activeLlmProvider);
+        if (active != null && active is ConfiguredEffort) {
+          out.writeln(
+            '${active.id} carries its own reasoning effort; the switch is '
+            'for the other providers. `$program provider reasoning '
+            '${active.id} <word>` sets it.',
+          );
+        }
         return cliOk;
 
       case ['finished-tasks']:

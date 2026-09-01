@@ -119,7 +119,17 @@ Future<OpenAiCatalogueAnswer> fetchOpenAiCatalogue(
 /// What the session knows of the `openai` model list (#26): read once a
 /// key is stored and on Refresh, kept for the session, written nowhere.
 final class OpenAiCatalogue {
-  const OpenAiCatalogue({this.models, this.loading = false, this.failure});
+  const OpenAiCatalogue({
+    this.id,
+    this.models,
+    this.loading = false,
+    this.failure,
+  });
+
+  /// The `openai` entry the reading was made through — each key sees
+  /// its own list, so a second entry is read afresh, never shown the
+  /// first's.
+  final String? id;
 
   /// The sorted ids of the last successful reading, or null before one.
   final List<String>? models;
@@ -135,7 +145,7 @@ final class OpenAiCatalogue {
 
   @override
   String toString() =>
-      'OpenAiCatalogue(${models?.length ?? 'no'} models'
+      'OpenAiCatalogue(${id == null ? '' : '$id: '}${models?.length ?? 'no'} models'
       '${loading ? ', loading' : ''}'
       '${failure == null ? '' : ', ${failure!.message}'})';
 }

@@ -28,7 +28,9 @@ fail() { echo "verify: $*" >&2; exit 1; }
 [ -f "$dist/commit" ] || fail "$dist has no commit file; it is not a staged release"
 commit=$(cat "$dist/commit")
 [ -n "$commit" ] || fail "$dist/commit is empty"
-flavor=$(cat "$dist/flavor" 2>/dev/null || echo stable)
+# A release without a flavor file predates flavors — and the bundled
+# runtime (#26); it is stable, and asked for the runtime only if it has one.
+if [ -f "$dist/flavor" ]; then flavor=$(cat "$dist/flavor"); flavored=1; else flavor=stable; flavored=0; fi
 case "$flavor" in
   stable) slug=sai; tui=sai_tui ;;
   dev) slug=sai-dev; tui=sai_tui-dev ;;
@@ -82,9 +84,9 @@ helper="$app/Contents/Helpers/codex-app-server"
 sidecar="$bundle/libexec/codex-app-server"
 case "$flavor" in
   stable)
-    if [ -f "$helper" ] || [ -f "$sidecar" ]; then
-      [ -f "$helper" ] || fail "the app carries no codex-app-server helper while the terminal client does"
-      [ -f "$sidecar" ] || fail "the terminal client carries no codex-app-server while the app does"
+    if [ "$flavored" = 1 ] || [ -f "$helper" ] || [ -f "$sidecar" ]; then
+      [ -f "$helper" ] || fail "the app carries no codex-app-server helper; a stable release ships the ChatGPT runtime"
+      [ -f "$sidecar" ] || fail "the terminal client carries no codex-app-server; a stable release ships the ChatGPT runtime"
       codesign --verify --strict "$helper" || fail "the app's codex-app-server helper does not verify"
       codesign --verify --strict "$sidecar" || fail "the terminal client's codex-app-server does not verify"
       case "$(lipo -archs "$helper")" in

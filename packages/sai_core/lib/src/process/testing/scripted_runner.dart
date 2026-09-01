@@ -71,6 +71,10 @@ final class ScriptedProcess implements RunningProcess {
     return true;
   }
 
+  /// Breaks stdin the way a dead child's pipe does: `stdin.done` fails
+  /// with [error]; writes go nowhere.
+  void breakStdin(Object error) => _stdinSink._break(error);
+
   /// Writes one JSON line to the runtime, as the App Server would.
   void emit(Map<String, Object?> line) => emitRaw('${jsonEncode(line)}\n');
 
@@ -134,11 +138,19 @@ final class _LineSink implements IOSink {
   final _buffer = StringBuffer();
   final _done = Completer<void>();
 
+  var _broken = false;
+
+  void _break(Object error) {
+    _broken = true;
+    if (!_done.isCompleted) _done.completeError(error);
+  }
+
   @override
   Encoding encoding = utf8;
 
   @override
   void add(List<int> data) {
+    if (_broken) return;
     _buffer.write(utf8.decode(data));
     var text = _buffer.toString();
     var at = text.indexOf('\n');

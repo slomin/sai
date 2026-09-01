@@ -10,6 +10,7 @@ import '../call.dart';
 import '../provider.dart';
 import 'provider.dart';
 import 'runtime.dart';
+import 'text.dart';
 
 /// The `chatgpt_subscription` kind (#26, ADR 0013): a ChatGPT plan, used
 /// through OpenAI's own Codex App Server running as sai's child. The
@@ -199,6 +200,7 @@ int codexHomeMode(FileSystemEntity entity) => entity.statSync().mode & 0x1ff;
 LlmProvider chatGptFactory(
   ProviderConfig config, {
   required AppServerRuntime? runtime,
+  String noRuntimeText = CodexText.devRefused,
 }) {
   final problem = chatGptProblem(config);
   if (problem != null) {
@@ -211,5 +213,6 @@ LlmProvider chatGptFactory(
     installedRuntime: runtime,
     defaultModel: config.defaultModel,
     reasoningEffort: ReasoningEffort.parse(config.reasoningEffort),
+    noRuntimeText: noRuntimeText,
   );
 }

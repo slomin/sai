@@ -100,6 +100,27 @@ void main() {
     });
   });
 
+  test('provider reasoning refuses an empty word as usage, not a crash; '
+      'the switch says whose it is not', () async {
+    expect(
+      await run('provider add gpt --kind openai --model gpt-5.6-sol'),
+      cliOk,
+    );
+    out.clear();
+    final code = await run('provider reasoning gpt ');
+    expect(code, isNot(cliOk));
+    expect(err.toString(), isNot(contains('ArgumentError')));
+    expect(
+      container.read(settingsProvider).provider('gpt')!.reasoningEffort,
+      isNull,
+    );
+    // The global switch is not an OpenAI kind's: saying so, not silence.
+    expect(await run('provider use gpt'), cliOk);
+    out.clear();
+    expect(await run('reasoning on'), cliOk);
+    expect(out.toString(), contains('provider reasoning gpt'));
+  });
+
   test('provider add on a built-in id starts from the built-in', () async {
     container = testContainer(builtins: builtinLlms(InMemorySecretStore()));
     expect(await run('provider add lan --model other'), cliOk);

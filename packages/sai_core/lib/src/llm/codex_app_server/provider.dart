@@ -28,6 +28,7 @@ final class ChatGptSubscriptionProvider
     required this.installedRuntime,
     String? defaultModel,
     this.reasoningEffort,
+    this.noRuntimeText = CodexText.devRefused,
   }) : _model = defaultModel;
 
   @override
@@ -39,12 +40,14 @@ final class ChatGptSubscriptionProvider
   /// every call then refuses in fixed words before any spawn.
   final AppServerRuntime? installedRuntime;
 
-  /// The runtime, or the fixed refusal: the dev copy runs none.
+  /// Why there is no runtime, when there is none: the dev copy runs
+  /// none, or the home named for it was refused.
+  final String noRuntimeText;
+
+  /// The runtime, or the fixed refusal.
   AppServerRuntime get runtime {
     final r = installedRuntime;
-    if (r == null) {
-      throw const CodexException(CodexText.devRefused, credential: true);
-    }
+    if (r == null) throw CodexException(noRuntimeText, credential: true);
     return r;
   }
 

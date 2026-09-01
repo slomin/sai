@@ -95,6 +95,43 @@ void main() {
     expect(container.read(openAiCatalogueProvider).attempted, isFalse);
   });
 
+  test('a second entry reads its own key\'s list, not the first\'s', () async {
+    final container = make();
+    addTearDown(container.dispose);
+    final settings = container.read(settingsProvider.notifier);
+    for (final id in ['work', 'personal']) {
+      settings.upsertProvider(
+        ProviderConfig(
+          id: id,
+          kind: openAiKind,
+          defaultModel: 'gpt-5.6-sol',
+          credential: 'provider:$id',
+        ),
+      );
+      container.read(credentialsProvider.notifier).set(id, 'sk-$id');
+    }
+    final catalogue = container.read(openAiCatalogueProvider.notifier);
+    await catalogue.load('work');
+    expect(stub.requests.single.header('authorization'), 'Bearer sk-work');
+    expect(container.read(openAiCatalogueProvider).id, 'work');
+    stub.routes['GET /v1/models'] = (req) => StubServer.json(req, {
+      'object': 'list',
+      'data': [
+        {'id': 'gpt-5.6-terra', 'object': 'model'},
+      ],
+    });
+    await catalogue.load('personal');
+    expect(stub.requests, hasLength(2));
+    expect(stub.requests.last.header('authorization'), 'Bearer sk-personal');
+    final state = container.read(openAiCatalogueProvider);
+    expect(state.id, 'personal');
+    expect(state.models, ['gpt-5.6-terra']);
+    // Back to the first: its list is read again, not the other's shown.
+    await catalogue.load('work');
+    expect(stub.requests, hasLength(3));
+    expect(container.read(openAiCatalogueProvider).id, 'work');
+  });
+
   test('another kind\'s id reads nothing', () async {
     final container = make();
     addTearDown(container.dispose);

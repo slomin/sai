@@ -191,7 +191,14 @@ final class OpenAiResponsesProvider
       // that is read: `error.param` and `error.code`, never the message,
       // which quotes the request. Nothing is re-sent: the effort, the
       // schema and the model stand as the person chose them.
-      final text = await _http.readCapped(response, maxRefusalBytes);
+      String? text;
+      try {
+        text = await _http.readCapped(response, maxRefusalBytes);
+      } on Object {
+        // The body stalled or the socket went: the status alone says
+        // what it can.
+        text = null;
+      }
       Object? json;
       if (text != null) {
         try {

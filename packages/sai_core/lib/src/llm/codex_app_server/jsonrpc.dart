@@ -66,6 +66,14 @@ final class JsonRpcClient {
         .listen(_onLine, onError: _onStreamError, onDone: _onStdoutDone);
     _stderr = _process.stderr.listen(_onStderr, onError: (_) {});
     unawaited(_process.exitCode.then(_onExit));
+    // A write to a dead child fails on `stdin.done`, not on the write:
+    // heard here, so it is the fixed word and never an uncaught error.
+    unawaited(
+      _process.stdin.done.then(
+        (_) {},
+        onError: (Object _) => _end(CodexText.childExited),
+      ),
+    );
   }
 
   final RunningProcess _process;
