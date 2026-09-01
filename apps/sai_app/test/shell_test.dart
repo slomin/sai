@@ -1,7 +1,9 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sai_app/commands.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:yaml/yaml.dart';
 
@@ -89,6 +91,51 @@ void main() {
     expect(state.reloads, 0);
     expect(state.failure, contains('TaskProjectionError'));
     expect(find.text('imported'), findsNothing);
+
+    // The person's own notice takes the row; the failure returns when it
+    // is cleared, since it still stands.
+    container.read(noticeProvider.notifier).show('done: something');
+    await tester.pump();
+    expect(find.text('done: something'), findsOneWidget);
+    expect(find.textContaining('reload failed:'), findsNothing);
+    container.read(noticeProvider.notifier).clear();
+    await tester.pump();
+    expect(find.textContaining('reload failed:'), findsOneWidget);
+  });
+
+  testWidgets('the reload notice leaves once a check succeeds (#118)', (
+    tester,
+  ) async {
+    final container = await pumpApp(tester);
+    final head = File('${container.read(archiveRootProvider).path}/HEAD');
+    final good = head.readAsBytesSync();
+    head.writeAsStringSync('not json\n');
+    final follower = container.read(archiveFollowerProvider.notifier);
+    await tester.runAsync(follower.tick);
+    await tester.pump();
+    expect(find.textContaining('reload failed:'), findsOneWidget);
+    expect(find.textContaining('(HEAD)'), findsOneWidget);
+
+    head.writeAsBytesSync(good, flush: true);
+    await tester.runAsync(follower.tick);
+    await tester.pump();
+    expect(find.textContaining('reload failed:'), findsNothing);
+    // The archive line's own retry after the damaged read (riverpod's
+    // 200 ms) fires and settles.
+    await tester.pump(const Duration(milliseconds: 300));
+  });
+
+  testWidgets('the shell brings the follower up (#118)', (tester) async {
+    // Nothing else reads it before the first tick, so its existence is
+    // the shell's doing. Its timer is exercised by the TUI on nocterm's
+    // real clock: under flutter_test's fake clock a replay's file reads
+    // never land, so the app tests drive `tick()` by hand.
+    final tmp = tempDir();
+    final bare = ProviderContainer.test(overrides: appOverrides(tmp: tmp));
+    await tester.runAsync(() => bare.read(tasksProvider.future));
+    expect(bare.exists(archiveFollowerProvider), isFalse);
+    final container = await pumpApp(tester);
+    expect(container.exists(archiveFollowerProvider), isTrue);
   });
 
   test('pubspec version matches saiVersion (build metadata aside)', () {

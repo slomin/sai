@@ -104,7 +104,19 @@ class TopBar extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(width: 16),
-                Expanded(child: NoticeLine(ref.watch(noticeProvider))),
+                // The person's last notice holds the row; a failed
+                // archive check (#118) shows whenever the row is free
+                // and leaves when a check succeeds.
+                Expanded(
+                  child: NoticeLine(switch (ref.watch(noticeProvider)) {
+                    final own when own.isNotEmpty => own,
+                    _ =>
+                      ref.watch(
+                            archiveFollowerProvider.select((s) => s.notice),
+                          ) ??
+                          '',
+                  }),
+                ),
               ],
             ),
           ),
