@@ -63,18 +63,24 @@ lacking `stream_options`, which `require_parameters` would refuse.
   sends `{require_parameters: true, data_collection: "deny", zdr: true}`
   with one model id. A route that is not there is a 404 with fixed
   text, never a retry without the pin. The same model chosen by hand is
-  `exact`, because the person did not say "pinned". `openrouter/auto`,
-  `~latest` aliases and the `:nitro` / `:floor` / `:online` shortcuts
-  are refused at entry: each hands routing, or a web search, back to
-  the router.
+  `exact`, because the person did not say "pinned". Every id under the
+  `openrouter/` owner (`auto`, `auto-beta`, `free`, …) is a router,
+  `~latest` is an alias and `:nitro` / `:floor` / `:online` are
+  shortcuts — all refused at entry, judged on the lowercased id: each
+  hands routing, or a web search, back to the router.
 - **OpenRouter's request shape.** `reasoning: {enabled: false}` when
   thinking is off — never llama.cpp's `chat_template_kwargs`, never
   negotiated (a 400 is a refusal). No `stream_options`: usage with the
   cost comes in the final chunk regardless, and DeepInfra does not list
-  the field under `require_parameters`. Fixed attribution headers. Two
+  the field under `require_parameters` (it does list `reasoning`,
+  `max_tokens` and `temperature`, the three the preset sends — checked
+  on the same day; the human smoke runs with thinking off, the
+  default, and so proves it live). Fixed attribution headers. Two chat
   statuses get their own words: 404 (no endpoint matched) and 402 (no
-  credit). The probe is `GET /key`: zero tokens, says whether the key is
-  good, reports no model list and no context window.
+  credit); discovery keeps the common ones. The probe is `GET /key`:
+  zero tokens, says whether the key is good — and, from
+  `limit_remaining`, whether a capped key has anything left — and
+  reports no model list and no context window.
 - **What does not change.** The cloud budget stays the conservative
   one (`chatBudgetProvider`); catalog context never reaches a cloud
   provider and proposals are refused (ADR 0011, 0021); every call is
@@ -97,9 +103,13 @@ filters over providers' stated policies; sai asks, it cannot verify.
 
 ## Consequences
 
-- Settings v0 gains the `openrouter` kind and the `routing` key;
-  `llmKindNeeds` gains the kind, and its own validator makes a wrong
-  value count as a missing one.
+- Settings v0 gains the `openrouter` kind and the `routing` key; the
+  kind's own validator (`openRouterProblem`) names an absent key bare,
+  as `llmKindNeeds` would, and a present-but-wrong value as a phrase,
+  so the clients never say "missing" about something that is there.
+  An entry changed to this kind from the CLI drops the endpoint and
+  the local tag it had, and choosing a model in the app rewrites the
+  whole shape — either repairs an entry the factory refused.
 - Both clients gain the model choice — preset or one exact id — and
   the key field works on the unconfigured built-in. The TUI does it
   through `provider add openrouter [--model …] [--routing …]` and
