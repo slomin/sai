@@ -289,10 +289,13 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                     child: const Text('Cancel test'),
                   )
                 : TextButton(
-                    // A dev copy cannot send a key it does not hold.
+                    // A dev copy cannot send a key it does not hold, and
+                    // runs no ChatGPT runtime to test (#26).
                     onPressed:
                         ref.watch(credentialStatusProvider(provider.id)) ==
-                            CredentialStatus.absent
+                                CredentialStatus.absent ||
+                            (provider is ChatGptSubscriptionProvider &&
+                                !provider.hasRuntime)
                         ? null
                         : () => _runTest(provider),
                     child: const Text('Test'),

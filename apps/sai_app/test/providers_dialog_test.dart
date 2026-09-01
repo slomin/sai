@@ -774,6 +774,12 @@ void main() {
         tester.widget<FilledButton>(find.byKey(chatGptSignInKey)).onPressed,
         isNull,
       );
+      expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Test'))
+            .onPressed,
+        isNull,
+      );
       expect(container.read(appServerRuntimeProvider), isNull);
       expect(server.runner.spawns, isEmpty);
       await close(tester);
