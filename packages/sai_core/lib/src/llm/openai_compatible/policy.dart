@@ -42,6 +42,7 @@ abstract final class TransportText {
       'meets the privacy filters (zero retention, no data collection, every '
       'parameter)';
   static const noCredit = 'the account has no credit left';
+  static const notEndpoints = 'the answer was not a list of endpoints';
 
   /// The one non-constant: an unexpected exception's type, never its text.
   static String threw(Object error) => 'transport threw: ${error.runtimeType}';
@@ -73,6 +74,7 @@ abstract final class TransportText {
     noRoute,
     noExactEndpoint,
     noCredit,
+    notEndpoints,
   };
 }
 

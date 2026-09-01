@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,6 +13,15 @@ final class StubServer {
   List<String> words = const ['ready'];
   double? tokensPerSecond = 33.3;
   int chatStatus = 200;
+  int zdrStatus = 200;
+
+  /// Holds the zero-retention answer until completed, for a test that
+  /// types while the list is being read.
+  Completer<void>? zdrGate;
+
+  /// Extra `owner/model-NN` rows in the zero-retention answer, for a
+  /// test that needs a list taller than the suggestions box.
+  int zdrExtra = 0;
 
   static Future<StubServer> start() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -46,6 +56,40 @@ final class StubServer {
           ..write(
             jsonEncode({
               'data': {'limit': 1, 'usage': 0},
+            }),
+          );
+      case 'GET /v1/endpoints/zdr' when zdrStatus != 200:
+        response
+          ..statusCode = zdrStatus
+          ..write('{"error":"no"}');
+      case 'GET /v1/endpoints/zdr':
+        // OpenRouter's zero-retention list (#112): one row per endpoint —
+        // two hosts for one model, a router, a malformed row, a variant.
+        if (zdrGate case final gate?) await gate.future;
+        response
+          ..headers.contentType = ContentType.json
+          ..write(
+            jsonEncode({
+              'data': [
+                for (var i = 0; i < zdrExtra; i++)
+                  {'model_id': 'owner/model-${i.toString().padLeft(2, '0')}'},
+                {
+                  'model_id': 'qwen/qwen3-235b-a22b',
+                  'model_name': 'Qwen3 235B',
+                  'provider_name': 'DeepInfra',
+                },
+                {
+                  'model_id': 'deepseek/deepseek-v4-flash-0731',
+                  'provider_name': 'DeepInfra',
+                },
+                {
+                  'model_id': 'deepseek/deepseek-v4-flash-0731',
+                  'provider_name': 'GMICloud',
+                },
+                {'model_id': 'openrouter/auto'},
+                {'name': 'no id'},
+                {'model_id': 'z-ai/glm-5.2:free'},
+              ],
             }),
           );
       case 'POST /v1/chat/completions' when chatStatus != 200:

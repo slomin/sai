@@ -57,6 +57,13 @@ the commit under test;
    disabled. Evidence: a screenshot per state and the archive's
    `proposal.made`/`accept`/`reject` lines, the applied `task.*` line
    carrying `"actor":"assistant"` with refs to both.
+7b. **OpenRouter without a key (#112).** In the dev copy, Settings ›
+   Providers › openrouter: the line under "Exact model" reads `The dev
+   copy holds no credentials, so no list; use the stable app`, its
+   Refresh is disabled, and a typed `owner/name` id still applies
+   (`settings.json` gains `"routing":"exact"`). Nothing leaves the
+   machine. Evidence: a screenshot per state and the settings file. The
+   keyed pass is `docs/smoke/cloud.md`, route K, 2a.
 8. **Import.** In a second scratch profile, preview and import a Things
    database, then import again. With a generated fixture
    (`package:sai_core/things_testing.dart`) an agent runs it; with a real

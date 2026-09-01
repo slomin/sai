@@ -1,6 +1,6 @@
 # 22. OpenRouter is its own kind, on one origin, with the routing said
 
-Date: 2026-09-01 · Status: accepted · Issue: #24 · Builds on: [0008](0008-secrets-live-in-the-file-keychain.md), [0009](0009-provider-transport-is-direct-and-bounded.md), [0010](0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md), [0013](0013-subscription-logins-belong-to-the-vendor-runtime.md) · Amends: [0013](0013-subscription-logins-belong-to-the-vendor-runtime.md) · Schema: [settings-v0](../settings/settings-v0.md)
+Date: 2026-09-01 · Status: accepted · Issue: #24 · Builds on: [0008](0008-secrets-live-in-the-file-keychain.md), [0009](0009-provider-transport-is-direct-and-bounded.md), [0010](0010-the-privacy-policy-is-a-switch-checked-in-the-recorder.md), [0013](0013-subscription-logins-belong-to-the-vendor-runtime.md) · Amends: [0013](0013-subscription-logins-belong-to-the-vendor-runtime.md), [0009](0009-provider-transport-is-direct-and-bounded.md) · Schema: [settings-v0](../settings/settings-v0.md)
 
 ## Context
 
@@ -119,10 +119,32 @@ filters over providers' stated policies; sai asks, it cannot verify.
   through `provider add openrouter [--model …] [--routing …]` and
   `secret set openrouter`; there is still no in-terminal settings
   screen.
-- The catalogue picker (a fetched, searchable model list) is #112:
-  the preset plus a typed id covers the function, and `GET /models` is
-  ~2 MB — not something the connection watcher should re-fetch every
-  minute.
+- The model list (#112, amending what first deferred it here): the
+  app's exact-model field suggests the ids from
+  `GET /api/v1/endpoints/zdr` — every endpoint OpenRouter would route
+  to under `zdr: true`, one row per endpoint; ~0.7 MB for 816 rows and
+  294 models on 2026-09-01 (Context7 `/websites/openrouter_ai` and a
+  live read). That list, not `GET /models` (~2 MB, every model whether
+  or not any endpoint keeps nothing): a model with no zero-retention
+  endpoint is one sai refuses on every call, so it is never offered.
+  Read on demand only — the first time the block shows with a key
+  stored, and on its own Refresh — never on the connection watcher's
+  timer, never on a task or chat change. The list is public; the
+  request still goes down the provider's prepared path, key and all,
+  because that path is the one rule set that already says "no key, no
+  request" and keeps the dev copy off the network — a keyless second
+  path would be more code for no privacy gained. Its own body cap (8
+  MiB — amending 0009's 1 MiB for this one read; the probe's stays);
+  only `data[].model_id` is kept, filtered as a typed id is,
+  deduplicated, sorted; one list for the session, read through the
+  provider the block shows (the built-in or an entry of the kind under
+  any id), a failed refresh keeping the last one beside its failure in
+  the transport's fixed words, a key stored or removed forgetting it;
+  nothing of it in settings, the archive or the usage totals. Offered
+  as one types — never for an empty field, never on focus alone — with
+  Escape closing the list and keeping the field. Guidance, not a gate:
+  a typed id that is not listed still applies, and a listed one may
+  still be refused later — the list is the moment's.
 - Rejected: a locked-down `openai_compatible` entry (cannot say the
   dialect, the pin or the fixed origin, and an edit could move it);
   OpenRouter's OAuth PKCE "connect" flow (a browser round-trip and a

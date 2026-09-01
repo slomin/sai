@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -459,7 +460,7 @@ void main() {
       );
       expect(stub.requests, contains('GET /v1/models'));
       final before = stub.requests.length;
-      await tester.tap(find.text('Refresh'));
+      await tester.tap(find.byKey(endpointRefreshKey));
       await until(tester, () => stub.requests.length > before);
       await until(tester, () => find.text('asking…').evaluate().isEmpty);
       expect(find.text('ok · 2 models · context unavailable'), findsOneWidget);
@@ -547,7 +548,7 @@ void main() {
         find.textContaining('revoke the key at openrouter.ai'),
         findsOneWidget,
       );
-      await tester.tap(find.text('Refresh'));
+      await tester.tap(find.byKey(endpointRefreshKey));
       await until(tester, () => stub.requests.contains('GET /v1/key'));
       await until(tester, () => find.text('asking…').evaluate().isEmpty);
       expect(
@@ -763,7 +764,10 @@ void main() {
         isFalse,
       );
       expect(
-        find.textContaining('The dev copy holds no credentials'),
+        find.text(
+          'The dev copy holds no credentials. Use the stable app for this '
+          'provider.',
+        ),
         findsOneWidget,
       );
       expect(
@@ -784,7 +788,251 @@ void main() {
         container.read(settingsProvider).provider('openrouter')!.routing,
         'exact',
       );
+      // No credentials, no list (#112): the line says so in the key
+      // row's own terms, and nothing is asked.
+      expect(
+        find.text(
+          'The dev copy holds no credentials, so no list; use the stable app',
+        ),
+        findsOneWidget,
+        reason: screen(),
+      );
+      expect(
+        tester.widget<TextButton>(find.byKey(openRouterRefreshKey)).onPressed,
+        isNull,
+      );
       expect(stub.requests, isNot(contains('GET /v1/key')));
+      expect(stub.requests, isNot(contains('GET /v1/endpoints/zdr')));
+      await container.read(llmRegistryProvider)['openrouter']!.close();
+      await tester.pump();
+    });
+
+    testWidgets('OpenRouter suggests zero-retention models and applies one '
+        '(#112)', (tester) async {
+      final store = InMemorySecretStore();
+      final endpoint = Uri.parse(stub.v1);
+      // Sixty more ids than the box shows at once, and the first reading
+      // held back until the test lets it land.
+      stub.zdrExtra = 60;
+      stub.zdrGate = Completer<void>();
+      final container = await pumpApp(
+        tester,
+        secrets: store,
+        builtins: [
+          FakeLlmProvider.new,
+          () => openRouterBuiltin(store, endpoint: endpoint),
+        ],
+        openRouterEndpoint: endpoint,
+      );
+      int listed() =>
+          stub.requests.where((r) => r == 'GET /v1/endpoints/zdr').length;
+      ProviderConfig entry() =>
+          container.read(settingsProvider).provider('openrouter')!;
+      String fieldText() => tester
+          .widget<TextField>(find.byKey(openRouterModelFieldKey))
+          .controller!
+          .text;
+      // Which rows are highlighted, by their colour.
+      List<bool> lit() => find
+          .descendant(
+            of: find.byKey(openRouterOptionsKey),
+            matching: find.byType(Container),
+          )
+          .evaluate()
+          .map((e) => (e.widget as Container).color != null)
+          .toList();
+      Future<void> type(String text) async {
+        await tester.ensureVisible(find.byKey(openRouterModelFieldKey));
+        await tester.enterText(find.byKey(openRouterModelFieldKey), text);
+        await tester.pump();
+      }
+
+      Future<void> enter() async {
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pump();
+      }
+
+      await open(tester);
+      await select(tester, 'openrouter');
+      // Without a key nothing is asked; the line says what would help.
+      expect(
+        find.text('Save an OpenRouter key to load models'),
+        findsOneWidget,
+        reason: screen(),
+      );
+      expect(
+        tester.widget<TextButton>(find.byKey(openRouterRefreshKey)).onPressed,
+        isNull,
+      );
+      await until(tester, () => find.text('asking…').evaluate().isEmpty);
+      expect(listed(), 0);
+
+      // A stored key starts the session's one reading …
+      await tester.ensureVisible(find.byKey(apiKeyFieldKey));
+      await tester.enterText(find.byKey(apiKeyFieldKey), canary);
+      await tester.pump();
+      await tapVisible(tester, find.text('Save'));
+      await until(tester, () => listed() == 1);
+      expect(find.text('Loading zero-retention models…'), findsOneWidget);
+      expect(
+        tester.widget<TextButton>(find.byKey(openRouterRefreshKey)).onPressed,
+        isNull,
+        reason: 'one reading at a time',
+      );
+      // … and letters typed while it is under way are answered when it
+      // lands, not left without suggestions until the next keystroke.
+      await type('glm');
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
+      stub.zdrGate!.complete();
+      await until(
+        tester,
+        () => find.text('63 models with zero retention').evaluate().isNotEmpty,
+      );
+      await until(
+        tester,
+        () => find.text('z-ai/glm-5.2:free').evaluate().isNotEmpty,
+      );
+      expect(listed(), 1);
+      expect(container.read(openRouterCatalogueProvider).models, hasLength(63));
+
+      // Focus alone offers nothing; a few letters narrow — deduplicated,
+      // no router, sorted, ids alone.
+      await type('');
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
+      await tester.tap(find.byKey(openRouterModelFieldKey));
+      await tester.pump();
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
+      await type('a');
+      expect(find.text('deepseek/deepseek-v4-flash-0731'), findsOneWidget);
+      expect(find.text('qwen/qwen3-235b-a22b'), findsOneWidget);
+      expect(find.text('z-ai/glm-5.2:free'), findsOneWidget);
+      expect(find.text('openrouter/auto'), findsNothing);
+      expect(find.text('owner/model-00'), findsNothing, reason: 'no a in it');
+      expect(screen(), isNot(contains('Qwen3 235B')));
+      expect(screen(), isNot(contains('GMICloud')));
+
+      // ↓ moves the highlight; Enter takes it into the field, keeps the
+      // focus and applies nothing; Enter again applies it.
+      expect(lit(), [true, false, false]);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(lit(), [false, true, false]);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      expect(lit(), [false, true, false]);
+      await enter();
+      expect(fieldText(), 'qwen/qwen3-235b-a22b');
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'openrouter-model',
+        reason: 'taking a suggestion keeps the person in the field',
+      );
+      expect(entry().defaultModel, openRouterPresetModel, reason: 'not yet');
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
+      await enter();
+      expect(entry().defaultModel, 'qwen/qwen3-235b-a22b');
+      expect(entry().routing, 'exact');
+      // Applied and left: clicking back in opens nothing.
+      expect(fieldText(), isEmpty);
+      await tester.tap(find.byKey(openRouterModelFieldKey));
+      await tester.pump();
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
+
+      // A tapped suggestion fills the field the same way; Apply writes it.
+      await type('glm');
+      await tester.tap(find.text('z-ai/glm-5.2:free'));
+      await tester.pump();
+      expect(fieldText(), 'z-ai/glm-5.2:free');
+      expect(entry().defaultModel, 'qwen/qwen3-235b-a22b', reason: 'not yet');
+      await tapVisible(tester, find.byKey(openRouterApplyKey));
+      expect(entry().defaultModel, 'z-ai/glm-5.2:free');
+
+      // An id the list does not have still applies on Enter — even one a
+      // listed id begins with: Escape closes the list and keeps the field.
+      await type('qwen/qwen3-235b');
+      expect(find.text('qwen/qwen3-235b-a22b'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
+      expect(find.byType(ProvidersPage), findsOneWidget, reason: 'still open');
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        'openrouter-model',
+      );
+      await enter();
+      expect(entry().defaultModel, 'qwen/qwen3-235b');
+      await type('qwen/qwen3-8b');
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
+      await enter();
+      expect(entry().defaultModel, 'qwen/qwen3-8b');
+      expect(listed(), 1, reason: 'choosing never re-reads the list');
+
+      // A list taller than its box follows the highlight.
+      await type('owner');
+      final box = tester.getRect(find.byKey(openRouterOptionsKey));
+      final eighth = find.text('owner/model-08', skipOffstage: false);
+      expect(
+        box.contains(tester.getRect(find.text('owner/model-00')).center),
+        isTrue,
+      );
+      if (eighth.evaluate().isNotEmpty) {
+        expect(
+          box.contains(tester.getRect(eighth).center),
+          isFalse,
+          reason: 'below the box',
+        );
+      }
+      for (var i = 0; i < 8; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pump();
+      }
+      expect(
+        box.contains(tester.getRect(eighth).center),
+        isTrue,
+        reason: screen(),
+      );
+      expect(lit(), contains(true));
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+
+      // A failed refresh keeps the list and says why, in fixed words.
+      stub.zdrStatus = 500;
+      await tapVisible(tester, find.byKey(openRouterRefreshKey));
+      await until(tester, () => listed() == 2);
+      await until(
+        tester,
+        () => find
+            .text(
+              'Could not refresh (the endpoint answered 500); showing 63 '
+              'models cached',
+            )
+            .evaluate()
+            .isNotEmpty,
+      );
+      await type('glm');
+      expect(find.text('z-ai/glm-5.2:free'), findsOneWidget, reason: screen());
+      expect(screen(), isNot(contains(canary)));
+      expect(screen(), isNot(contains('model_name')));
+      expect(
+        container.read(settingsFileProvider).readAsStringSync(),
+        isNot(contains('Qwen3 235B')),
+      );
+      for (final line in archiveLines(container.read(archiveRootProvider))) {
+        expect(line, isNot(contains('endpoints/zdr')));
+        expect(line, isNot(contains('Qwen3 235B')));
+      }
+
+      // Removing the key forgets the list read under it.
+      await tapVisible(tester, find.text('Remove'));
+      expect(
+        find.text('Save an OpenRouter key to load models'),
+        findsOneWidget,
+        reason: screen(),
+      );
+      await type('glm');
+      expect(find.byKey(openRouterOptionsKey), findsNothing);
       await container.read(llmRegistryProvider)['openrouter']!.close();
       await tester.pump();
     });

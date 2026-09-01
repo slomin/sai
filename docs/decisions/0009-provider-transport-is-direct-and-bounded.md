@@ -1,6 +1,6 @@
 # 9. Provider transport is direct and bounded
 
-Date: 2026-08-25 · Status: accepted · Issue: #22 · Amended by: [0012](0012-plaintext-http-is-allowed-on-the-lan.md) · Schema: [settings-v0](../settings/settings-v0.md)
+Date: 2026-08-25 · Status: accepted · Issue: #22 · Amended by: [0012](0012-plaintext-http-is-allowed-on-the-lan.md), [0022](0022-openrouter-is-its-own-kind-with-pinned-routing.md) · Schema: [settings-v0](../settings/settings-v0.md)
 
 ## Context
 
