@@ -542,7 +542,13 @@ final class OpenAiCompatibleProvider implements LlmProvider, LlmEndpointProbe {
         } on FormatException {
           json = null;
         }
-        return DiscoveryAnswer(status, json: json, failure: _refused(status));
+        // Discovery has no routing to speak of: the common words, not
+        // the dialect's chat-completion ones.
+        return DiscoveryAnswer(
+          status,
+          json: json,
+          failure: statusFailure(status, origin),
+        );
       }
       try {
         return DiscoveryAnswer(status, json: jsonDecode(text));

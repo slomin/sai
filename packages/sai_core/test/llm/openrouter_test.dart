@@ -271,6 +271,36 @@ void main() {
       expect(info.toString(), isNot(contains('sk-or')));
     });
 
+    test('a spent cap is unavailable; an unlimited key is fine', () async {
+      stub.routes['GET /v1/key'] = (req) => StubServer.json(req, {
+        'data': {
+          'label': 'sk-or-v1-abc...xyz',
+          'limit': 1,
+          'limit_remaining': 0,
+        },
+      });
+      final spent = await make().probe();
+      expect(spent.health, EndpointHealth.unavailable);
+      expect(spent.failure!.kind, LlmFailureKind.rejected);
+      expect(spent.failure!.message, TransportText.noCredit);
+      expect(spent.toString(), isNot(contains('sk-or')));
+      stub.routes['GET /v1/key'] = (req) => StubServer.json(req, {
+        'data': {'limit': null, 'limit_remaining': null, 'usage': 3.5},
+      });
+      expect((await make().probe()).health, EndpointHealth.ok);
+      stub.routes['GET /v1/key'] = (req) => StubServer.json(req, {
+        'data': {'limit': 1, 'limit_remaining': 0.25},
+      });
+      expect((await make().probe()).health, EndpointHealth.ok);
+    });
+
+    test('discovery keeps the common words for a status', () async {
+      // A 404 on /key is not a missing route: the probe carries no routing.
+      final missing = await make().probe();
+      expect(missing.health, EndpointHealth.unavailable);
+      expect(missing.failure!.message, TransportText.answered(404));
+    });
+
     test('a rejected or missing key is unavailable, in fixed words', () async {
       stub.routes['GET /v1/key'] = (req) => StubServer.json(req, {
         'error': {'code': 401, 'message': 'bad $canary'},
@@ -316,57 +346,73 @@ void main() {
         reason: 'the preset model by hand is exact routing',
       );
       expect(missingForKind(config()), isNull);
-      expect(llmKindNeeds['openrouter'], contains('routing'));
     });
 
-    test('everything else names the key at fault', () {
+    test('an absent key is named bare, a wrong value as a phrase', () {
+      const router = 'naming a router or a shortcut, not one exact model';
       expect(openRouterProblem(config(model: null)), 'default_model');
-      expect(
-        openRouterProblem(config(model: 'openrouter/auto', routing: 'exact')),
-        'default_model',
-      );
-      expect(
-        openRouterProblem(config(model: 'noslash', routing: 'exact')),
-        'default_model',
-      );
-      expect(
-        openRouterProblem(config(model: '~deepseek/latest', routing: 'exact')),
-        'default_model',
-      );
-      expect(
-        openRouterProblem(
-          config(model: 'qwen/qwen3-8b:nitro', routing: 'exact'),
-        ),
-        'default_model',
-      );
-      expect(
-        openRouterProblem(
-          config(model: 'qwen/qwen3-8b:online', routing: 'exact'),
-        ),
-        'default_model',
-      );
+      for (final bad in [
+        'openrouter/auto',
+        'openrouter/free',
+        'openrouter/auto-beta',
+        'openrouter/Auto',
+        'noslash',
+        '~deepseek/latest',
+        'qwen/qwen3-8b:nitro',
+        'qwen/qwen3-8b:NITRO',
+        'qwen/qwen3-8b:online',
+      ]) {
+        expect(
+          openRouterProblem(config(model: bad, routing: 'exact')),
+          router,
+          reason: bad,
+        );
+      }
       expect(openRouterProblem(config(routing: null)), 'routing');
-      expect(openRouterProblem(config(routing: 'cheapest')), 'routing');
+      expect(
+        openRouterProblem(config(routing: 'cheapest')),
+        'carrying a routing word this sai does not know',
+      );
       expect(
         openRouterProblem(config(model: 'qwen/qwen3-8b')),
-        'routing',
-        reason: 'the pin fits the preset model only',
+        'routed deepinfra_fp8, which fits $openRouterPresetModel only',
       );
       expect(openRouterProblem(config(credential: null)), 'credential');
       expect(
         openRouterProblem(config(endpoint: 'https://other.example/v1')),
-        'endpoint',
+        'carrying an endpoint, but openrouter has a fixed one',
       );
-      expect(openRouterProblem(config(privacy: LlmPrivacy.local)), 'privacy');
+      expect(
+        openRouterProblem(config(privacy: LlmPrivacy.local)),
+        'tagged local, but openrouter is a cloud provider',
+      );
       expect(openRouterProblem(config(privacy: LlmPrivacy.cloud)), isNull);
       expect(missingForKind(config(routing: null)), 'routing');
+      // The clients read a bare key as "missing its …" and a phrase as is.
+      expect(misconfiguredNote('routing'), 'missing its routing');
+      expect(misconfiguredNote(router), router);
     });
 
     test('model problems are said in a sentence without the id', () {
       expect(openRouterModelProblem(openRouterPresetModel), isNull);
       expect(openRouterModelProblem('qwen/qwen3-8b:free'), isNull);
-      for (final bad in ['openrouter/auto', 'qwen', '~x/y', 'a/b:floor']) {
-        expect(openRouterModelProblem(bad), isNotNull, reason: bad);
+      expect(
+        openRouterModelProblem('meta-llama/Llama-3.3-70B-Instruct'),
+        isNull,
+      );
+      for (final bad in [
+        'openrouter/auto',
+        'openrouter/free',
+        'openrouter/Auto',
+        'OpenRouter/auto',
+        'qwen',
+        '~x/y',
+        'a/b:floor',
+        'a/b:FLOOR',
+      ]) {
+        final problem = openRouterModelProblem(bad);
+        expect(problem, isNotNull, reason: bad);
+        expect(problem, isNot(contains(bad)), reason: 'says no id back');
       }
     });
 
@@ -390,6 +436,26 @@ void main() {
         endpoint: stub.v1,
       ) as OpenAiCompatibleProvider;
       expect(stubbed.endpoint, stub.v1);
+      // The one seam moves the origin to a loopback stub and nowhere else.
+      for (final elsewhere in [
+        'https://other.example/v1',
+        'http://10.0.0.9/v1',
+      ]) {
+        expect(
+          () => openRouterFactory(
+            config(),
+            secrets,
+            endpoint: Uri.parse(elsewhere),
+          ),
+          throwsArgumentError,
+          reason: elsewhere,
+        );
+        expect(
+          () => openRouterBuiltin(secrets, endpoint: Uri.parse(elsewhere)),
+          throwsArgumentError,
+          reason: elsewhere,
+        );
+      }
       expect(
         () => openRouterFactory(config(routing: null), secrets),
         throwsArgumentError,

@@ -895,6 +895,21 @@ void main() {
         );
       });
 
+      test('a refused Keychain write configures nothing (#24)', () {
+        final container = make(shipped: true, store: _RefusingStore());
+        final credentials = container.read(credentialsProvider.notifier);
+        expect(
+          () => credentials.set(openRouterProviderId, 'sk-canary-refused'),
+          throwsA(isA<SecretStoreException>()),
+        );
+        expect(
+          container.read(settingsProvider).provider(openRouterProviderId),
+          isNull,
+          reason: 'the key goes first; no key, no entry',
+        );
+        expect(File('${tmp.path}/settings.json').existsSync(), isFalse);
+      });
+
       test('a wrong OpenRouter entry is misconfigured, never re-routed', () {
         final container = make(shipped: true);
         final settings = container.read(settingsProvider.notifier);
@@ -912,13 +927,14 @@ void main() {
           container.read(llmRegistryProvider).keys,
           isNot(contains(openRouterProviderId)),
         );
+        const router = 'naming a router or a shortcut, not one exact model';
         expect(
           container.read(misconfiguredLlmsProvider)[openRouterProviderId],
-          'default_model',
+          router,
         );
         expect(
           container.read(llmStatusProvider),
-          misconfiguredStatus(openRouterProviderId, 'default_model'),
+          "provider 'openrouter' is $router — local only",
         );
         settings.upsertProvider(
           ProviderConfig(
@@ -931,7 +947,7 @@ void main() {
         );
         expect(
           container.read(misconfiguredLlmsProvider)[openRouterProviderId],
-          'routing',
+          'routed deepinfra_fp8, which fits $openRouterPresetModel only',
         );
         settings.upsertProvider(
           ProviderConfig(

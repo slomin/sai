@@ -1,6 +1,8 @@
 import '../secrets/secret_store.dart';
+import '../settings/endpoint.dart';
 import '../settings/provider_config.dart';
 import 'call.dart';
+import 'failure.dart';
 import 'openai_compatible/dialect.dart';
 import 'openai_compatible/policy.dart';
 import 'openai_compatible/provider.dart';
@@ -88,42 +90,74 @@ final openRouterModelForm = RegExp(
 /// throughput, `:floor` by price) or add a web search (`:online`).
 const openRouterShortcuts = [':nitro', ':floor', ':online'];
 
-/// Why [model] is not one exact model id, in a sentence, or null.
+/// Why [model] is not one exact model id, in a sentence, or null. Judged
+/// on the lowercased id: OpenRouter's slugs are lowercase and a router
+/// spelled `openrouter/Auto` would still be the router. Every id under
+/// the `openrouter/` owner is a router — `auto`, `auto-beta`, `free`, and
+/// whatever comes next — so the owner is refused, not a list of names.
 String? openRouterModelProblem(String model) {
-  if (model == 'openrouter/auto') {
-    return 'openrouter/auto lets the router pick the model; name one';
-  }
+  final id = model.toLowerCase();
   if (!openRouterModelForm.hasMatch(model)) {
     return 'an OpenRouter model id is owner/name';
   }
+  if (id.startsWith('openrouter/')) {
+    return 'openrouter/* ids are routers that pick the model; name one';
+  }
   for (final s in openRouterShortcuts) {
-    if (model.endsWith(s)) {
+    if (id.endsWith(s)) {
       return 'the $s shortcut changes the routing; name the model alone';
     }
   }
   return null;
 }
 
-/// Why [config] cannot be built as an `openrouter` provider — the
-/// settings key at fault — or null when it can. The endpoint is not the
-/// user's to set, the privacy tag is `cloud` or nothing, the model is
-/// one exact id, the routing is a known word that fits the model, and
-/// the key's account is named.
+/// Why [config] cannot be built as an `openrouter` provider, or null when
+/// it can. A key that is absent is named bare (`default_model`,
+/// `credential`, `routing`), the way `llmKindNeeds` names one, so the
+/// clients say "missing its …" and the CLI can name the flag; a value
+/// that is present and wrong comes back as a phrase, since "missing" and
+/// "add it" would send the person the wrong way. The endpoint is not the
+/// user's to set, the privacy tag is `cloud` or nothing, the model is one
+/// exact id, the routing is a known word that fits the model, and the
+/// key's account is named.
 String? openRouterProblem(ProviderConfig config) {
-  if (config.endpoint != null) return 'endpoint';
-  if (config.privacy == LlmPrivacy.local) return 'privacy';
+  if (config.endpoint != null) {
+    return 'carrying an endpoint, but openrouter has a fixed one';
+  }
+  if (config.privacy == LlmPrivacy.local) {
+    return 'tagged local, but openrouter is a cloud provider';
+  }
   final model = config.defaultModel;
-  if (model == null || openRouterModelProblem(model) != null) {
-    return 'default_model';
+  if (model == null) return 'default_model';
+  if (openRouterModelProblem(model) != null) {
+    return 'naming a router or a shortcut, not one exact model';
   }
   if (config.credential == null) return 'credential';
   final routing = OpenRouterRouting.parse(config.routing);
-  if (routing == null) return 'routing';
+  if (routing == null) {
+    return config.routing == null
+        ? 'routing'
+        : 'carrying a routing word this sai does not know';
+  }
   if (routing == OpenRouterRouting.deepinfraFp8 &&
       model != openRouterPresetModel) {
-    return 'routing';
+    return 'routed deepinfra_fp8, which fits $openRouterPresetModel only';
   }
   return null;
+}
+
+/// The endpoint a test may hand in for the fixed one: a loopback stub and
+/// nothing else, so no override can point the key at another host.
+Uri _fixedOrigin(Uri? endpoint) {
+  if (endpoint == null || endpoint == openRouterEndpoint) {
+    return openRouterEndpoint;
+  }
+  if (!isLoopbackHost(endpoint.host)) {
+    throw ArgumentError(
+      'the OpenRouter origin moves only to a loopback stub in tests',
+    );
+  }
+  return endpoint;
 }
 
 /// OpenRouter's request shape over the common transport: attribution
@@ -180,6 +214,20 @@ final class OpenRouterDialect implements OpenAiDialect {
         failure: key.failure,
       );
     }
+    // A capped key that has spent its cap still answers 200 here while
+    // every call would answer 402: read the one field that says so.
+    // Nothing else of the body is kept — it also carries the key's label.
+    if (key.json case {'data': {'limit_remaining': final num left}}
+        when left <= 0) {
+      return EndpointInfo(
+        health: EndpointHealth.unavailable,
+        failure: LlmFailure(
+          LlmFailureKind.rejected,
+          TransportText.noCredit,
+          endpoint: d.origin,
+        ),
+      );
+    }
     // No model list and no context window: the catalogue is a later
     // ticket, and a cloud provider's budget stays the conservative one.
     return const EndpointInfo(
@@ -211,7 +259,7 @@ LlmProvider openRouterFactory(
   }
   return OpenAiCompatibleProvider(
     id: config.id,
-    endpoint: endpoint ?? openRouterEndpoint,
+    endpoint: _fixedOrigin(endpoint),
     defaultModel: config.defaultModel!,
     secrets: secrets,
     credential: config.credential,
@@ -228,7 +276,7 @@ OpenAiCompatibleProvider openRouterBuiltin(
   Uri? endpoint,
 }) => OpenAiCompatibleProvider(
   id: openRouterProviderId,
-  endpoint: endpoint ?? openRouterEndpoint,
+  endpoint: _fixedOrigin(endpoint),
   defaultModel: openRouterPresetModel,
   secrets: secrets,
   credential: ProviderConfig.credentialFor(openRouterProviderId),

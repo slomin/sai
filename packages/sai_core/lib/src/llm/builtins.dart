@@ -65,22 +65,18 @@ List<LlmProvider Function()> builtinLlms(
 /// an unconfigured built-in writes first. Null for a provider no kind
 /// describes.
 ProviderConfig? configFor(LlmProvider provider) => switch (provider) {
-  OpenAiCompatibleProvider(dialect: OpenRouterDialect(:final routing)) =>
-    ProviderConfig(
-      id: provider.id,
-      kind: openRouterKind,
-      defaultModel: provider.defaultModel,
-      credential: provider.credential,
-      privacy: LlmPrivacy.cloud,
-      routing: routing.word,
-    ),
+  // The kind and the privacy are the provider's own; an entry names an
+  // endpoint only for a dialect whose endpoint is the person's to set.
   OpenAiCompatibleProvider() => ProviderConfig(
     id: provider.id,
     kind: provider.kind,
-    endpoint: provider.endpoint.toString(),
+    endpoint: provider.dialect.bindsKeyToOrigin
+        ? provider.endpoint.toString()
+        : null,
     defaultModel: provider.defaultModel,
     credential: provider.credential,
     privacy: provider.privacy,
+    routing: openRouterRoutingOf(provider)?.word,
   ),
   FakeLlmProvider() => ProviderConfig(
     id: provider.id,

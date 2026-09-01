@@ -1023,12 +1023,18 @@ class CredentialsNotifier extends Notifier<int> {
   /// unknown id or one that takes no key, and [SecretStoreException] when
   /// the store refuses.
   void set(String id, String value) {
-    var config = ref.read(settingsProvider).provider(id);
+    final config = ref.read(settingsProvider).provider(id);
     if (config == null) {
+      // The key first, then the entry: the built-in reads the same
+      // account, so a settings write that fails leaves a working
+      // provider — never an entry the person did not confirm with no
+      // key behind it. A refused Keychain write leaves nothing at all.
       final shipped = _shipped(id);
       if (shipped?.credential == null) throw _noCredential(id, shipped);
-      ref.read(settingsProvider.notifier).upsertProvider(shipped!);
-      config = shipped;
+      ref.read(secretStoreProvider).write(shipped!.credential!, value);
+      state++;
+      ref.read(settingsProvider.notifier).upsertProvider(shipped);
+      return;
     }
     final account = _account(id);
     // The key is good for the endpoint as configured this moment: record

@@ -32,13 +32,12 @@ LlmProvider fakeProviderFactory(ProviderConfig config, SecretStore secrets) =>
 /// of these out and names the gap; the factory refuses it too.
 const llmKindNeeds = <String, List<String>>{
   'openai_compatible': ['endpoint', 'default_model'],
-  openRouterKind: ['default_model', 'credential', 'routing'],
 };
 
 /// The first key of [llmKindNeeds] that [config] lacks, or null. The
-/// `openrouter` kind judges its own (`openRouterProblem`): a wrong value
-/// counts as much as an absent one, so a bad entry is misconfigured,
-/// never built and never silently re-routed.
+/// `openrouter` kind judges its own (`openRouterProblem`): an absent key
+/// by name, a wrong value as a phrase — either way the entry is
+/// misconfigured, never built and never silently re-routed.
 String? missingForKind(ProviderConfig config) {
   if (config.kind == openRouterKind) return openRouterProblem(config);
   for (final key in llmKindNeeds[config.kind] ?? const <String>[]) {
