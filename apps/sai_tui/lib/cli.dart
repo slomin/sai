@@ -50,11 +50,12 @@ openrouter is built in: cloud, keyed, fixed to https://openrouter.ai,
 on its recommended preset (DeepSeek V4 Flash 0731 pinned to DeepInfra
 fp8, no fallback). provider add openrouter --model <owner/name> picks
 one exact model instead (routing exact); --routing recommended returns
-to the preset. It takes no --endpoint and no --privacy local, and
-openrouter/auto, ~latest aliases and :nitro/:floor/:online shortcuts
-are refused. secret set openrouter configures it as shipped and files
-the key. Removing the key here removes the Keychain item only: revoke
-the key at openrouter.ai as well.
+to the preset. It takes no --endpoint and no --privacy local (an entry
+changed to this kind drops the endpoint it had and turns cloud), and
+openrouter/* routers, ~latest aliases and :nitro/:floor/:online
+shortcuts are refused. secret set openrouter configures it as shipped
+and files the key. Removing the key here removes the Keychain item
+only: revoke the key at openrouter.ai as well.
 
 things import reads a private copy of the Things 3 database (the one
 under ~/Library/Group Containers, or --db / SAI_THINGS_DB) and writes
@@ -203,11 +204,11 @@ Future<int> runCli(
         String? model = seed?.defaultModel;
         LlmPrivacy? privacy = seed?.privacy;
         String? routing = seed?.routing;
-        var key = seed?.credential != null;
+        bool? keyGiven;
         String? endpointGiven;
         String? modelGiven;
         String? routingGiven;
-        var noKey = false;
+        LlmPrivacy? privacyGiven;
         for (var i = 0; i < rest.length; i++) {
           String value() {
             if (i + 1 >= rest.length) {
@@ -224,10 +225,9 @@ Future<int> runCli(
             case '--model':
               model = modelGiven = value();
             case '--key':
-              key = true;
+              keyGiven = true;
             case '--no-key':
-              key = false;
-              noKey = true;
+              keyGiven = false;
             case '--routing':
               routingGiven = value();
               if (!const {'recommended', 'exact'}.contains(routingGiven)) {
@@ -237,7 +237,7 @@ Future<int> runCli(
               }
             case '--privacy':
               final name = value();
-              privacy = LlmPrivacy.values.asNameMap()[name];
+              privacy = privacyGiven = LlmPrivacy.values.asNameMap()[name];
               if (privacy == null) {
                 throw _Usage('--privacy takes local or cloud, not $name');
               }
@@ -246,24 +246,36 @@ Future<int> runCli(
           }
         }
         if (kind == null) throw _Usage('provider add needs --kind');
+        // The key stays as the entry had it, or as the built-in ships it
+        // while the entry keeps the built-in's kind — a built-in's
+        // account is not carried into another kind unasked.
+        var key =
+            keyGiven ??
+            (existing != null
+                ? existing.credential != null
+                : seed?.credential != null && kind == seed?.kind);
         if (kind == openRouterKind) {
           // OpenRouter (#24): one origin, cloud, keyed; the model is one
-          // exact id, and the routing is said, never inferred.
+          // exact id, and the routing is said, never inferred. What an
+          // entry changed to this kind brought along — an endpoint, a
+          // local tag — is dropped; only the flags typed are refused.
           if (endpointGiven != null) {
             throw _Usage(
               'openrouter has a fixed endpoint; --endpoint does '
               'not apply',
             );
           }
-          if (privacy == LlmPrivacy.local) {
+          if (privacyGiven == LlmPrivacy.local) {
             throw _Usage(
               'openrouter is a cloud provider; --privacy local '
               'does not apply',
             );
           }
-          if (noKey) {
+          if (keyGiven == false) {
             throw _Usage('openrouter needs a key; --no-key does not apply');
           }
+          endpoint = null;
+          privacy = LlmPrivacy.cloud;
           key = true;
           if (routingGiven == 'recommended') {
             if (modelGiven != null && modelGiven != openRouterPresetModel) {
@@ -282,6 +294,10 @@ Future<int> runCli(
           if (problem != null) throw _Usage(problem);
         } else if (routingGiven != null) {
           throw _Usage('--routing applies to openrouter only');
+        } else {
+          // Routing is OpenRouter's word (settings-v0): another kind
+          // carries none, whatever the entry had before.
+          routing = null;
         }
         final ProviderConfig config;
         try {
@@ -311,9 +327,8 @@ Future<int> runCli(
         }
         final notifier = container.read(settingsProvider.notifier);
         final hadKey =
-            existing != null &&
             container.read(credentialStatusProvider(id)) ==
-                CredentialStatus.set;
+            CredentialStatus.set;
         final wasBound = existing?.keyBound ?? false;
         notifier.upsertProvider(config);
         out.writeln(
@@ -337,13 +352,18 @@ Future<int> runCli(
         }
         final missing = container.read(misconfiguredLlmsProvider)[id];
         if (missing != null) {
+          // A bare key can be added by its flag; a wrong value is fixed
+          // by adding the entry again the way its kind wants it.
+          final how = missing.contains(' ')
+              ? 'add it again: $program provider add $id --kind $kind '
+                    '--model <owner/name>'
+              : 'add it with --${switch (missing) {
+                  'default_model' => 'model',
+                  'credential' => 'key',
+                  _ => missing,
+                }}';
           err.writeln(
-            "$program: provider '$id' is ${misconfiguredNote(missing)}; add it "
-            'with --${switch (missing) {
-              'default_model' => 'model',
-              'credential' => 'key',
-              _ => missing,
-            }}',
+            "$program: provider '$id' is ${misconfiguredNote(missing)}; $how",
           );
         }
         final stable = SaiIdentity.stable.tuiCommand;

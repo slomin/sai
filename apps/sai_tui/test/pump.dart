@@ -13,6 +13,7 @@ ProviderContainer testContainer({
   List<LlmProvider Function()> builtins = const [FakeLlmProvider.new],
   FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
   SecretStore? secrets,
+  Uri? openRouterEndpoint,
 }) {
   // Archive and settings both go under one temp dir, whatever the
   // developer's environment says.
@@ -31,6 +32,11 @@ ProviderContainer testContainer({
       // or the LAN box unless it asks for them.
       builtinLlmsProvider.overrideWithValue(builtins),
       defaultLlmIdProvider.overrideWithValue(null),
+      // Never the real OpenRouter from a test: an unroutable loopback
+      // port unless the test brings its stub (#24).
+      openRouterEndpointProvider.overrideWithValue(
+        openRouterEndpoint ?? Uri.parse('http://127.0.0.1:1/v1'),
+      ),
       // The status row watches the warmer; a test provider must never
       // be sent a background inference (#105).
       warmEnabledProvider.overrideWithValue(false),

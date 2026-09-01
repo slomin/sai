@@ -190,10 +190,7 @@ void main() {
         'provider add openrouter --routing recommended --model qwen/qwen3-8b',
         'pins',
       ),
-      (
-        'provider add openrouter --model openrouter/auto',
-        'lets the router pick',
-      ),
+      ('provider add openrouter --model openrouter/auto', 'routers that pick'),
       ('provider add openrouter --model ~deepseek/latest', 'owner/name'),
       ('provider add openrouter --model qwen/qwen3-8b:nitro', 'shortcut'),
       (
@@ -211,6 +208,120 @@ void main() {
     }
     expect(entry(), before);
     expect(container.read(settingsProvider).provider('lan'), isNull);
+  });
+
+  test(
+    'changing an entry to openrouter drops what the kind refuses (#24)',
+    () async {
+      container = testContainer(builtins: builtinLlms(InMemorySecretStore()));
+      expect(
+        await run(
+          'provider add local --kind openai_compatible '
+          '--endpoint http://127.0.0.1:8080/v1 --model qwen --privacy local',
+        ),
+        cliOk,
+      );
+      out.clear();
+      err.clear();
+      expect(
+        await run('provider add local --kind openrouter --model qwen/qwen3-8b'),
+        cliOk,
+      );
+      expect(err.toString(), isEmpty, reason: 'nothing inherited is refused');
+      expect(out.toString(), contains('routing: exact model'));
+      Map<String, Object?> entry() =>
+          (jsonDecode(settingsFile().readAsStringSync())['providers'] as List)
+                  .single
+              as Map<String, Object?>;
+      expect(entry(), {
+        'id': 'local',
+        'kind': 'openrouter',
+        'default_model': 'qwen/qwen3-8b',
+        'credential': 'provider:local',
+        'privacy': 'cloud',
+        'routing': 'exact',
+      });
+      final built = container.read(llmRegistryProvider)['local']!;
+      expect(built.privacy, LlmPrivacy.cloud);
+      expect(built.displayName, 'local @ http://127.0.0.1:1');
+      // And back: the routing word is OpenRouter's, it does not travel.
+      out.clear();
+      expect(
+        await run(
+          'provider add local --kind openai_compatible '
+          '--endpoint http://127.0.0.1:8080/v1 --model qwen',
+        ),
+        cliOk,
+      );
+      expect(entry(), isNot(contains('routing')));
+      expect(entry()['credential'], 'provider:local', reason: 'the key stays');
+    },
+  );
+
+  test(
+    "a built-in's key account is not carried into another kind (#24)",
+    () async {
+      container = testContainer(builtins: builtinLlms(InMemorySecretStore()));
+      expect(
+        await run(
+          'provider add openrouter --kind openai_compatible '
+          '--endpoint http://192.168.1.5:8080/v1 --model qwen',
+        ),
+        cliOk,
+      );
+      Map<String, Object?> entry() =>
+          (jsonDecode(settingsFile().readAsStringSync())['providers'] as List)
+                  .single
+              as Map<String, Object?>;
+      expect(entry(), isNot(contains('credential')));
+      expect(entry(), isNot(contains('routing')));
+      expect(out.toString(), isNot(contains('secret set')));
+      expect(
+        await run(
+          'provider add openrouter --kind openai_compatible '
+          '--endpoint http://192.168.1.5:8080/v1 --model qwen --key',
+        ),
+        cliOk,
+      );
+      expect(entry()['credential'], 'provider:openrouter');
+    },
+  );
+
+  test('a wrong OpenRouter value is said as such and repaired by adding '
+      'again (#24)', () async {
+    container = testContainer(builtins: builtinLlms(InMemorySecretStore()));
+    // As a hand-edited file would have it: an endpoint on the kind.
+    container
+        .read(settingsProvider.notifier)
+        .upsertProvider(
+          ProviderConfig(
+            id: 'openrouter',
+            kind: 'openrouter',
+            endpoint: 'https://other.example/v1',
+            defaultModel: openRouterPresetModel,
+            credential: 'provider:openrouter',
+            routing: 'deepinfra_fp8',
+          ),
+        );
+    expect(await run('provider list'), cliOk);
+    expect(
+      out.toString(),
+      contains(
+        '  openrouter  openrouter  — carrying an endpoint, but openrouter '
+        'has a fixed one',
+      ),
+    );
+    expect(out.toString(), isNot(contains('missing its')));
+    out.clear();
+    err.clear();
+    expect(await run('provider add openrouter --routing recommended'), cliOk);
+    expect(err.toString(), isEmpty);
+    final entry =
+        (jsonDecode(settingsFile().readAsStringSync())['providers'] as List)
+                .single
+            as Map<String, Object?>;
+    expect(entry, isNot(contains('endpoint')));
+    expect(container.read(llmRegistryProvider), contains('openrouter'));
   });
 
   test(
@@ -257,6 +368,12 @@ void main() {
         out.toString().trim(),
         'key for openrouter stored in the Keychain',
       );
+      // Re-adding over a stored key does not ask for the key again.
+      out.clear();
+      expect(await run('provider remove openrouter'), cliOk);
+      out.clear();
+      expect(await run('provider add openrouter'), cliOk);
+      expect(out.toString(), isNot(contains('set its key')));
       expect(await run('secret clear openrouter'), cliOk);
       expect(store.accounts, isEmpty);
       expect(
