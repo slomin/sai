@@ -24,6 +24,9 @@ void main() {
     'packages/sai_core/test/llm/stub_server.dart',
     // chmods a settings file unreadable and back.
     'packages/sai_core/test/settings/store_test.dart',
+    // Runs a second Dart VM to prove the credential-home lock excludes
+    // another process (#26); the probe it runs takes no other process.
+    'packages/sai_core/test/process/lock_test.dart',
   };
 
   final spawn = RegExp(r'\bProcess\.(start|run|runSync)\s*\(');

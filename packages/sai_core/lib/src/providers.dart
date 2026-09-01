@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:riverpod/riverpod.dart';
 
 import 'app_info.dart';
@@ -18,6 +19,9 @@ import 'llm/effort.dart';
 import 'llm/failure.dart';
 import 'llm/builtins.dart';
 import 'llm/factory.dart';
+import 'llm/codex_app_server/config.dart';
+import 'llm/codex_app_server/runtime.dart';
+import 'llm/codex_app_server/sidecar.dart';
 import 'llm/openai/openai.dart';
 import 'llm/openai_compatible/policy.dart';
 import 'llm/openai_compatible/provider.dart';
@@ -28,6 +32,8 @@ import 'llm/provider.dart';
 import 'llm/recorder.dart';
 import 'llm/status.dart';
 import 'llm/usage.dart';
+import 'process/dart_runner.dart';
+import 'process/runner.dart';
 import 'proposals/notifier.dart';
 import 'proposals/proposal.dart';
 import 'secrets/keychain.dart';
@@ -452,6 +458,7 @@ final openAiEndpointProvider = Provider<Uri>((ref) => openAiEndpoint);
 final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>((ref) {
   final openRouter = ref.watch(openRouterEndpointProvider);
   final openAi = ref.watch(openAiEndpointProvider);
+  final runtime = ref.watch(appServerRuntimeProvider);
   return {
     'fake': fakeProviderFactory,
     'openai_compatible': openAiCompatibleFactory,
@@ -459,7 +466,58 @@ final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>((ref) {
         openRouterFactory(config, secrets, endpoint: openRouter),
     openAiKind: (config, secrets) =>
         openAiFactory(config, secrets, endpoint: openAi),
+    chatGptKind: (config, secrets) => chatGptFactory(config, runtime: runtime),
   };
+});
+
+/// The process runner the App Server is started through (#26, ADR 0013):
+/// `dart:io` in production, the only real spawn in `lib/`; every test
+/// overrides it with a scripted fake, so nothing under `test/` starts the
+/// real binary against a real home (`no_spawn_test`).
+final processRunnerProvider = Provider<ProcessRunner>(
+  (ref) => const DartProcessRunner(),
+);
+
+/// Where the bundled App Server is (#26): beside the running executable
+/// in a release, nowhere in a `dart run` or a dev build. Tests hand in a
+/// path of their own.
+final sidecarLocatorProvider = Provider<SidecarLocator?>(
+  (ref) => SidecarLocator.beside(Platform.resolvedExecutable),
+);
+
+/// The credential home the runtime owns, or null in the dev flavor
+/// (#95): `<data dir>/codex`, or `SAI_CODEX_HOME` for a scratch smoke.
+final codexHomeProvider = Provider<Directory?>(
+  (ref) => resolveCodexHome(
+    environment: ref.watch(environmentProvider),
+    operatingSystem: Platform.operatingSystem,
+    identity: ref.watch(identityProvider),
+  ),
+);
+
+/// The one App Server runtime of this process (#26): one child, one
+/// lock, one credential home, shared by every `chatgpt_subscription`
+/// entry — they are all the same login. Null where no runtime can run:
+/// the dev flavor, or a build with no sidecar; the factory then builds a
+/// provider that refuses in fixed words before any spawn.
+final appServerRuntimeProvider = Provider<AppServerRuntime?>((ref) {
+  final home = ref.watch(codexHomeProvider);
+  final sidecar = ref.watch(sidecarLocatorProvider);
+  final environment = ref.watch(environmentProvider);
+  final keychains = resolveKeychainsDir(environment);
+  if (home == null || sidecar == null || keychains == null) return null;
+  final runtime = AppServerRuntime(
+    CodexLaunch(
+      sidecar: sidecar,
+      home: home,
+      tempRoot: Directory(p.join(home.parent.path, 'codex-tmp')),
+      keychainsDir: keychains,
+      runner: ref.watch(processRunnerProvider),
+      clientVersion: saiVersion,
+    ),
+  );
+  ref.onDispose(() => unawaited(runtime.close()));
+  return runtime;
 });
 
 /// Configured providers whose kind is known but whose configuration the
