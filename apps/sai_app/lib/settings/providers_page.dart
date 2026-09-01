@@ -328,14 +328,17 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
           selected: exact,
           leading: Icon(exact ? Icons.check : null, size: 18),
           title: const Text('Exact model'),
+          // The requirement is said in both states: the selected one is
+          // where a model with no fitting endpoint is refusing every call.
           subtitle: Text(
-            exact
-                ? '$model — OpenRouter picks among that '
-                      "model's endpoints, never another model; the same "
-                      'privacy filters apply.'
-                : 'One owner/name id from openrouter.ai/models with a '
-                      'zero-retention endpoint (the ZDR list); the same '
-                      'privacy filters apply, and never another model.',
+            exact && model != null
+                ? '$model — needs an endpoint that meets the privacy filters, '
+                      'zero retention above all (openrouter.ai lists them); '
+                      'OpenRouter picks among those, never another model.'
+                : 'One owner/name id from openrouter.ai/models with an '
+                      'endpoint that meets the privacy filters, zero '
+                      'retention above all (the ZDR list); never another '
+                      'model.',
           ),
         ),
         Padding(
