@@ -85,6 +85,7 @@ Future<ProviderContainer> pumpApp(
   bool firstRun = false,
   SaiIdentity identity = SaiIdentity.stable,
   FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
+  SecretStore? secrets,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
   // real data directory, whatever the developer's environment says. A
@@ -101,6 +102,7 @@ Future<ProviderContainer> pumpApp(
         firstRun: firstRun,
         identity: identity,
         finishedTasks: finishedTasks,
+        secrets: secrets,
       ),
       ...overrides,
     ],
@@ -137,6 +139,7 @@ List<Override> appOverrides({
   bool firstRun = false,
   SaiIdentity identity = SaiIdentity.stable,
   FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
+  SecretStore? secrets,
 }) => [
   // Stable unless a test asks for dev: the goldens show the plain
   // header, and `appFlavor` is unset under `flutter test` anyway.
@@ -148,8 +151,9 @@ List<Override> appOverrides({
   // developer's real directories from a test.
   environmentProvider.overrideWithValue({'HOME': tmp.path, ...environment}),
   eventSourceProvider.overrideWithValue(EventSources.app),
-  // Never the login keychain from a test.
-  secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+  // Never the login keychain from a test. A test whose built-ins take a
+  // key hands in the store they were built over.
+  secretStoreProvider.overrideWithValue(secrets ?? InMemorySecretStore()),
   // The fake alone, nothing selected: a test never reaches LM Studio
   // or the LAN box unless it asks for them.
   builtinLlmsProvider.overrideWithValue(builtins),

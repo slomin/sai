@@ -39,6 +39,15 @@ final class StubServer {
               ],
             }),
           );
+      case 'GET /v1/key':
+        // OpenRouter's key check (#24): the probe reads nothing of it.
+        response
+          ..headers.contentType = ContentType.json
+          ..write(
+            jsonEncode({
+              'data': {'limit': 1, 'usage': 0},
+            }),
+          );
       case 'POST /v1/chat/completions' when chatStatus != 200:
         response
           ..statusCode = chatStatus

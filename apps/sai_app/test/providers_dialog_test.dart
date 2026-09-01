@@ -52,6 +52,15 @@ void main() {
     matching: find.byType(TextButton),
   );
 
+  /// Scrolls [finder] into view, then taps it: the OpenRouter block (#24)
+  /// pushes the key field below the 800 px test window.
+  Future<void> tapVisible(WidgetTester tester, Finder finder) async {
+    await tester.ensureVisible(finder);
+    await tester.pump();
+    await tester.tap(finder);
+    await tester.pump();
+  }
+
   /// Every Text on screen, for a failure message.
   String screen() => find
       .byType(Text)
@@ -455,6 +464,214 @@ void main() {
       await until(tester, () => find.text('asking…').evaluate().isEmpty);
       expect(find.text('ok · 2 models · context unavailable'), findsOneWidget);
       await release(tester, container);
+    });
+
+    testWidgets('OpenRouter ships inactive with a key field, the preset and '
+        'an exact model (#24)', (tester) async {
+      final store = InMemorySecretStore();
+      final endpoint = Uri.parse(stub.v1);
+      final container = await pumpApp(
+        tester,
+        secrets: store,
+        builtins: [
+          FakeLlmProvider.new,
+          () => openRouterBuiltin(store, endpoint: endpoint),
+        ],
+        overrides: [openRouterEndpointProvider.overrideWithValue(endpoint)],
+      );
+      final settingsFile = container.read(settingsFileProvider);
+      await open(tester);
+      expect(find.byKey(providerRowKey('openrouter')), findsOneWidget);
+      expect(container.read(settingsProvider).llm, isNull);
+      expect(container.read(settingsProvider).provider('openrouter'), isNull);
+      await select(tester, 'openrouter');
+      // Unconfigured, it still takes a key and says which model it pins.
+      expect(find.byKey(apiKeyFieldKey), findsOneWidget);
+      expect(find.text('No key stored yet.'), findsOneWidget);
+      expect(
+        find.text(
+          '$openRouterPresetModel — cloud · pinned to DeepInfra fp8 · no key',
+        ),
+        findsOneWidget,
+        reason: screen(),
+      );
+      expect(
+        tester.widget<ListTile>(find.byKey(openRouterPresetKey)).selected,
+        isTrue,
+      );
+      expect(
+        tester.widget<ListTile>(find.byKey(openRouterExactKey)).selected,
+        isFalse,
+      );
+      expect(
+        tester.widget<FilledButton>(find.byKey(openRouterApplyKey)).onPressed,
+        isNull,
+        reason: 'nothing typed yet',
+      );
+      // The probe is OpenRouter's key check, over the fixed transport.
+      await until(tester, () => find.text('asking…').evaluate().isEmpty);
+      expect(
+        find.text('unavailable: no key stored for this endpoint'),
+        findsOneWidget,
+        reason: screen(),
+      );
+      expect(stub.requests, isNot(contains('GET /v1/key')));
+
+      // Saving a key configures the built-in as shipped, then stores it.
+      await tester.ensureVisible(find.byKey(apiKeyFieldKey));
+      await tester.enterText(find.byKey(apiKeyFieldKey), canary);
+      await tester.pump();
+      await tapVisible(tester, find.text('Save'));
+      expect(store.read('provider:openrouter'), canary);
+      expect(
+        container.read(settingsProvider).provider('openrouter')!.toJson(),
+        {
+          'id': 'openrouter',
+          'kind': 'openrouter',
+          'default_model': openRouterPresetModel,
+          'credential': 'provider:openrouter',
+          'privacy': 'cloud',
+          'routing': 'deepinfra_fp8',
+        },
+      );
+      expect(find.text('A key is stored in the Keychain.'), findsOneWidget);
+      expect(
+        find.textContaining('revoke the key at openrouter.ai'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Refresh'));
+      await until(tester, () => stub.requests.contains('GET /v1/key'));
+      await until(tester, () => find.text('asking…').evaluate().isEmpty);
+      expect(
+        find.text('ok · openrouter · no models listed · context unavailable'),
+        findsOneWidget,
+        reason: screen(),
+      );
+      expect(settingsFile.readAsStringSync(), isNot(contains(canary)));
+      expect(screen(), isNot(contains(canary)));
+
+      // A router id is refused and nothing changes; an exact id is stored
+      // as exact routing, and the built provider follows.
+      await tester.ensureVisible(find.byKey(openRouterModelFieldKey));
+      await tester.enterText(
+        find.byKey(openRouterModelFieldKey),
+        'openrouter/auto',
+      );
+      await tester.pump();
+      await tapVisible(tester, find.byKey(openRouterApplyKey));
+      expect(
+        container.read(settingsProvider).provider('openrouter')!.defaultModel,
+        openRouterPresetModel,
+      );
+      expect(screen(), contains('lets the router pick the model'));
+      await tester.ensureVisible(find.byKey(openRouterModelFieldKey));
+      await tester.enterText(
+        find.byKey(openRouterModelFieldKey),
+        'qwen/qwen3-8b',
+      );
+      await tester.pump();
+      await tapVisible(tester, find.byKey(openRouterApplyKey));
+      final exact = container.read(settingsProvider).provider('openrouter')!;
+      expect(exact.defaultModel, 'qwen/qwen3-8b');
+      expect(exact.routing, 'exact');
+      expect(exact.credential, 'provider:openrouter');
+      expect(
+        tester.widget<ListTile>(find.byKey(openRouterExactKey)).selected,
+        isTrue,
+      );
+      expect(
+        find.text('qwen/qwen3-8b — cloud · exact model · key set'),
+        findsOneWidget,
+        reason: screen(),
+      );
+      final built =
+          container.read(llmRegistryProvider)['openrouter']!
+              as OpenAiCompatibleProvider;
+      expect(built.defaultModel, 'qwen/qwen3-8b');
+      expect(built.privacy, LlmPrivacy.cloud);
+      expect(built.origin, stub.origin, reason: 'the fixed origin, stubbed');
+      expect(openRouterRoutingOf(built), OpenRouterRouting.exact);
+
+      // Back to the recommended preset in one tap.
+      await tapVisible(tester, find.byKey(openRouterPresetKey));
+      final preset = container.read(settingsProvider).provider('openrouter')!;
+      expect(preset.defaultModel, openRouterPresetModel);
+      expect(preset.routing, 'deepinfra_fp8');
+      expect(
+        tester.widget<ListTile>(find.byKey(openRouterPresetKey)).onTap,
+        isNull,
+        reason: 'already the preset',
+      );
+
+      // Remove drops the Keychain item and leaves the entry.
+      await tapVisible(tester, find.text('Remove'));
+      expect(store.accounts, isEmpty);
+      expect(
+        container.read(settingsProvider).provider('openrouter'),
+        isNotNull,
+      );
+      expect(find.text('No key stored yet.'), findsOneWidget);
+      expect(settingsFile.readAsStringSync(), isNot(contains(canary)));
+      for (final line in archiveLines(container.read(archiveRootProvider))) {
+        expect(line, isNot(contains(canary)));
+      }
+      await container.read(llmRegistryProvider)['openrouter']!.close();
+      await tester.pump();
+    });
+
+    testWidgets('the dev copy shows OpenRouter but holds no key (#95, #24)', (
+      tester,
+    ) async {
+      const store = NoSecretStore(devSecretsMessage);
+      final endpoint = Uri.parse(stub.v1);
+      final container = await pumpApp(
+        tester,
+        identity: SaiIdentity.dev,
+        secrets: store,
+        builtins: [
+          FakeLlmProvider.new,
+          () => openRouterBuiltin(store, endpoint: endpoint),
+        ],
+        overrides: [openRouterEndpointProvider.overrideWithValue(endpoint)],
+      );
+      await open(tester, app: 'sai dev');
+      await select(tester, 'openrouter');
+      expect(
+        find.text(
+          '$openRouterPresetModel — cloud · pinned to DeepInfra fp8 · no credentials in dev',
+        ),
+        findsOneWidget,
+        reason: screen(),
+      );
+      expect(
+        tester.widget<TextField>(find.byKey(apiKeyFieldKey)).enabled,
+        isFalse,
+      );
+      expect(
+        find.textContaining('The dev copy holds no credentials'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Test'))
+            .onPressed,
+        isNull,
+      );
+      // The model choice is still the person's: it needs no key.
+      await tester.ensureVisible(find.byKey(openRouterModelFieldKey));
+      await tester.enterText(
+        find.byKey(openRouterModelFieldKey),
+        'qwen/qwen3-8b',
+      );
+      await tester.pump();
+      await tapVisible(tester, find.byKey(openRouterApplyKey));
+      expect(
+        container.read(settingsProvider).provider('openrouter')!.routing,
+        'exact',
+      );
+      expect(stub.requests, isNot(contains('GET /v1/key')));
+      await container.read(llmRegistryProvider)['openrouter']!.close();
+      await tester.pump();
     });
 
     testWidgets('a built-in endpoint can be refreshed and tested (#23)', (
