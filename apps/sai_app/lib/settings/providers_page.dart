@@ -22,12 +22,20 @@ const reasoningSwitchKey = ValueKey('reasoning-switch');
 /// One provider's row, for tests.
 Key providerRowKey(String id) => ValueKey('provider-row-$id');
 
+/// The OpenRouter model block (#24), for tests: the recommended preset,
+/// the exact-model row, its id field and the button that applies it.
+const openRouterPresetKey = ValueKey('openrouter-preset');
+const openRouterExactKey = ValueKey('openrouter-exact');
+const openRouterModelFieldKey = ValueKey('openrouter-model-field');
+const openRouterApplyKey = ValueKey('openrouter-apply');
+
 /// Settings › Providers (#40, the dialog of #29 as a page): every
 /// provider this build can offer, the active one switched in one click,
 /// an endpoint's health, models and context refreshed on demand, a
 /// recorded streaming test, and the masked key field for a provider that
 /// takes one. Keys go straight to the secret store (ADR 0008): never
-/// settings, never provider state, never the archive.
+/// settings, never provider state, never the archive. OpenRouter (#24)
+/// adds its model block: the recommended pinned preset or one exact id.
 class ProvidersPage extends ConsumerStatefulWidget {
   const ProvidersPage({super.key});
 
@@ -37,6 +45,7 @@ class ProvidersPage extends ConsumerStatefulWidget {
 
 class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   final _controller = TextEditingController();
+  final _model = TextEditingController();
   String? _selected;
 
   RecordedCall? _test;
@@ -53,6 +62,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   void dispose() {
     _resetTest();
     _controller.dispose();
+    _model.dispose();
     super.dispose();
   }
 
@@ -73,6 +83,19 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
         : ids.first;
     final config = settings.provider(selected);
     final provider = registry[selected];
+    // OpenRouter's block shows for the built provider and for an entry of
+    // that kind the factory refused: the block is how it is repaired.
+    final openRouter =
+        (provider != null && openRouterRoutingOf(provider) != null) ||
+        config?.kind == openRouterKind;
+    final routing = provider == null
+        ? OpenRouterRouting.parse(config?.routing)
+        : openRouterRoutingOf(provider);
+    // A configured entry names its account; an unconfigured built-in that
+    // ships taking a key (OpenRouter) says so itself.
+    final takesKey =
+        config?.credential != null ||
+        (provider is OpenAiCompatibleProvider && provider.takesKey);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -122,7 +145,15 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
             if (provider != null &&
                 (config?.endpoint != null || provider is LlmEndpointProbe))
               _endpoint(selected, provider),
-            if (config?.credential != null) _key(selected),
+            if (openRouter)
+              _openRouterModel(
+                selected,
+                provider,
+                config,
+                routing,
+                model: config?.defaultModel ?? provider?.defaultModel,
+              ),
+            if (takesKey) _key(selected, revokeElsewhere: openRouter),
           ],
         ),
       ],
@@ -139,11 +170,17 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   }) {
     final status = ref.watch(credentialStatusProvider(id));
     final key = credentialSuffix(status, config);
+    final routing = switch (provider == null
+        ? null
+        : openRouterRoutingOf(provider)) {
+      final r? => ' · ${r.label}',
+      null => '',
+    };
     final subtitle = provider == null
         ? (missing == null
               ? "kind '${config?.kind}' is not available in this build"
               : misconfiguredNote(missing))
-        : '${provider.defaultModel} — ${provider.privacy.name}$key';
+        : '${provider.defaultModel} — ${provider.privacy.name}$routing$key';
     return ListTile(
       key: providerRowKey(id),
       dense: true,
@@ -158,6 +195,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       onTap: () => setState(() {
         _selected = id;
         _controller.clear();
+        _model.clear();
         _resetTest();
       }),
     );
@@ -245,12 +283,155 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
         '${tps == null ? ' · tokens/s unavailable' : ' · ${tps.toStringAsFixed(1)} tokens/s'}';
   }
 
-  Widget _key(String id) {
+  /// OpenRouter's model (#24): the recommended preset — one model pinned
+  /// to one host and quantization, no fallback — or one exact id of the
+  /// person's own. Either writes the entry (configuring the built-in as
+  /// shipped first, or repairing an entry the factory refused); the
+  /// routing is stored, never inferred from the id. [routing] is null
+  /// for an entry whose word this sai does not know: neither row is
+  /// checked, and either tap writes a good one.
+  Widget _openRouterModel(
+    String id,
+    LlmProvider? provider,
+    ProviderConfig? config,
+    OpenRouterRouting? routing, {
+    required String? model,
+  }) {
+    final exact = routing == OpenRouterRouting.exact;
+    final preset = routing == OpenRouterRouting.deepinfraFp8;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          key: openRouterPresetKey,
+          dense: true,
+          selected: preset,
+          leading: Icon(preset ? Icons.check : null, size: 18),
+          title: const Text('Recommended: $openRouterPresetModel'),
+          subtitle: const Text(
+            'Pinned to DeepInfra, FP8, no fallback; data collection denied, '
+            'zero retention required.',
+          ),
+          onTap: preset
+              ? null
+              : () => _route(
+                  id,
+                  provider,
+                  config,
+                  OpenRouterRouting.deepinfraFp8,
+                  openRouterPresetModel,
+                ),
+        ),
+        ListTile(
+          key: openRouterExactKey,
+          dense: true,
+          selected: exact,
+          leading: Icon(exact ? Icons.check : null, size: 18),
+          title: const Text('Exact model'),
+          subtitle: Text(
+            exact
+                ? '$model — OpenRouter picks among that '
+                      "model's endpoints, never another model; the same "
+                      'privacy filters apply.'
+                : 'One owner/name id from openrouter.ai/models; the same '
+                      'privacy filters apply, and never another model.',
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: ValueListenableBuilder(
+            valueListenable: _model,
+            builder: (context, value, _) => Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: openRouterModelFieldKey,
+                    controller: _model,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    decoration: const InputDecoration(
+                      labelText: 'Model id',
+                      hintText: 'owner/name',
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _applyModel(id, provider, config),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  key: openRouterApplyKey,
+                  onPressed: value.text.trim().isEmpty
+                      ? null
+                      : () => _applyModel(id, provider, config),
+                  child: const Text('Apply'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  void _applyModel(String id, LlmProvider? provider, ProviderConfig? config) {
+    final model = _model.text.trim();
+    if (model.isEmpty) return;
+    final problem = openRouterModelProblem(model);
+    if (problem != null) {
+      ref.read(noticeProvider.notifier).show(problem);
+      return;
+    }
+    _route(id, provider, config, OpenRouterRouting.exact, model);
+  }
+
+  void _route(
+    String id,
+    LlmProvider? provider,
+    ProviderConfig? config,
+    OpenRouterRouting routing,
+    String model,
+  ) {
+    final notice = ref.read(noticeProvider.notifier);
+    final base = config ?? (provider == null ? null : configFor(provider));
+    if (base == null) return;
+    try {
+      // The whole shape the kind wants, so an entry that came in wrong
+      // (an endpoint, a local tag) leaves right.
+      ref
+          .read(settingsProvider.notifier)
+          .upsertProvider(
+            base.copyWith(
+              kind: openRouterKind,
+              endpoint: () => null,
+              privacy: () => LlmPrivacy.cloud,
+              credential: () =>
+                  base.credential ?? ProviderConfig.credentialFor(id),
+              defaultModel: () => model,
+              routing: () => routing.word,
+            ),
+          );
+    } on ArgumentError catch (e) {
+      notice.show('${e.message}');
+      return;
+    } on StateError catch (e) {
+      notice.show(e.message);
+      return;
+    }
+    _model.clear();
+    notice.show('$id: $model · ${routing.label}');
+  }
+
+  Widget _key(String id, {required bool revokeElsewhere}) {
     final status = ref.watch(credentialStatusProvider(id));
     final config = ref.watch(settingsProvider).provider(id);
     final statusText = switch (status) {
+      // An origin that never moves has no "other endpoint" to speak of.
       CredentialStatus.set =>
-        config != null && config.endpoint != null && !config.keyBound
+        !revokeElsewhere &&
+                config != null &&
+                config.endpoint != null &&
+                !config.keyBound
             ? 'A key is stored, but for another endpoint: enter it again.'
             : 'A key is stored in the Keychain.',
       CredentialStatus.missing => 'No key stored yet.',
@@ -302,6 +483,13 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
             ],
           ),
         ),
+        if (revokeElsewhere) ...[
+          const SizedBox(height: 4),
+          const Text(
+            'Remove deletes the Keychain item only; revoke the key at '
+            'openrouter.ai as well. Use a dedicated key with a spending cap.',
+          ),
+        ],
       ],
     );
   }

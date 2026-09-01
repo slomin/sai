@@ -65,6 +65,39 @@ void main() {
       expect(unknown.toJson(), isNot(contains('privacy')));
     });
 
+    test('routing is stored, copied and round-tripped (#24)', () {
+      final routed = ProviderConfig(
+        id: 'openrouter',
+        kind: 'openrouter',
+        defaultModel: 'deepseek/deepseek-v4-flash-0731',
+        credential: 'provider:openrouter',
+        routing: 'deepinfra_fp8',
+      );
+      expect(routed.toJson()['routing'], 'deepinfra_fp8');
+      expect(ProviderConfig.fromJson(routed.toJson()), routed);
+      expect(
+        ProviderConfig(id: 'x', kind: 'fake').toJson(),
+        isNot(contains('routing')),
+      );
+      expect(routed.copyWith(routing: () => 'exact').routing, 'exact');
+      expect(routed.copyWith(routing: () => null).routing, isNull);
+      expect(routed.copyWith(kind: 'other').routing, 'deepinfra_fp8');
+      // Known, so it is not carried in `extra` and is not dropped on write.
+      expect(routed.extra, isEmpty);
+      expect(
+        () => ProviderConfig(id: 'x', kind: 'openrouter', routing: ''),
+        throwsArgumentError,
+      );
+      expect(
+        () => ProviderConfig.fromJson({
+          'id': 'x',
+          'kind': 'openrouter',
+          'routing': 3,
+        }),
+        throwsA(isA<SettingsFormatException>()),
+      );
+    });
+
     test('an empty provider list is not written', () {
       expect(Settings.empty.encode(), '{"llm":null,"version":0}');
     });

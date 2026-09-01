@@ -3,6 +3,7 @@ import '../settings/endpoint.dart';
 import '../settings/provider_config.dart';
 import 'fake.dart';
 import 'openai_compatible/provider.dart';
+import 'openrouter.dart';
 import 'provider.dart';
 
 /// Builds an [LlmProvider] from its configuration. The secret store is
@@ -33,8 +34,12 @@ const llmKindNeeds = <String, List<String>>{
   'openai_compatible': ['endpoint', 'default_model'],
 };
 
-/// The first key of [llmKindNeeds] that [config] lacks, or null.
+/// The first key of [llmKindNeeds] that [config] lacks, or null. The
+/// `openrouter` kind judges its own (`openRouterProblem`): an absent key
+/// by name, a wrong value as a phrase — either way the entry is
+/// misconfigured, never built and never silently re-routed.
 String? missingForKind(ProviderConfig config) {
+  if (config.kind == openRouterKind) return openRouterProblem(config);
   for (final key in llmKindNeeds[config.kind] ?? const <String>[]) {
     final present = switch (key) {
       'endpoint' => config.endpoint != null,

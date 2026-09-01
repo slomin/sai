@@ -72,6 +72,41 @@ Preconditions: sai's own `CODEX_HOME`
    usage (OpenAI).
 3. Delete the key.
 
+### OpenRouter, the pinned preset (#24, ADR 0022)
+
+The stable app against scratch roots; the `openrouter` built-in is
+there on every install, inactive, on its recommended preset.
+
+1. At openrouter.ai create an ordinary **inference** key (never a
+   management or provisioning key) with `limit` ≤ $1, `limit_reset:
+   null`, `expires_at` tomorrow. Note `limit_remaining` from
+   `GET /api/v1/key`.
+2. Settings › Providers › openrouter: type the key into the masked
+   field, Save. The row reads `deepseek/deepseek-v4-flash-0731 — cloud
+   · pinned to DeepInfra fp8 · key set`; the health line, after
+   Refresh, `ok · openrouter · no models listed · context unavailable`.
+   `settings.json` now holds the entry with `"routing":"deepinfra_fp8"`
+   and no key.
+3. Test, then Use and send one short chat. Both stream; the archive
+   holds, per call, `policy.decision` (tasks withheld — sharing is off
+   by default), `provider.request`, `provider.response`,
+   `provider.usage` with a `cost`.
+4. On OpenRouter's activity page the two generations name the exact
+   model and **DeepInfra** as the provider — success under `only` plus
+   `quantizations: [fp8]` is the proof the pinned route was there. Note
+   `limit_remaining` again; the difference is the two calls' cost, and
+   Settings › Usage shows the same number.
+5. Confirm "Allow cloud providers to see my tasks" is off and the
+   requests carried no task list; confirm no key in `settings.json`,
+   the archive, the screenshots or any error text (grep the scratch
+   dir for the key's first characters).
+6. Remove in sai (the Keychain item goes; the entry stays), then
+   revoke the key at openrouter.ai.
+
+The PR records counts, the routing line and the redacted dashboard
+row only. A person runs this; an agent never receives, enters or sees
+the key.
+
 ## Cross-mode check
 
 With a subscription entry and a key entry both configured, exhaust or

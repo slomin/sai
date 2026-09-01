@@ -28,11 +28,14 @@ String unavailableKindStatus(String id, String kind) =>
 /// What it shows when the selected provider's kind is known but its
 /// configuration lacks what the kind needs (an endpoint, a model).
 String misconfiguredStatus(String id, String missing) =>
-    "provider '$id' is missing its $missing — local only";
+    "provider '$id' is ${misconfiguredNote(missing)} — local only";
 
-/// The one-line note both clients show beside a provider that lacks a
-/// key its kind needs (see `llmKindNeeds`).
-String misconfiguredNote(String missing) => 'missing its $missing';
+/// The one-line note both clients show beside a provider whose kind
+/// refused its configuration: a bare settings key is one it lacks (see
+/// `llmKindNeeds`); a phrase is a value that is there and wrong, said as
+/// the kind said it (`openRouterProblem`).
+String misconfiguredNote(String missing) =>
+    missing.contains(' ') ? missing : 'missing its $missing';
 
 /// Appended to the status line when the provider names a credential the
 /// secret store does not hold.

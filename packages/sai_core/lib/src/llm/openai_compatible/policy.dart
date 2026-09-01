@@ -36,6 +36,8 @@ abstract final class TransportText {
   static const notJson = 'the answer was not JSON';
   static const errorPayload = 'the endpoint answered with an error';
   static const tooLarge = 'the answer was too large';
+  static const noRoute = 'no endpoint matched the pinned route';
+  static const noCredit = 'the account has no credit left';
 
   /// The one non-constant: an unexpected exception's type, never its text.
   static String threw(Object error) => 'transport threw: ${error.runtimeType}';
@@ -64,6 +66,8 @@ abstract final class TransportText {
     notJson,
     errorPayload,
     tooLarge,
+    noRoute,
+    noCredit,
   };
 }
 

@@ -11,6 +11,7 @@ usage: sai_tui                       open the terminal client
        sai_tui provider add <id> --kind <kind> [--endpoint <url>]
                                     [--model <name>] [--key | --no-key]
                                     [--privacy local|cloud]
+                                    [--routing recommended|exact]
        sai_tui provider remove <id>
        sai_tui provider use <id|none>
        sai_tui privacy               show the cloud-sharing switch
@@ -44,6 +45,17 @@ openai_compatible endpoint is local on this machine or the LAN and cloud
 on any other host. finished-tasks end-of-day (the default) keeps a task
 completed or cancelled today greyed in its lists until midnight;
 immediate drops it into the Logbook at once.
+
+openrouter is built in: cloud, keyed, fixed to https://openrouter.ai,
+on its recommended preset (DeepSeek V4 Flash 0731 pinned to DeepInfra
+fp8, no fallback). provider add openrouter --model <owner/name> picks
+one exact model instead (routing exact); --routing recommended returns
+to the preset. It takes no --endpoint and no --privacy local (an entry
+changed to this kind drops the endpoint it had and turns cloud), and
+openrouter/* routers, ~latest aliases and :nitro/:floor/:online
+shortcuts are refused. secret set openrouter configures it as shipped
+and files the key. Removing the key here removes the Keychain item
+only: revoke the key at openrouter.ai as well.
 
 things import reads a private copy of the Things 3 database (the one
 under ~/Library/Group Containers, or --db / SAI_THINGS_DB) and writes
@@ -154,9 +166,13 @@ Future<int> runCli(
             (final c?, _) when c.endpoint == null => c.kind,
             (final c?, _) => '${c.kind} @ ${c.endpoint}',
           };
+          final routing = switch (openRouterRoutingOf(provider)) {
+            final r? => ' · ${r.label}',
+            null => '',
+          };
           out.writeln(
             '$mark ${provider.id}  $where  (${provider.defaultModel}) · '
-            '${provider.privacy.name}$key',
+            '${provider.privacy.name}$routing$key',
           );
         }
         final misconfigured = container.read(misconfiguredLlmsProvider);
@@ -182,21 +198,17 @@ Future<int> runCli(
         final builtin = existing == null
             ? container.read(llmRegistryProvider)[id]
             : null;
-        String? kind =
-            existing?.kind ??
-            switch (builtin) {
-              OpenAiCompatibleProvider() => 'openai_compatible',
-              FakeLlmProvider() => 'fake',
-              _ => null,
-            };
-        String? endpoint =
-            existing?.endpoint ??
-            (builtin is OpenAiCompatibleProvider
-                ? builtin.endpoint.toString()
-                : null);
-        String? model = existing?.defaultModel ?? builtin?.defaultModel;
-        LlmPrivacy? privacy = existing?.privacy ?? builtin?.privacy;
-        var key = existing?.credential != null;
+        final seed = existing ?? (builtin == null ? null : configFor(builtin));
+        String? kind = seed?.kind;
+        String? endpoint = seed?.endpoint;
+        String? model = seed?.defaultModel;
+        LlmPrivacy? privacy = seed?.privacy;
+        String? routing = seed?.routing;
+        bool? keyGiven;
+        String? endpointGiven;
+        String? modelGiven;
+        String? routingGiven;
+        LlmPrivacy? privacyGiven;
         for (var i = 0; i < rest.length; i++) {
           String value() {
             if (i + 1 >= rest.length) {
@@ -209,16 +221,23 @@ Future<int> runCli(
             case '--kind':
               kind = value();
             case '--endpoint':
-              endpoint = value();
+              endpoint = endpointGiven = value();
             case '--model':
-              model = value();
+              model = modelGiven = value();
             case '--key':
-              key = true;
+              keyGiven = true;
             case '--no-key':
-              key = false;
+              keyGiven = false;
+            case '--routing':
+              routingGiven = value();
+              if (!const {'recommended', 'exact'}.contains(routingGiven)) {
+                throw _Usage(
+                  '--routing takes recommended or exact, not $routingGiven',
+                );
+              }
             case '--privacy':
               final name = value();
-              privacy = LlmPrivacy.values.asNameMap()[name];
+              privacy = privacyGiven = LlmPrivacy.values.asNameMap()[name];
               if (privacy == null) {
                 throw _Usage('--privacy takes local or cloud, not $name');
               }
@@ -227,6 +246,59 @@ Future<int> runCli(
           }
         }
         if (kind == null) throw _Usage('provider add needs --kind');
+        // The key stays as the entry had it, or as the built-in ships it
+        // while the entry keeps the built-in's kind — a built-in's
+        // account is not carried into another kind unasked.
+        var key =
+            keyGiven ??
+            (existing != null
+                ? existing.credential != null
+                : seed?.credential != null && kind == seed?.kind);
+        if (kind == openRouterKind) {
+          // OpenRouter (#24): one origin, cloud, keyed; the model is one
+          // exact id, and the routing is said, never inferred. What an
+          // entry changed to this kind brought along — an endpoint, a
+          // local tag — is dropped; only the flags typed are refused.
+          if (endpointGiven != null) {
+            throw _Usage(
+              'openrouter has a fixed endpoint; --endpoint does '
+              'not apply',
+            );
+          }
+          if (privacyGiven == LlmPrivacy.local) {
+            throw _Usage(
+              'openrouter is a cloud provider; --privacy local '
+              'does not apply',
+            );
+          }
+          if (keyGiven == false) {
+            throw _Usage('openrouter needs a key; --no-key does not apply');
+          }
+          endpoint = null;
+          privacy = LlmPrivacy.cloud;
+          key = true;
+          if (routingGiven == 'recommended') {
+            if (modelGiven != null && modelGiven != openRouterPresetModel) {
+              throw _Usage(
+                'the recommended routing pins $openRouterPresetModel; '
+                'leave --model out or use --routing exact',
+              );
+            }
+            model = openRouterPresetModel;
+            routing = OpenRouterRouting.deepinfraFp8.word;
+          } else if (routingGiven == 'exact' || modelGiven != null) {
+            routing = OpenRouterRouting.exact.word;
+          }
+          if (model == null) throw _Usage('provider add needs --model');
+          final problem = openRouterModelProblem(model);
+          if (problem != null) throw _Usage(problem);
+        } else if (routingGiven != null) {
+          throw _Usage('--routing applies to openrouter only');
+        } else {
+          // Routing is OpenRouter's word (settings-v0): another kind
+          // carries none, whatever the entry had before.
+          routing = null;
+        }
         final ProviderConfig config;
         try {
           // What a new entry must satisfy beyond what a stored one must.
@@ -248,21 +320,24 @@ Future<int> runCli(
                 ? (existing?.credential ?? ProviderConfig.credentialFor(id))
                 : null,
             privacy: () => privacy,
+            routing: () => routing,
           );
         } on ArgumentError catch (e) {
           throw _Usage('${e.message}');
         }
         final notifier = container.read(settingsProvider.notifier);
         final hadKey =
-            existing != null &&
             container.read(credentialStatusProvider(id)) ==
-                CredentialStatus.set;
+            CredentialStatus.set;
         final wasBound = existing?.keyBound ?? false;
         notifier.upsertProvider(config);
         out.writeln(
           '${existing != null ? 'updated' : 'added'} provider $id'
           '${builtin != null ? ' (over the built-in)' : ''}',
         );
+        if (OpenRouterRouting.parse(config.routing) case final r?) {
+          out.writeln('routing: ${r.label}');
+        }
         if (hadKey && !key) {
           out.writeln(
             'its key is still in the Keychain; $program secret clear $id '
@@ -277,9 +352,18 @@ Future<int> runCli(
         }
         final missing = container.read(misconfiguredLlmsProvider)[id];
         if (missing != null) {
+          // A bare key can be added by its flag; a wrong value is fixed
+          // by adding the entry again the way its kind wants it.
+          final how = missing.contains(' ')
+              ? 'add it again: $program provider add $id --kind $kind '
+                    '--model <owner/name>'
+              : 'add it with --${switch (missing) {
+                  'default_model' => 'model',
+                  'credential' => 'key',
+                  _ => missing,
+                }}';
           err.writeln(
-            "$program: provider '$id' is ${misconfiguredNote(missing)}; add it "
-            'with --${missing == 'default_model' ? 'model' : missing}',
+            "$program: provider '$id' is ${misconfiguredNote(missing)}; $how",
           );
         }
         final stable = SaiIdentity.stable.tuiCommand;
@@ -430,12 +514,20 @@ Future<int> runCli(
         final config = container.read(settingsProvider).provider(id);
         final credentials = container.read(credentialsProvider.notifier);
         if (verb == 'set') {
-          // Storing needs a provider that will use the key.
-          if (config == null) {
+          // Storing needs a provider that will use the key: a configured
+          // one, or a built-in that ships taking one (OpenRouter, #24),
+          // which the store configures as shipped first.
+          final builtin = config == null
+              ? container.read(llmRegistryProvider)[id]
+              : null;
+          final takesKey =
+              config?.credential != null ||
+              (builtin != null && configFor(builtin)?.credential != null);
+          if (config == null && !takesKey) {
             err.writeln("$program: no configured provider '$id'");
             return cliFailed;
           }
-          if (config.credential == null) {
+          if (!takesKey) {
             err.writeln(
               "$program: provider '$id' takes no key (add it with --key)",
             );
@@ -447,7 +539,10 @@ Future<int> runCli(
             return cliFailed;
           }
           credentials.set(id, value);
-          out.writeln('key for $id stored in the Keychain');
+          out.writeln(
+            'key for $id stored in the Keychain'
+            '${config == null ? ' ($id configured as shipped)' : ''}',
+          );
           return cliOk;
         }
         // Clearing and asking work on the account alone, so a key left

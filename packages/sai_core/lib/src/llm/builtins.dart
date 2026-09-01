@@ -1,13 +1,17 @@
 import '../secrets/secret_store.dart';
+import '../settings/provider_config.dart';
 import 'fake.dart';
 import 'openai_compatible/provider.dart';
+import 'openrouter.dart';
 import 'provider.dart';
 
 /// The providers every build ships without configuration (#23): the
-/// offline fake, LM Studio on this Mac, and the LAN inference box. A
-/// configured provider with the same id replaces the built-in one, so
-/// `provider add lmstudio --model …` or `provider add lan --endpoint …`
-/// is how either is changed. None takes a key.
+/// offline fake, LM Studio on this Mac, the LAN inference box, and
+/// OpenRouter on its recommended preset (#24). A configured provider
+/// with the same id replaces the built-in one, so `provider add lmstudio
+/// --model …` or `provider add lan --endpoint …` is how either is
+/// changed. Only OpenRouter takes a key, and stays inactive until a
+/// person selects it.
 
 /// LM Studio's local server: whatever model it has loaded.
 const lmStudioProviderId = 'lmstudio';
@@ -32,9 +36,11 @@ Duration fakeDeltaFrom(Map<String, String> environment) {
 }
 
 /// The built-ins as constructors, in the order the clients list them.
+/// [openRouterEndpoint] is for tests only: the shipped one is fixed.
 List<LlmProvider Function()> builtinLlms(
   SecretStore secrets, {
   Duration fakeDelta = Duration.zero,
+  Uri? openRouterEndpoint,
 }) => [
   () => FakeLlmProvider(delta: fakeDelta),
   () => OpenAiCompatibleProvider(
@@ -51,4 +57,32 @@ List<LlmProvider Function()> builtinLlms(
     secrets: secrets,
     privacy: LlmPrivacy.local,
   ),
+  () => openRouterBuiltin(secrets, endpoint: openRouterEndpoint),
 ];
+
+/// The settings entry that would configure [provider] as it stands — what
+/// `provider add <id>` seeds from a built-in, and what storing a key for
+/// an unconfigured built-in writes first. Null for a provider no kind
+/// describes.
+ProviderConfig? configFor(LlmProvider provider) => switch (provider) {
+  // The kind and the privacy are the provider's own; an entry names an
+  // endpoint only for a dialect whose endpoint is the person's to set.
+  OpenAiCompatibleProvider() => ProviderConfig(
+    id: provider.id,
+    kind: provider.kind,
+    endpoint: provider.dialect.bindsKeyToOrigin
+        ? provider.endpoint.toString()
+        : null,
+    defaultModel: provider.defaultModel,
+    credential: provider.credential,
+    privacy: provider.privacy,
+    routing: openRouterRoutingOf(provider)?.word,
+  ),
+  FakeLlmProvider() => ProviderConfig(
+    id: provider.id,
+    kind: 'fake',
+    defaultModel: provider.defaultModel,
+    privacy: provider.privacy,
+  ),
+  _ => null,
+};

@@ -703,10 +703,16 @@ void main() {
         },
       );
 
-      test('the build ships the fake, LM Studio and the LAN box (#23)', () {
+      test('the build ships the fake, LM Studio, the LAN box (#23) and '
+          'OpenRouter (#24)', () {
         final container = make(shipped: true);
         final registry = container.read(llmRegistryProvider);
-        expect(registry.keys, ['fake', lmStudioProviderId, lanProviderId]);
+        expect(registry.keys, [
+          'fake',
+          lmStudioProviderId,
+          lanProviderId,
+          openRouterProviderId,
+        ]);
         final lmstudio = registry[lmStudioProviderId]!;
         expect(lmstudio.displayName, 'lmstudio @ http://127.0.0.1:1234');
         expect(lmstudio.defaultModel, OpenAiCompatibleProvider.loadedModel);
@@ -748,6 +754,7 @@ void main() {
         expect(container.read(llmRegistryProvider).keys, [
           'fake',
           lmStudioProviderId,
+          openRouterProviderId,
         ]);
         expect(container.read(activeLlmProvider), isNull);
         expect(
@@ -762,6 +769,198 @@ void main() {
           container.read(llmStatusProvider),
           misconfiguredStatus(lanProviderId, 'endpoint'),
         );
+      });
+
+      test(
+        'OpenRouter ships inactive, cloud, on the preset, keyless (#24)',
+        () {
+          final file = File('${tmp.path}/settings.json');
+          final container = make(shipped: true);
+          final openrouter =
+              container.read(llmRegistryProvider)[openRouterProviderId]!
+                  as OpenAiCompatibleProvider;
+          expect(openrouter.displayName, 'openrouter @ https://openrouter.ai');
+          expect(openrouter.endpoint, openRouterEndpoint);
+          expect(openrouter.defaultModel, openRouterPresetModel);
+          expect(openrouter.privacy, LlmPrivacy.cloud);
+          expect(openrouter.kind, 'openrouter');
+          // Shipping it selects nothing: LM Studio stays the first run's.
+          expect(container.read(settingsProvider).llm, lmStudioProviderId);
+          expect(file.existsSync(), isFalse);
+          // It takes a key, and says so before any is configured.
+          expect(
+            container.read(credentialStatusProvider(openRouterProviderId)),
+            CredentialStatus.missing,
+          );
+          container
+              .read(settingsProvider.notifier)
+              .selectLlm(openRouterProviderId);
+          expect(
+            container.read(llmStatusProvider),
+            'openrouter @ https://openrouter.ai ($openRouterPresetModel) — '
+            'cloud$tasksWithheldSuffix$missingCredentialSuffix',
+          );
+          expect(
+            container.read(activeLlmWarningProvider),
+            cloudSelectionWarning(openRouterProviderId),
+          );
+          expect(container.read(connectionProvider).text, 'no key');
+        },
+      );
+
+      test('the OpenRouter origin moves only through its provider', () {
+        final stubbed = make(
+          shipped: true,
+          overrides: [
+            openRouterEndpointProvider.overrideWithValue(
+              Uri.parse('http://127.0.0.1:1/v1'),
+            ),
+          ],
+        );
+        final builtin =
+            stubbed.read(llmRegistryProvider)[openRouterProviderId]!
+                as OpenAiCompatibleProvider;
+        expect(builtin.origin, 'http://127.0.0.1:1');
+        stubbed
+            .read(settingsProvider.notifier)
+            .upsertProvider(configFor(builtin)!);
+        final configured =
+            stubbed.read(llmRegistryProvider)[openRouterProviderId]!
+                as OpenAiCompatibleProvider;
+        expect(configured.origin, 'http://127.0.0.1:1');
+        expect(configured.kind, 'openrouter');
+        // The entry itself carries no endpoint to move.
+        expect(
+          stubbed
+              .read(settingsProvider)
+              .provider(openRouterProviderId)!
+              .endpoint,
+          isNull,
+        );
+      });
+
+      test('storing a key for the OpenRouter built-in configures it first '
+          '(#24)', () {
+        const canary = 'sk-canary-0f1e2d3c4b5a69788796a5b4c3d2e1f0';
+        final container = make(shipped: true);
+        final credentials = container.read(credentialsProvider.notifier);
+        credentials.set(openRouterProviderId, canary);
+        final entry = container
+            .read(settingsProvider)
+            .provider(openRouterProviderId)!;
+        expect(entry.toJson(), {
+          'id': 'openrouter',
+          'kind': 'openrouter',
+          'default_model': openRouterPresetModel,
+          'credential': 'provider:openrouter',
+          'privacy': 'cloud',
+          'routing': 'deepinfra_fp8',
+        });
+        expect(secrets.read('provider:openrouter'), canary);
+        expect(
+          container.read(credentialStatusProvider(openRouterProviderId)),
+          CredentialStatus.set,
+        );
+        expect(
+          File('${tmp.path}/settings.json').readAsStringSync(),
+          isNot(contains(canary)),
+        );
+        // The configured one took over; nothing else changed.
+        expect(container.read(llmRegistryProvider).keys, [
+          'fake',
+          lmStudioProviderId,
+          lanProviderId,
+          openRouterProviderId,
+        ]);
+        expect(credentials.clear(openRouterProviderId), isTrue);
+        expect(
+          container.read(credentialStatusProvider(openRouterProviderId)),
+          CredentialStatus.missing,
+        );
+        // A built-in that takes no key is still refused, unconfigured.
+        expect(
+          () => credentials.set(lanProviderId, canary),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              "provider 'lan' takes no credential",
+            ),
+          ),
+        );
+        expect(() => credentials.set('nobody', canary), throwsStateError);
+        expect(
+          container.read(settingsProvider).provider(lanProviderId),
+          isNull,
+        );
+      });
+
+      test('a refused Keychain write configures nothing (#24)', () {
+        final container = make(shipped: true, store: _RefusingStore());
+        final credentials = container.read(credentialsProvider.notifier);
+        expect(
+          () => credentials.set(openRouterProviderId, 'sk-canary-refused'),
+          throwsA(isA<SecretStoreException>()),
+        );
+        expect(
+          container.read(settingsProvider).provider(openRouterProviderId),
+          isNull,
+          reason: 'the key goes first; no key, no entry',
+        );
+        expect(File('${tmp.path}/settings.json').existsSync(), isFalse);
+      });
+
+      test('a wrong OpenRouter entry is misconfigured, never re-routed', () {
+        final container = make(shipped: true);
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          ProviderConfig(
+            id: openRouterProviderId,
+            kind: 'openrouter',
+            defaultModel: 'openrouter/auto',
+            credential: 'provider:openrouter',
+            routing: 'exact',
+          ),
+        );
+        settings.selectLlm(openRouterProviderId);
+        expect(
+          container.read(llmRegistryProvider).keys,
+          isNot(contains(openRouterProviderId)),
+        );
+        const router = 'naming a router or a shortcut, not one exact model';
+        expect(
+          container.read(misconfiguredLlmsProvider)[openRouterProviderId],
+          router,
+        );
+        expect(
+          container.read(llmStatusProvider),
+          "provider 'openrouter' is $router — local only",
+        );
+        settings.upsertProvider(
+          ProviderConfig(
+            id: openRouterProviderId,
+            kind: 'openrouter',
+            defaultModel: 'qwen/qwen3-8b',
+            credential: 'provider:openrouter',
+            routing: 'deepinfra_fp8',
+          ),
+        );
+        expect(
+          container.read(misconfiguredLlmsProvider)[openRouterProviderId],
+          'routed deepinfra_fp8, which fits $openRouterPresetModel only',
+        );
+        settings.upsertProvider(
+          ProviderConfig(
+            id: openRouterProviderId,
+            kind: 'openrouter',
+            defaultModel: 'qwen/qwen3-8b',
+            credential: 'provider:openrouter',
+            routing: 'exact',
+          ),
+        );
+        final built = container.read(activeLlmProvider)!;
+        expect(built.defaultModel, 'qwen/qwen3-8b');
+        expect(built.privacy, LlmPrivacy.cloud);
       });
 
       test('a first run selects LM Studio and writes nothing (#23)', () {
