@@ -1530,17 +1530,23 @@ void main() {
           missing['local'],
           'carrying a reasoning effort, which only the OpenAI kinds take',
         );
-        // The kinds themselves are judged by their own words once a
-        // factory builds them (the OpenAI kinds' factories land with
-        // their transports); the judgement is already theirs.
-        final stored = container.read(settingsProvider);
         expect(
-          missingForKind(stored.provider('openai')!),
+          missing['openai'],
           'tagged local, but openai is a cloud provider',
         );
+        // The subscription kind is judged in its own words too; its
+        // factory lands with its runtime, so the registry does not yet
+        // name it.
+        final stored = container.read(settingsProvider);
         expect(
           missingForKind(stored.provider('chatgpt')!),
           startsWith('naming a key'),
+        );
+        settings.selectLlm('openai');
+        expect(
+          container.read(llmStatusProvider),
+          "provider 'openai' is tagged local, but openai is a cloud "
+          'provider — local only',
         );
         settings.selectLlm('local');
         expect(

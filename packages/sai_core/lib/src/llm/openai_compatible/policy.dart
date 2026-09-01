@@ -43,6 +43,12 @@ abstract final class TransportText {
       'parameter)';
   static const noCredit = 'the account has no credit left';
   static const notEndpoints = 'the answer was not a list of endpoints';
+  static const effortRefused =
+      'the model does not take this reasoning effort; choose another, or '
+      'Model default';
+  static const noSuchModel = 'the model is not available to this key';
+  static const toolCalled = 'the model tried to call a tool; sai sent none';
+  static const notModels = 'the answer was not a list of models';
 
   /// The one non-constant: an unexpected exception's type, never its text.
   static String threw(Object error) => 'transport threw: ${error.runtimeType}';
@@ -75,6 +81,10 @@ abstract final class TransportText {
     noExactEndpoint,
     noCredit,
     notEndpoints,
+    effortRefused,
+    noSuchModel,
+    toolCalled,
+    notModels,
   };
 }
 

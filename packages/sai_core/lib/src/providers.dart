@@ -18,6 +18,7 @@ import 'llm/effort.dart';
 import 'llm/failure.dart';
 import 'llm/builtins.dart';
 import 'llm/factory.dart';
+import 'llm/openai/openai.dart';
 import 'llm/openai_compatible/policy.dart';
 import 'llm/openai_compatible/provider.dart';
 import 'llm/openrouter.dart';
@@ -443,14 +444,21 @@ String? _shippedCredential(LlmProvider? provider) =>
 /// to anything else.
 final openRouterEndpointProvider = Provider<Uri>((ref) => openRouterEndpoint);
 
+/// Where the `openai` kind dials (#26): OpenAI's fixed origin, or the
+/// loopback stub a test hands in — the factory refuses any other host.
+final openAiEndpointProvider = Provider<Uri>((ref) => openAiEndpoint);
+
 /// The factories this build can turn a [ProviderConfig] into, by kind.
 final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>((ref) {
   final openRouter = ref.watch(openRouterEndpointProvider);
+  final openAi = ref.watch(openAiEndpointProvider);
   return {
     'fake': fakeProviderFactory,
     'openai_compatible': openAiCompatibleFactory,
     openRouterKind: (config, secrets) =>
         openRouterFactory(config, secrets, endpoint: openRouter),
+    openAiKind: (config, secrets) =>
+        openAiFactory(config, secrets, endpoint: openAi),
   };
 });
 
