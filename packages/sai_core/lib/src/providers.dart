@@ -949,6 +949,9 @@ final chatGptProvider = NotifierProvider<ChatGptNotifier, ChatGptState>(
 class ChatGptNotifier extends Notifier<ChatGptState> {
   Future<void>? _reading;
   var _epoch = 0;
+
+  /// Whether the account changed under a reading, so another follows it.
+  var _stale = false;
   final _subscriptions = <StreamSubscription<Object?>>[];
 
   @override
@@ -962,11 +965,14 @@ class ChatGptNotifier extends Notifier<ChatGptState> {
       _subscriptions.add(
         runtime.accountUpdates.listen((_) {
           // Whoever is signed in may have changed: re-read, and drop the
-          // list — it is the account's.
+          // list — it is the account's. A reading under way is left to
+          // finish; another follows it.
           if (!ref.mounted) return;
-          _epoch++;
-          _reading = null;
           state = state.copyWith(models: () => null, limits: () => null);
+          if (_reading != null) {
+            _stale = true;
+            return;
+          }
           unawaited(_read());
         }),
       );
@@ -1044,6 +1050,10 @@ class ChatGptNotifier extends Notifier<ChatGptState> {
     late final Future<void> mine;
     mine = _fetch(runtime, _epoch).whenComplete(() {
       if (identical(_reading, mine)) _reading = null;
+      if (_stale && ref.mounted) {
+        _stale = false;
+        unawaited(_read());
+      }
     });
     return _reading = mine;
   }

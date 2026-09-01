@@ -15,6 +15,13 @@ usage: sai_tui                       open the terminal client
                                     [--effort default|<word>]
        sai_tui provider remove <id>
        sai_tui provider use <id|none>
+       sai_tui provider login <id> [--device-code]
+                                    sign in to ChatGPT (chatgpt_subscription)
+       sai_tui provider account <id> who is signed in, and the plan's usage
+       sai_tui provider models <id>  the models a ChatGPT plan or a key offers
+       sai_tui provider reasoning <id> [default|<word>]
+                                    the effort an OpenAI kind asks for
+       sai_tui provider logout <id>  sign out of ChatGPT
        sai_tui privacy               show the cloud-sharing switch
        sai_tui privacy share-tasks on|off
        sai_tui reasoning [on|off]    let the model think before answering
@@ -187,9 +194,20 @@ Future<int> runCli(
             final r? => ' · ${r.label}',
             null => '',
           };
+          // The two OpenAI kinds name their billing (#26).
+          final billing = switch (provider) {
+            ChatGptSubscriptionProvider() => ' · ChatGPT subscription',
+            OpenAiResponsesProvider() => ' · OpenAI API, billed separately',
+            _ => '',
+          };
+          final effort = switch (provider) {
+            ConfiguredEffort(:final reasoningEffort) =>
+              ' · effort ${reasoningEffort?.word ?? 'default'}',
+            _ => '',
+          };
           out.writeln(
             '$mark ${provider.id}  $where  (${provider.defaultModel}) · '
-            '${provider.privacy.name}$routing$key',
+            '${provider.privacy.name}$billing$routing$effort$key',
           );
         }
         final misconfigured = container.read(misconfiguredLlmsProvider);
@@ -455,6 +473,169 @@ Future<int> runCli(
         if (kind == chatGptKind) {
           out.writeln('sign in with: $program provider login $id');
         }
+        return cliOk;
+
+      case ['provider', 'reasoning', final id, ...final rest]:
+        // The effort an OpenAI kind asks for (#26): shown, or set to a
+        // word the backend reads as is; `default` leaves it to the model.
+        final config = container.read(settingsProvider).provider(id);
+        if (config == null) {
+          err.writeln('$program: no provider $id is configured');
+          return cliFailed;
+        }
+        if (config.kind != openAiKind && config.kind != chatGptKind) {
+          err.writeln(
+            "$program: provider '$id' is ${config.kind}, which keeps the "
+            'reasoning on|off switch: $program reasoning on|off',
+          );
+          return cliFailed;
+        }
+        switch (rest) {
+          case []:
+            break;
+          case [final word]:
+            container
+                .read(settingsProvider.notifier)
+                .upsertProvider(
+                  config.copyWith(
+                    reasoningEffort: () => word == 'default' ? null : word,
+                  ),
+                );
+          default:
+            throw _Usage('provider reasoning takes one word');
+        }
+        final now = container.read(settingsProvider).provider(id)!;
+        out.writeln(
+          '$id: reasoning effort ${now.reasoningEffort ?? 'Model default'}'
+          '${now.kind == openAiKind ? ' (openai: which efforts a model takes depends on the model — ${openAiEffortWords.join(', ')})' : ''}',
+        );
+        return cliOk;
+
+      case ['provider', 'account', final id]:
+        final chat = _chatGpt(container, id, program, err);
+        if (chat == null) return cliFailed;
+        final (notifier, _) = chat;
+        await notifier.refresh();
+        final state = container.read(chatGptProvider);
+        out.writeln(_accountLine(state));
+        if (state.limits case final limits?) out.writeln(_planLine(limits));
+        return state.failure == null ? cliOk : cliFailed;
+
+      case ['provider', 'models', final id]:
+        final config = container.read(settingsProvider).provider(id);
+        final provider = container.read(llmRegistryProvider)[id];
+        if (config?.kind == openAiKind || provider is OpenAiResponsesProvider) {
+          if (provider is! OpenAiResponsesProvider) {
+            err.writeln(
+              "$program: provider '$id' cannot be built; repair it first",
+            );
+            return cliFailed;
+          }
+          final list = await fetchOpenAiCatalogue(provider);
+          if (list.failure case final failure?) {
+            err.writeln('$program: ${failure.message}');
+            return cliFailed;
+          }
+          for (final m in list.models!) {
+            out.writeln(m);
+          }
+          out.writeln(
+            '${list.models!.length} models this key can reach — guidance '
+            'only: the list does not say which take the Responses API or '
+            'an effort (${openAiEffortWords.join(', ')})',
+          );
+          return cliOk;
+        }
+        final chat = _chatGpt(container, id, program, err);
+        if (chat == null) return cliFailed;
+        final (notifier, _) = chat;
+        await notifier.refresh();
+        final state = container.read(chatGptProvider);
+        if (state.failure case final failure?) {
+          err.writeln('$program: ${failure.message}');
+          return cliFailed;
+        }
+        if (!state.signedIn) {
+          err.writeln(
+            '$program: ${CodexText.signedOut}: $program provider login $id',
+          );
+          return cliFailed;
+        }
+        for (final m in state.models ?? const <CodexModel>[]) {
+          out.writeln(
+            '${m.id}  ${m.displayName}${m.isDefault ? ' (default)' : ''} · '
+            'default effort ${m.defaultEffort ?? 'unspecified'} · efforts: '
+            '${m.supportedEfforts.isEmpty ? 'none advertised' : m.supportedEfforts.map((o) => o.effort.word).join(', ')}',
+          );
+        }
+        return cliOk;
+
+      case ['provider', 'login', final id, ...final rest]:
+        final deviceCode = switch (rest) {
+          [] => false,
+          ['--device-code'] => true,
+          _ => throw _Usage('provider login takes only --device-code'),
+        };
+        final chat = _chatGpt(container, id, program, err);
+        if (chat == null) return cliFailed;
+        final (notifier, runtime) = chat;
+        final ChatGptLogin login;
+        try {
+          login = await notifier.signIn(deviceCode: deviceCode);
+        } on CodexException catch (e) {
+          err.writeln('$program: ${e.text}');
+          return cliFailed;
+        }
+        // Public values only: the URL to open, the code to type. No
+        // token ever comes this way, and the browser is the person's to
+        // open (the terminal spawns nothing).
+        if (login.isDeviceCode) {
+          out.writeln(
+            'open ${login.verificationUrl} and enter the code ${login.userCode}',
+          );
+        } else {
+          out.writeln('open this URL in your browser to sign in:');
+          out.writeln(login.authUrl);
+        }
+        out.writeln('waiting for the sign-in to finish (Ctrl-C cancels)…');
+        final done = Completer<bool>();
+        final sub = runtime.loginCompleted.listen((event) {
+          if (event.loginId != null && event.loginId != login.loginId) return;
+          if (!done.isCompleted) done.complete(event.success);
+        });
+        final interrupt = ProcessSignal.sigint.watch().listen((_) async {
+          await notifier.cancelSignIn();
+          if (!done.isCompleted) done.complete(false);
+        });
+        final bool success;
+        try {
+          success = await done.future;
+        } finally {
+          await sub.cancel();
+          await interrupt.cancel();
+        }
+        if (!success) {
+          err.writeln('$program: ${CodexText.loginFailed}');
+          return cliFailed;
+        }
+        await notifier.refresh();
+        out.writeln(_accountLine(container.read(chatGptProvider)));
+        return cliOk;
+
+      case ['provider', 'logout', final id]:
+        final chat = _chatGpt(container, id, program, err);
+        if (chat == null) return cliFailed;
+        final (notifier, _) = chat;
+        try {
+          await notifier.signOut();
+          await notifier.done;
+        } on CodexException catch (e) {
+          err.writeln('$program: ${e.text}');
+          return cliFailed;
+        }
+        out.writeln(
+          'signed out of ChatGPT; ${_accountLine(container.read(chatGptProvider))}',
+        );
         return cliOk;
 
       case ['provider', 'remove', final id]:
@@ -765,6 +946,68 @@ Future<int> runCli(
     err.writeln('$program: ${e.message}');
     return cliFailed;
   }
+}
+
+/// The ChatGPT notifier and runtime for [id], or null after saying why
+/// not: no such entry, another kind, or — the dev copy (#95) — no
+/// runtime at all, said before any spawn.
+(ChatGptNotifier, AppServerRuntime)? _chatGpt(
+  ProviderContainer container,
+  String id,
+  String program,
+  StringSink err,
+) {
+  final config = container.read(settingsProvider).provider(id);
+  if (config == null) {
+    err.writeln(
+      '$program: no provider $id is configured; add it with: $program '
+      'provider add $id --kind chatgpt_subscription',
+    );
+    return null;
+  }
+  if (config.kind != chatGptKind) {
+    err.writeln(
+      "$program: provider '$id' is ${config.kind}, not chatgpt_subscription",
+    );
+    return null;
+  }
+  final runtime = container.read(appServerRuntimeProvider);
+  if (runtime == null) {
+    err.writeln(
+      '$program: ${CodexText.devRefused}: ${SaiIdentity.stable.tuiCommand}',
+    );
+    return null;
+  }
+  return (container.read(chatGptProvider.notifier), runtime);
+}
+
+/// What `provider account` says: signed in and the plan, or not — the
+/// email is shown here and nowhere else.
+String _accountLine(ChatGptState state) {
+  if (state.failure case final failure?) return failure.message;
+  final account = state.account;
+  if (account == null) return 'account not read';
+  return switch (account.type) {
+    CodexAccountType.chatgpt =>
+      'signed in to ChatGPT'
+          '${account.email == null ? '' : ' as ${account.email}'}'
+          '${account.planType == null ? '' : ' · ${account.planType} plan'}',
+    CodexAccountType.none => 'not signed in to ChatGPT',
+    _ => CodexText.wrongAuth,
+  };
+}
+
+/// The plan's usage as availability, never money.
+String _planLine(CodexRateLimits limits) {
+  String window(String name, CodexRateWindow w) =>
+      '$name ${w.usedPercent}% used'
+      '${w.resetsAt == null ? '' : ', resets ${w.resetsAt!.toLocal().toString().substring(0, 16)}'}';
+  final parts = [
+    if (limits.primary case final p?) window('plan usage:', p),
+    if (limits.secondary case final s?) window('weekly', s),
+  ];
+  if (parts.isEmpty) return 'plan usage: not reported';
+  return '${parts.join(' · ')}${limits.limitReached ? ' · limit reached' : ''}';
 }
 
 final class _Usage implements Exception {

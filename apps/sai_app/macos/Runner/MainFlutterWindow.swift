@@ -23,6 +23,7 @@ class MainFlutterWindow: NSWindow {
     registerFlavor(flutterViewController)
     registerAccessibility(flutterViewController)
     registerFinder(flutterViewController)
+    registerBrowser(flutterViewController)
 
     super.awakeFromNib()
   }
@@ -70,6 +71,29 @@ class MainFlutterWindow: NSWindow {
       channel.invokeMethod(
         "reduceMotionChanged",
         arguments: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+  }
+
+  /// `sai/browser` (#26): opens the ChatGPT sign-in URL the App Server
+  /// answered in the default browser. `https:` only; the app never spawns
+  /// `open`, the Runner hands the URL to NSWorkspace.
+  private func registerBrowser(_ controller: FlutterViewController) {
+    let channel = FlutterMethodChannel(
+      name: "sai/browser", binaryMessenger: controller.engine.binaryMessenger)
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "openUrl":
+        guard let text = call.arguments as? String,
+          let url = URL(string: text),
+          url.scheme == "https"
+        else {
+          result(FlutterError(code: "argument", message: "openUrl takes an https URL", details: nil))
+          return
+        }
+        result(NSWorkspace.shared.open(url))
+      default:
+        result(FlutterMethodNotImplemented)
+      }
     }
   }
 

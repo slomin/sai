@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:riverpod/riverpod.dart';
+import 'package:sai_core/process_testing.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:sai_tui/cli.dart';
 import 'package:test/test.dart';
@@ -618,6 +619,213 @@ void main() {
       'default_model': 'm',
       'privacy': 'cloud',
     });
+  });
+
+  group('the ChatGPT commands (#26)', () {
+    late FakeAppServer server;
+    late Directory sidecarDir;
+
+    setUp(() {
+      server = FakeAppServer();
+      sidecarDir = Directory.systemTemp.createTempSync('sai_cli_sidecar');
+      File('${sidecarDir.path}/codex-app-server').writeAsStringSync('stub');
+      container = testContainer(
+        overrides: [
+          processRunnerProvider.overrideWithValue(server.runner),
+          sidecarLocatorProvider.overrideWithValue(
+            SidecarLocator('${sidecarDir.path}/codex-app-server'),
+          ),
+          codexHomeProvider.overrideWithValue(
+            Directory('${sidecarDir.path}/home/codex'),
+          ),
+        ],
+      );
+    });
+
+    tearDown(() {
+      container.dispose();
+      sidecarDir.deleteSync(recursive: true);
+    });
+
+    test('account, models, reasoning and logout, in the fixed words', () async {
+      expect(
+        await run('provider add chatgpt --kind chatgpt_subscription'),
+        cliOk,
+      );
+      out.clear();
+      expect(await run('provider account chatgpt'), cliOk);
+      expect(
+        out.toString(),
+        contains('signed in to ChatGPT as person@example.com · pro plan'),
+      );
+      expect(out.toString(), contains('plan usage: 25% used'));
+      expect(out.toString(), isNot(contains('\$')), reason: 'never money');
+      out.clear();
+      expect(await run('provider models chatgpt'), cliOk);
+      expect(
+        out.toString(),
+        contains(
+          'gpt-5.6-sol  GPT-5.6 Sol (default) · default effort medium · efforts: low, medium, high, xhigh',
+        ),
+      );
+      expect(
+        out.toString(),
+        contains(
+          'gpt-5.6-luna  GPT-5.6 Luna · default effort medium · efforts: low, high',
+        ),
+      );
+      expect(out.toString(), isNot(contains('hidden')));
+      out.clear();
+      expect(await run('provider add chatgpt --model gpt-5.6-luna'), cliOk);
+      expect(await run('provider reasoning chatgpt'), cliOk);
+      expect(
+        out.toString(),
+        contains('chatgpt: reasoning effort Model default'),
+      );
+      out.clear();
+      expect(await run('provider reasoning chatgpt high'), cliOk);
+      expect(out.toString(), contains('chatgpt: reasoning effort high'));
+      final entry =
+          (jsonDecode(settingsFile().readAsStringSync())['providers'] as List)
+              .cast<Map<String, Object?>>()
+              .single;
+      expect(entry['reasoning_effort'], 'high');
+      expect(entry['default_model'], 'gpt-5.6-luna');
+      out.clear();
+      expect(await run('provider reasoning chatgpt default'), cliOk);
+      expect(out.toString(), contains('Model default'));
+      expect(await run('provider reasoning chatgpt a b'), cliUsageError);
+      out.clear();
+      expect(await run('provider list'), cliOk);
+      expect(
+        out.toString(),
+        contains(
+          'chatgpt  chatgpt_subscription  (gpt-5.6-luna) · cloud · ChatGPT subscription · effort default',
+        ),
+      );
+      out.clear();
+      expect(await run('provider logout chatgpt'), cliOk);
+      expect(
+        out.toString(),
+        contains('signed out of ChatGPT; not signed in to ChatGPT'),
+      );
+      expect(server.logouts, 1);
+      err.clear();
+      expect(await run('provider models chatgpt'), cliFailed);
+      expect(err.toString(), contains(CodexText.signedOut));
+      // The runtime saw sai's environment alone.
+      for (final spawn in server.runner.spawns) {
+        expect(spawn.environment.keys, isNot(contains('OPENAI_API_KEY')));
+        expect(spawn.executable, '/usr/bin/sandbox-exec');
+      }
+      // Nothing of the account on disk.
+      expect(
+        settingsFile().readAsStringSync(),
+        isNot(contains('person@example.com')),
+      );
+    });
+
+    test(
+      'login prints the URL or the code — never a token — and waits',
+      () async {
+        expect(
+          await run('provider add chatgpt --kind chatgpt_subscription'),
+          cliOk,
+        );
+        server.account = null;
+        out.clear();
+        // Device code: the completion arrives while the command waits.
+        final pending = run('provider login chatgpt --device-code');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(
+          out.toString(),
+          contains(
+            'open https://auth.openai.com/codex/device and enter the code ABCD-1234',
+          ),
+        );
+        expect(out.toString(), contains('waiting for the sign-in'));
+        server.account = {
+          'type': 'chatgpt',
+          'email': 'p@example.com',
+          'planType': 'plus',
+        };
+        server.runner.processes.single.notify('account/login/completed', {
+          'loginId': 'login-1',
+          'success': true,
+        });
+        expect(await pending, cliOk);
+        expect(
+          out.toString(),
+          contains('signed in to ChatGPT as p@example.com · plus plan'),
+        );
+        expect(out.toString(), isNot(contains('token')));
+        // Browser: the URL only.
+        out.clear();
+        server.account = null;
+        final browser = run('provider login chatgpt');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(
+          out.toString(),
+          contains('open this URL in your browser to sign in:'),
+        );
+        expect(
+          out.toString(),
+          contains('https://auth.openai.com/oauth/authorize?state=login-2'),
+        );
+        server.runner.processes.single.notify('account/login/completed', {
+          'loginId': 'login-2',
+          'success': false,
+          'error': 'expired',
+        });
+        expect(await browser, cliFailed);
+        expect(err.toString(), contains(CodexText.loginFailed));
+        expect(await run('provider login chatgpt --browser'), cliUsageError);
+      },
+    );
+
+    test('the wrong kind, a missing entry, and the openai list', () async {
+      err.clear();
+      expect(await run('provider account nothing'), cliFailed);
+      expect(err.toString(), contains('no provider nothing is configured'));
+      expect(await run('provider add lan2 --kind fake'), cliOk);
+      err.clear();
+      expect(await run('provider login lan2'), cliFailed);
+      expect(
+        err.toString(),
+        contains("provider 'lan2' is fake, not chatgpt_subscription"),
+      );
+      err.clear();
+      expect(await run('provider reasoning lan2 high'), cliFailed);
+      expect(err.toString(), contains('keeps the reasoning on|off switch'));
+      expect(
+        server.runner.spawns,
+        isEmpty,
+        reason: 'nothing spawned for the wrong kind',
+      );
+    });
+  });
+
+  test('the dev client runs no ChatGPT runtime (#26, #95)', () async {
+    container = testContainer(
+      overrides: [identityProvider.overrideWithValue(SaiIdentity.dev)],
+    );
+    expect(
+      await run('provider add chatgpt --kind chatgpt_subscription'),
+      cliOk,
+    );
+    for (final line in [
+      'provider login chatgpt',
+      'provider account chatgpt',
+      'provider models chatgpt',
+      'provider logout chatgpt',
+    ]) {
+      err.clear();
+      expect(await run(line), cliFailed, reason: line);
+      expect(err.toString(), contains(CodexText.devRefused), reason: line);
+      expect(err.toString(), contains('sai_tui'), reason: line);
+    }
+    // The effort is a setting; the dev copy may set it.
+    expect(await run('provider reasoning chatgpt high'), cliOk);
   });
 
   test('an openai_compatible provider needs an endpoint and a model', () async {

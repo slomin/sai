@@ -131,7 +131,11 @@ class AppCommands {
           unawaited(_verdictSuggestion(container, index, accept: true)),
       rejectSuggestion: (index) =>
           unawaited(_verdictSuggestion(container, index, accept: false)),
-      toggleReasoning: () => _toggleReasoning(container),
+      toggleReasoning: () => _toggleReasoning(
+        container,
+        openProviders: () =>
+            openSettings(context, initial: SettingsSection.providers),
+      ),
       showShortcuts: () =>
           openSettings(context, initial: SettingsSection.shortcuts),
       showSettings: (section) => openSettings(context, initial: section),
@@ -171,7 +175,9 @@ class AppCommands {
   final void Function(int index) rejectSuggestion;
 
   /// Lets the model think before it answers, or not (`reasoning` in
-  /// settings); the thinking shows in the chat pane while it is on.
+  /// settings); the thinking shows in the chat pane while it is on. For
+  /// a provider with an effort of its own (#26) it opens Settings ›
+  /// Providers, where that effort is set.
   final VoidCallback toggleReasoning;
 
   /// Opens Settings on the Shortcuts page (#40).
@@ -291,7 +297,16 @@ class AppCommands {
     refusal == null ? notice.clear() : notice.show(refusal);
   }
 
-  static void _toggleReasoning(ProviderContainer container) {
+  static void _toggleReasoning(
+    ProviderContainer container, {
+    required VoidCallback openProviders,
+  }) {
+    // An OpenAI kind carries its own effort (#26): the chord opens the
+    // provider's setting instead of flipping a switch that is not its.
+    if (container.read(activeLlmProvider) is ConfiguredEffort) {
+      openProviders();
+      return;
+    }
     final settings = container.read(settingsProvider.notifier);
     final next = !container.read(reasoningProvider);
     try {

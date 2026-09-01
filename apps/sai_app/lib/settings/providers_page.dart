@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import '../commands.dart';
+import '../platform/browser.dart';
 import '../theme/sai_tokens.dart';
 import 'settings_row.dart';
 
@@ -42,6 +43,25 @@ const openRouterCatalogueStatusKey = ValueKey('openrouter-catalogue-status');
 const openRouterRefreshKey = ValueKey('openrouter-refresh');
 const openRouterOptionsKey = ValueKey('openrouter-options');
 
+/// The OpenAI kinds' controls (#26).
+const openAiModelFieldKey = ValueKey('openai-model-field');
+const openAiModelApplyKey = ValueKey('openai-model-apply');
+const openAiEffortKey = ValueKey('openai-effort');
+const openAiCatalogueStatusKey = ValueKey('openai-catalogue-status');
+const openAiRefreshKey = ValueKey('openai-refresh');
+const chatGptSignInKey = ValueKey('chatgpt-sign-in');
+const chatGptDeviceCodeKey = ValueKey('chatgpt-device-code');
+const chatGptCancelSignInKey = ValueKey('chatgpt-cancel-sign-in');
+const chatGptSignOutKey = ValueKey('chatgpt-sign-out');
+const chatGptAccountKey = ValueKey('chatgpt-account');
+const chatGptModelKey = ValueKey('chatgpt-model');
+const chatGptEffortKey = ValueKey('chatgpt-effort');
+const chatGptPlanKey = ValueKey('chatgpt-plan');
+const chatGptRefreshKey = ValueKey('chatgpt-refresh');
+
+/// What the effort menus show for the absent word.
+const modelDefaultLabel = 'Model default';
+
 /// Settings › Providers (#40, the dialog of #29 as a page): every
 /// provider this build can offer, the active one switched in one click,
 /// an endpoint's health, models and context refreshed on demand, a
@@ -58,6 +78,7 @@ class ProvidersPage extends ConsumerStatefulWidget {
 
 class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   final _controller = TextEditingController();
+  final _openAiModel = TextEditingController();
   final _model = _ModelController();
   final _modelFocus = FocusNode(debugLabel: 'openrouter-model');
   String? _selected;
@@ -76,6 +97,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   void dispose() {
     _resetTest();
     _controller.dispose();
+    _openAiModel.dispose();
     _model.dispose();
     _modelFocus.dispose();
     super.dispose();
@@ -111,6 +133,13 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     final takesKey =
         config?.credential != null ||
         (provider is OpenAiCompatibleProvider && provider.takesKey);
+    // The two OpenAI kinds (#26): each has its own block, and carries its
+    // own reasoning effort — the global switch below is not theirs.
+    final openAi =
+        provider is OpenAiResponsesProvider || config?.kind == openAiKind;
+    final chatGpt =
+        provider is ChatGptSubscriptionProvider || config?.kind == chatGptKind;
+    final ownEffort = openAi || chatGpt;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -143,19 +172,22 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
               value: settings.shareTasksWithCloud,
               onChanged: _setShareTasks,
             ),
-            SwitchListTile(
-              key: reasoningSwitchKey,
-              dense: true,
-              title: const Text('Let the model think before it answers'),
-              subtitle: Text(
-                settings.reasoningOn
-                    ? 'The chat shows the thinking above the answer.'
-                    : 'The model answers directly (faster).',
+            if (!ownEffort)
+              SwitchListTile(
+                key: reasoningSwitchKey,
+                dense: true,
+                title: const Text('Let the model think before it answers'),
+                subtitle: Text(
+                  settings.reasoningOn
+                      ? 'The chat shows the thinking above the answer.'
+                      : 'The model answers directly (faster).',
+                ),
+                value: settings.reasoningOn,
+                onChanged: _setReasoning,
               ),
-              value: settings.reasoningOn,
-              onChanged: _setReasoning,
-            ),
             const Divider(),
+            if (chatGpt) _chatGptBlock(selected, provider, config),
+            if (openAi) _openAiBlock(selected, provider, config),
             // Any endpoint that can be asked, a built-in's included (#23).
             if (provider != null &&
                 (config?.endpoint != null || provider is LlmEndpointProbe))
@@ -168,7 +200,12 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                 routing,
                 model: config?.defaultModel ?? provider?.defaultModel,
               ),
-            if (takesKey) _key(selected, revokeElsewhere: openRouter),
+            if (takesKey)
+              _key(
+                selected,
+                revokeElsewhere: openRouter || openAi,
+                revokeAt: openAi ? 'platform.openai.com' : 'openrouter.ai',
+              ),
           ],
         ),
       ],
@@ -191,11 +228,18 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       final r? => ' · ${r.label}',
       null => '',
     };
+    // The two OpenAI kinds name their billing (#26): the words are how
+    // a person tells the plan from the pay-as-you-go project apart.
+    final billing = switch (provider) {
+      ChatGptSubscriptionProvider() => ' · ChatGPT subscription',
+      OpenAiResponsesProvider() => ' · OpenAI API, billed separately',
+      _ => '',
+    };
     final subtitle = provider == null
         ? (missing == null
               ? "kind '${config?.kind}' is not available in this build"
               : misconfiguredNote(missing))
-        : '${provider.defaultModel} — ${provider.privacy.name}$routing$key';
+        : '${provider.defaultModel} — ${provider.privacy.name}$billing$routing$key';
     return ListTile(
       key: providerRowKey(id),
       dense: true,
@@ -210,6 +254,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       onTap: () => setState(() {
         _selected = id;
         _controller.clear();
+        _openAiModel.clear();
         _model.clear();
         _modelFocus.unfocus();
         _resetTest();
@@ -613,7 +658,561 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     notice.show('$id: $model · ${routing.label}');
   }
 
-  Widget _key(String id, {required bool revokeElsewhere}) {
+  /// The `openai` kind's block (#26): the billing said plainly, the exact
+  /// model id (typed, or picked from the ids the key can reach — guidance,
+  /// not a gate), and the reasoning effort as its own choice beside it,
+  /// Model default first. Test runs the recorded probe through the exact
+  /// pair; an unsupported pair fails once, in fixed words, and neither
+  /// choice moves.
+  Widget _openAiBlock(
+    String id,
+    LlmProvider? provider,
+    ProviderConfig? config,
+  ) {
+    final catalogue = ref.watch(openAiCatalogueProvider);
+    final status = ref.watch(credentialStatusProvider(id));
+    final readable = status == CredentialStatus.set && provider != null;
+    if (readable && !catalogue.attempted) {
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(openAiCatalogueProvider.notifier).load(id);
+      });
+    }
+    final model = config?.defaultModel ?? provider?.defaultModel;
+    final effort = config?.reasoningEffort;
+    final words = <String?>[
+      null,
+      ...openAiEffortWords,
+      if (effort != null && !openAiEffortWords.contains(effort)) effort,
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const ListTile(
+          dense: true,
+          title: Text('OpenAI API — billed separately'),
+          subtitle: Text(
+            'Pay-as-you-go usage on your OpenAI API project, not your '
+            'ChatGPT plan. Requests are sent with store: false; what '
+            'OpenAI keeps is set by your project\'s data controls at '
+            'platform.openai.com.',
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _openAiCatalogueLine(catalogue, status: status),
+                  key: openAiCatalogueStatusKey,
+                  maxLines: 2,
+                ),
+              ),
+              TextButton(
+                key: openAiRefreshKey,
+                onPressed: readable && !catalogue.loading
+                    ? () =>
+                          ref.read(openAiCatalogueProvider.notifier).refresh(id)
+                    : null,
+                child: const Text('Refresh'),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: ValueListenableBuilder(
+            valueListenable: _openAiModel,
+            builder: (context, value, _) {
+              final matches = openAiCatalogueMatches(
+                catalogue.models ?? const [],
+                value.text,
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          key: openAiModelFieldKey,
+                          controller: _openAiModel,
+                          decoration: InputDecoration(
+                            labelText: 'Model',
+                            hintText: model ?? 'exact model id',
+                            isDense: true,
+                          ),
+                          onSubmitted: (_) =>
+                              _applyOpenAiModel(id, provider, config),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        key: openAiModelApplyKey,
+                        onPressed: value.text.trim().isEmpty
+                            ? null
+                            : () => _applyOpenAiModel(id, provider, config),
+                        child: const Text('Apply'),
+                      ),
+                    ],
+                  ),
+                  if (matches.isNotEmpty)
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 160),
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final m in matches)
+                            ListTile(
+                              dense: true,
+                              title: Text(m),
+                              onTap: () => _openAiModel.text = m,
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+        _effortMenu(
+          key: openAiEffortKey,
+          current: effort,
+          words: words,
+          labelFor: (w) => w ?? modelDefaultLabel,
+          available: (w) => true,
+          help:
+              'Which efforts a model takes depends on the model; an '
+              'unsupported pair is refused on Test and on every call, '
+              'and neither choice changes.',
+          onChanged: (w) => _setEffort(id, provider, config, w),
+        ),
+      ],
+    );
+  }
+
+  static String _openAiCatalogueLine(
+    OpenAiCatalogue catalogue, {
+    required CredentialStatus status,
+  }) {
+    String count(List<String> models) =>
+        '${models.length} model${models.length == 1 ? '' : 's'}';
+    final models = catalogue.models;
+    final failure = catalogue.failure;
+    if (catalogue.loading) return 'Loading the models this key can reach…';
+    if (failure != null && models != null) {
+      return 'Could not refresh (${failure.message}); showing '
+          '${count(models)} cached';
+    }
+    if (failure != null) {
+      return 'Could not load models (${failure.message}); an exact id '
+          'still applies';
+    }
+    if (models != null) {
+      return '${count(models)} this key can reach — guidance only: the '
+          'list does not say which take the Responses API or an effort';
+    }
+    return switch (status) {
+      CredentialStatus.set => 'Loading the models this key can reach…',
+      CredentialStatus.missing ||
+      CredentialStatus.none => 'Save an OpenAI key to list models',
+      CredentialStatus.absent =>
+        'The dev copy holds no credentials, so no list; use the stable app',
+      CredentialStatus.unavailable =>
+        'The Keychain could not be read, so the list was not either',
+    };
+  }
+
+  void _applyOpenAiModel(
+    String id,
+    LlmProvider? provider,
+    ProviderConfig? config,
+  ) {
+    final model = _openAiModel.text.trim();
+    if (model.isEmpty) return;
+    final base = config ?? (provider == null ? null : configFor(provider));
+    if (base == null) return;
+    _write(
+      id,
+      base.copyWith(
+        kind: openAiKind,
+        endpoint: () => null,
+        privacy: () => LlmPrivacy.cloud,
+        routing: () => null,
+        credential: () => base.credential ?? ProviderConfig.credentialFor(id),
+        defaultModel: () => model,
+      ),
+      '$id: $model',
+    );
+    _openAiModel.clear();
+  }
+
+  /// The ChatGPT subscription's block (#26, ADR 0013): the account as the
+  /// runtime reports it, sign-in by browser or device code, sign-out; the
+  /// model from the live list (a saved id the list no longer carries
+  /// stays visible, marked unavailable, and refused until another is
+  /// chosen); the effort from that model's advertised list, Model default
+  /// (the advertised default) first; the plan's usage, never money.
+  Widget _chatGptBlock(
+    String id,
+    LlmProvider? provider,
+    ProviderConfig? config,
+  ) {
+    final state = ref.watch(chatGptProvider);
+    final runtimeThere = ref.watch(appServerRuntimeProvider) != null;
+    if (runtimeThere && !state.attempted) {
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(chatGptProvider.notifier).load();
+      });
+    }
+    final model = config?.defaultModel;
+    final chosen = state.modelNamed(model);
+    final effort = config?.reasoningEffort;
+    final modelWords = <String?>[
+      if (model != null && chosen == null) model,
+      if (state.models case final models?) ...models.map((m) => m.id),
+    ];
+    final effortWords = <String?>[
+      null,
+      if (chosen != null) ...chosen.supportedEfforts.map((o) => o.effort.word),
+      if (effort != null && !(chosen?.takes(ReasoningEffort(effort)) ?? false))
+        effort,
+    ];
+    final login = state.login;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          key: chatGptAccountKey,
+          dense: true,
+          title: const Text('ChatGPT subscription'),
+          subtitle: Text(
+            _chatGptAccountLine(state, runtimeThere: runtimeThere),
+          ),
+          trailing: runtimeThere
+              ? TextButton(
+                  key: chatGptRefreshKey,
+                  onPressed: state.loading
+                      ? null
+                      : () => ref.read(chatGptProvider.notifier).refresh(),
+                  child: const Text('Refresh'),
+                )
+              : null,
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Wrap(
+            spacing: 8,
+            children: [
+              if (!state.signedIn && !login.inProgress) ...[
+                FilledButton(
+                  key: chatGptSignInKey,
+                  onPressed: runtimeThere
+                      ? () => _signIn(deviceCode: false)
+                      : null,
+                  child: const Text('Sign in with ChatGPT'),
+                ),
+                TextButton(
+                  key: chatGptDeviceCodeKey,
+                  onPressed: runtimeThere
+                      ? () => _signIn(deviceCode: true)
+                      : null,
+                  child: const Text('Use device code'),
+                ),
+              ],
+              if (login.inProgress)
+                TextButton(
+                  key: chatGptCancelSignInKey,
+                  onPressed: () =>
+                      ref.read(chatGptProvider.notifier).cancelSignIn(),
+                  child: const Text('Cancel'),
+                ),
+              if (state.signedIn && !login.inProgress)
+                TextButton(
+                  key: chatGptSignOutKey,
+                  onPressed: _signOut,
+                  child: const Text('Sign out'),
+                ),
+            ],
+          ),
+        ),
+        if (login.phase == ChatGptLoginPhase.deviceCode)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(
+              'Open ${login.verificationUrl} and enter the code '
+              '${login.userCode}. Waiting for the sign-in to finish…',
+            ),
+          ),
+        if (login.phase == ChatGptLoginPhase.browser)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(
+              'Finish signing in in the browser. Waiting for the sign-in to '
+              'finish…',
+            ),
+          ),
+        if (login.phase == ChatGptLoginPhase.completing)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text('Signed in; reading the account…'),
+          ),
+        if (login.phase == ChatGptLoginPhase.failed ||
+            login.phase == ChatGptLoginPhase.cancelled)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    login.phase == ChatGptLoginPhase.failed
+                        ? CodexText.loginFailed
+                        : CodexText.loginCancelled,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      ref.read(chatGptProvider.notifier).dismissLogin(),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          ),
+        if (state.signedIn) ...[
+          _effortMenu(
+            key: chatGptModelKey,
+            current: model,
+            words: modelWords,
+            labelFor: (w) {
+              final m = state.modelNamed(w);
+              if (m != null) return m.displayName;
+              return w == null ? 'Choose a model' : '$w — unavailable';
+            },
+            available: (w) => w != null && state.modelNamed(w) != null,
+            label: 'Model',
+            help:
+                chosen?.description ??
+                (model == null
+                    ? 'The models your plan offers, from the runtime\'s list.'
+                    : 'This model is not in the current list; choose another. '
+                          'Nothing is sent until you do.'),
+            onChanged: (w) => _setChatGptModel(id, provider, config, w),
+          ),
+          _effortMenu(
+            key: chatGptEffortKey,
+            current: effort,
+            words: effortWords,
+            labelFor: (w) {
+              if (w == null) {
+                final d = chosen?.defaultEffort;
+                return d == null
+                    ? modelDefaultLabel
+                    : '$modelDefaultLabel ($d)';
+              }
+              return chosen?.takes(ReasoningEffort(w)) ?? false
+                  ? w
+                  : '$w — unavailable';
+            },
+            available: (w) =>
+                w == null || (chosen?.takes(ReasoningEffort(w)) ?? false),
+            help: effort != null && chosen != null
+                ? (chosen.supportedEfforts
+                          .where((o) => o.effort.word == effort)
+                          .firstOrNull
+                          ?.description ??
+                      'This effort is not one the model takes; choose '
+                          'another, or Model default.')
+                : 'Model default leaves the effort to the model. Reasoning '
+                      'summaries show only when the model sends them.',
+            onChanged: (w) => _setEffort(id, provider, config, w),
+          ),
+          if (state.limits case final limits?)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Text(_planLine(limits), key: chatGptPlanKey),
+            ),
+        ],
+      ],
+    );
+  }
+
+  static String _chatGptAccountLine(
+    ChatGptState state, {
+    required bool runtimeThere,
+  }) {
+    if (!runtimeThere) return CodexText.devRefused;
+    if (state.loading && !state.attempted) return 'Asking the runtime…';
+    if (state.failure case final failure?) return failure.message;
+    final account = state.account;
+    if (account == null) return 'Not read yet.';
+    return switch (account.type) {
+      CodexAccountType.chatgpt =>
+        'Signed in${account.email == null ? '' : ' as ${account.email}'}'
+            '${account.planType == null ? '' : ' · ${account.planType} plan'}. '
+            'Uses your plan\'s allowance, not an API key.',
+      CodexAccountType.none =>
+        'Not signed in. Sign in with your ChatGPT account.',
+      CodexAccountType.apiKey => CodexText.wrongAuth,
+      CodexAccountType.other => CodexText.wrongAuth,
+    };
+  }
+
+  /// The plan's limits as availability — a used percentage and a reset —
+  /// never converted to money (#26).
+  static String _planLine(CodexRateLimits limits) {
+    String window(String name, CodexRateWindow w) {
+      final reset = w.resetsAt == null
+          ? ''
+          : ', resets ${w.resetsAt!.toLocal().toString().substring(0, 16)}';
+      return '$name ${w.usedPercent}% used$reset';
+    }
+
+    final parts = [
+      if (limits.primary case final p?) window('Plan usage:', p),
+      if (limits.secondary case final s?) window('weekly', s),
+    ];
+    if (parts.isEmpty) return 'Plan usage: not reported';
+    return '${parts.join(' · ')}${limits.limitReached ? ' · limit reached' : ''}';
+  }
+
+  /// A dropdown over [words] (null is Model default), the current one
+  /// shown even when unavailable, with [help] under it.
+  Widget _effortMenu({
+    required Key key,
+    required String? current,
+    required List<String?> words,
+    required String Function(String?) labelFor,
+    required bool Function(String?) available,
+    required String help,
+    required void Function(String?) onChanged,
+    String label = 'Reasoning effort',
+  }) {
+    final items = words.toSet().toList();
+    if (!items.contains(current)) items.insert(0, current);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              SizedBox(width: 120, child: Text(label)),
+              Expanded(
+                child: DropdownButton<String?>(
+                  key: key,
+                  isExpanded: true,
+                  value: current,
+                  items: [
+                    for (final w in items)
+                      DropdownMenuItem<String?>(
+                        value: w,
+                        enabled: available(w),
+                        child: Text(labelFor(w)),
+                      ),
+                  ],
+                  onChanged: onChanged,
+                ),
+              ),
+            ],
+          ),
+          Text(help, style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+    );
+  }
+
+  void _setEffort(
+    String id,
+    LlmProvider? provider,
+    ProviderConfig? config,
+    String? word,
+  ) {
+    final base = config ?? (provider == null ? null : configFor(provider));
+    if (base == null) return;
+    _write(
+      id,
+      base.copyWith(reasoningEffort: () => word),
+      '$id: reasoning effort ${word ?? modelDefaultLabel}',
+    );
+  }
+
+  void _setChatGptModel(
+    String id,
+    LlmProvider? provider,
+    ProviderConfig? config,
+    String? model,
+  ) {
+    if (model == null) return;
+    final base = config ?? (provider == null ? null : configFor(provider));
+    if (base == null) return;
+    // The model is one choice; the effort stays as it was, and is judged
+    // against the new model's list (shown unavailable when it does not
+    // take it), never reset.
+    _write(
+      id,
+      base.copyWith(
+        kind: chatGptKind,
+        endpoint: () => null,
+        privacy: () => LlmPrivacy.cloud,
+        routing: () => null,
+        credential: () => null,
+        defaultModel: () => model,
+      ),
+      '$id: $model',
+    );
+  }
+
+  void _write(String id, ProviderConfig config, String said) {
+    final notice = ref.read(noticeProvider.notifier);
+    try {
+      ref.read(settingsProvider.notifier).upsertProvider(config);
+    } on ArgumentError catch (e) {
+      notice.show('${e.message}');
+      return;
+    } on StateError catch (e) {
+      notice.show(e.message);
+      return;
+    }
+    notice.show(said);
+  }
+
+  Future<void> _signIn({required bool deviceCode}) async {
+    final notice = ref.read(noticeProvider.notifier);
+    final ChatGptLogin login;
+    try {
+      login = await ref
+          .read(chatGptProvider.notifier)
+          .signIn(deviceCode: deviceCode);
+    } on CodexException catch (e) {
+      notice.show(e.text);
+      return;
+    }
+    if (!mounted) return;
+    if (login.phase == ChatGptLoginPhase.browser && login.authUrl != null) {
+      final opened = await openInBrowser(Uri.parse(login.authUrl!));
+      if (!opened && mounted) {
+        notice.show('open ${login.authUrl} in your browser to sign in');
+      }
+    }
+  }
+
+  Future<void> _signOut() async {
+    final notice = ref.read(noticeProvider.notifier);
+    try {
+      await ref.read(chatGptProvider.notifier).signOut();
+    } on CodexException catch (e) {
+      notice.show(e.text);
+      return;
+    }
+    if (mounted) notice.show('signed out of ChatGPT');
+  }
+
+  Widget _key(
+    String id, {
+    required bool revokeElsewhere,
+    String revokeAt = 'openrouter.ai',
+  }) {
     final status = ref.watch(credentialStatusProvider(id));
     final config = ref.watch(settingsProvider).provider(id);
     final statusText = switch (status) {
@@ -676,9 +1275,9 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
         ),
         if (revokeElsewhere) ...[
           const SizedBox(height: 4),
-          const Text(
+          Text(
             'Remove deletes the Keychain item only; revoke the key at '
-            'openrouter.ai as well. Use a dedicated key with a spending cap.',
+            '$revokeAt as well. Use a dedicated key with a spending cap.',
           ),
         ],
       ],
@@ -755,6 +1354,9 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
             provider,
             reasoningOn: ref.read(reasoningProvider),
           ),
+          // The App Server has no temperature field; the Responses API's
+          // reasoning models refuse one (#26).
+          temperature: provider is ConfiguredEffort ? null : 0,
         ),
       );
     } on Object catch (error) {

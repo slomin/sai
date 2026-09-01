@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:sai_core/src/process/runner.dart';
+import '../runner.dart';
 
 /// What a fake child was started with — what every runtime test asserts
 /// on: the executable, the arguments, the environment it got and no

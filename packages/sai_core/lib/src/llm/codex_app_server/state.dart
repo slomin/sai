@@ -45,6 +45,8 @@ final class ChatGptLogin {
   final String? verificationUrl;
   final String? userCode;
 
+  bool get isDeviceCode => phase == ChatGptLoginPhase.deviceCode;
+
   bool get inProgress =>
       phase == ChatGptLoginPhase.browser ||
       phase == ChatGptLoginPhase.deviceCode ||

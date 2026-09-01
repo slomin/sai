@@ -23,6 +23,18 @@ final class StubServer {
   /// test that needs a list taller than the suggestions box.
   int zdrExtra = 0;
 
+  /// The OpenAI Responses route (#26): the model list `GET /v1/models`
+  /// answers when set (OpenAI's shape), and how `POST /v1/responses`
+  /// answers — the streamed [words], or [responsesStatus] with an error
+  /// object naming [responsesParam].
+  List<String>? openAiModels;
+  int responsesStatus = 200;
+  String? responsesParam;
+  String? responsesCode;
+
+  /// Every `POST /v1/responses` body, decoded, for asserting the pair.
+  final responsesBodies = <Map<String, Object?>>[];
+
   static Future<StubServer> start() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final stub = StubServer._(server);
@@ -34,10 +46,57 @@ final class StubServer {
   String get v1 => '$origin/v1';
 
   Future<void> _serve(HttpRequest request) async {
-    await utf8.decoder.bind(request).join();
+    final body = await utf8.decoder.bind(request).join();
     requests.add('${request.method} ${request.uri.path}');
     final response = request.response;
     switch ('${request.method} ${request.uri.path}') {
+      case 'GET /v1/models' when openAiModels != null:
+        response
+          ..headers.contentType = ContentType.json
+          ..write(
+            jsonEncode({
+              'object': 'list',
+              'data': [
+                for (final id in openAiModels!) {'id': id, 'object': 'model'},
+              ],
+            }),
+          );
+      case 'POST /v1/responses' when responsesStatus != 200:
+        responsesBodies.add(jsonDecode(body) as Map<String, Object?>);
+        response
+          ..statusCode = responsesStatus
+          ..headers.contentType = ContentType.json
+          ..write(
+            jsonEncode({
+              'error': {
+                'type': 'invalid_request_error',
+                'code': responsesCode ?? 'unsupported_value',
+                'param': responsesParam,
+                'message': 'the stub refuses (sk-canary quoted here)',
+              },
+            }),
+          );
+      case 'POST /v1/responses':
+        responsesBodies.add(jsonDecode(body) as Map<String, Object?>);
+        response
+          ..headers.contentType = ContentType('text', 'event-stream')
+          ..bufferOutput = false;
+        for (final w in words) {
+          response.write(
+            'data: ${jsonEncode({'type': 'response.output_text.delta', 'item_id': 'msg_1', 'delta': w})}\n\n',
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        response.write(
+          'data: ${jsonEncode({
+            'type': 'response.completed',
+            'response': {
+              'id': 'resp_1',
+              'model': 'gpt-5.6-sol-2026-08-01',
+              'usage': {'input_tokens': 3, 'output_tokens': words.length, 'total_tokens': 3 + words.length},
+            },
+          })}\n\n',
+        );
       case 'GET /v1/models':
         response
           ..headers.contentType = ContentType.json

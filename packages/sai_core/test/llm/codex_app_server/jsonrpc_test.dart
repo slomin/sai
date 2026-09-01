@@ -4,7 +4,7 @@ import 'package:sai_core/sai_core.dart';
 import 'package:sai_core/src/llm/codex_app_server/jsonrpc.dart';
 import 'package:test/test.dart';
 
-import '../../process/scripted_runner.dart';
+import 'package:sai_core/process_testing.dart';
 
 void main() {
   late ScriptedProcess process;

@@ -6,7 +6,7 @@ import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
 
-import 'fake_app_server.dart';
+import 'package:sai_core/process_testing.dart';
 
 void main() {
   late Directory tmp;

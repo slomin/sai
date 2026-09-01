@@ -18,6 +18,7 @@ export 'llm/codex_app_server/runtime.dart';
 export 'llm/codex_app_server/sidecar.dart';
 export 'llm/codex_app_server/state.dart';
 export 'llm/codex_app_server/text.dart';
+export 'process/runner.dart';
 export 'llm/connection.dart';
 export 'llm/effort.dart';
 export 'llm/failure.dart';

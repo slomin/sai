@@ -87,6 +87,9 @@ Future<ProviderContainer> pumpApp(
   FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
   SecretStore? secrets,
   Uri? openRouterEndpoint,
+  Uri? openAiEndpoint,
+  ProcessRunner? processRunner,
+  SidecarLocator? sidecar,
 }) async {
   // Archive and settings both go under one temp dir: no test touches the
   // real data directory, whatever the developer's environment says. A
@@ -105,6 +108,9 @@ Future<ProviderContainer> pumpApp(
         finishedTasks: finishedTasks,
         secrets: secrets,
         openRouterEndpoint: openRouterEndpoint,
+        openAiEndpoint: openAiEndpoint,
+        processRunner: processRunner,
+        sidecar: sidecar,
       ),
       ...overrides,
     ],
@@ -143,6 +149,9 @@ List<Override> appOverrides({
   FinishedTaskVisibility? finishedTasks = FinishedTaskVisibility.endOfDay,
   SecretStore? secrets,
   Uri? openRouterEndpoint,
+  Uri? openAiEndpoint,
+  ProcessRunner? processRunner,
+  SidecarLocator? sidecar,
 }) => [
   // Stable unless a test asks for dev: the goldens show the plain
   // header, and `appFlavor` is unset under `flutter test` anyway.
@@ -197,6 +206,17 @@ List<Override> appOverrides({
   // The shell brings up the archive follower (#118); a periodic timer
   // would outlive the test, so a test drives `tick()` by hand.
   archivePollEveryProvider.overrideWithValue(null),
+  // The OpenAI kinds (#26): the Responses origin moves to a loopback stub
+  // only when a test brings one; the App Server is a scripted fake or
+  // nothing — never the real binary, never a real home.
+  if (openAiEndpoint != null)
+    openAiEndpointProvider.overrideWithValue(openAiEndpoint),
+  if (processRunner != null)
+    processRunnerProvider.overrideWithValue(processRunner),
+  sidecarLocatorProvider.overrideWithValue(sidecar),
+  codexHomeProvider.overrideWithValue(
+    sidecar == null ? null : Directory('${tmp.path}/codex-home/codex'),
+  ),
 ];
 
 /// Pumps and lets real async run until [ready] — for a dialog that
