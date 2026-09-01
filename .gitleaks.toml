@@ -53,3 +53,10 @@ description = "upper-case placeholder after Bearer"
 targetRules = ["bearer-authorization-header"]
 regexTarget = "secret"
 regexes = ['''^[A-Z_]+$''']
+
+# Upstream documentation copied verbatim as protocol fixtures (#26): the
+# Codex App Server README and schema at the pinned tag, whose examples
+# carry sample UUIDs and placeholder ids. Not ours, not secrets.
+[[allowlists]]
+description = "pinned upstream protocol fixtures"
+paths = ['''packages/sai_core/test/llm/codex_app_server/fixtures/''']
