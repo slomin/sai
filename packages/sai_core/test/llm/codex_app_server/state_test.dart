@@ -45,7 +45,13 @@ void main() {
     final runtime = container.read(appServerRuntimeProvider)!;
     expect(
       container.read(codexHomeProvider)!.path,
-      p.join(tmp.path, 'Library', 'Application Support', 'sai', 'codex'),
+      p.join(
+        resolveDataDir(
+          environment: {'HOME': tmp.path},
+          operatingSystem: Platform.operatingSystem,
+        ).path,
+        'codex',
+      ),
     );
     expect(
       identical(container.read(appServerRuntimeProvider), runtime),
