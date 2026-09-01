@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sai_core/sai_core.dart';
 
 import '../commands.dart';
+import '../theme/sai_tokens.dart';
 import 'settings_row.dart';
 
 /// The masked key field, for tests.
@@ -56,7 +58,7 @@ class ProvidersPage extends ConsumerStatefulWidget {
 
 class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   final _controller = TextEditingController();
-  final _model = TextEditingController();
+  final _model = _ModelController();
   final _modelFocus = FocusNode(debugLabel: 'openrouter-model');
   String? _selected;
 
@@ -319,14 +321,27 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     final exact = routing == OpenRouterRouting.exact;
     final preset = routing == OpenRouterRouting.deepinfraFp8;
     final catalogue = ref.watch(openRouterCatalogueProvider);
-    final keyed =
-        ref.watch(credentialStatusProvider(id)) == CredentialStatus.set;
-    final readable = keyed && provider != null;
+    final status = ref.watch(credentialStatusProvider(id));
+    // Read through the provider this block shows — the built-in or an
+    // entry of the kind under any id — once it is built and keyed.
+    final readable = status == CredentialStatus.set && provider != null;
     // The session's one first reading, once the block shows with a key:
-    // after this frame, never during it; nothing once it was attempted.
+    // after this frame, never during it; nothing once it was attempted
+    // (a key stored or removed forgets, so the block reads again).
     if (readable && !catalogue.attempted) {
       SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (mounted) ref.read(openRouterCatalogueProvider.notifier).load();
+        if (mounted) ref.read(openRouterCatalogueProvider.notifier).load(id);
+      });
+    }
+    // A new list (read, refreshed or forgotten) makes a new autocomplete
+    // below — keyed on the list — so nothing computed from the old one
+    // can come back when the field is clicked again; then one word from
+    // the controller, and letters already typed (during the reading,
+    // say) get their suggestions from the new list without a keystroke.
+    if (!identical(catalogue.models, _lastModels)) {
+      _lastModels = catalogue.models;
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _model.text.isNotEmpty) _model.nudge();
       });
     }
     return Column(
@@ -377,7 +392,11 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
             children: [
               Expanded(
                 child: Text(
-                  _catalogueLine(catalogue, keyed: keyed, readable: readable),
+                  _catalogueLine(
+                    catalogue,
+                    status: status,
+                    installed: provider != null,
+                  ),
                   key: openRouterCatalogueStatusKey,
                   maxLines: 2,
                 ),
@@ -387,7 +406,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                 onPressed: readable && !catalogue.loading
                     ? () => ref
                           .read(openRouterCatalogueProvider.notifier)
-                          .refresh()
+                          .refresh(id)
                     : null,
                 child: const Text('Refresh'),
               ),
@@ -401,10 +420,13 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
             builder: (context, value, _) => Row(
               children: [
                 Expanded(
-                  // RawAutocomplete asks for options on a text change
-                  // only: the suggestions come as the person types (or
-                  // clears the field), never on focus alone.
+                  // RawAutocomplete asks for options on the controller's
+                  // word only: the suggestions come as the person types,
+                  // never for an empty field, never on focus alone. The
+                  // controller and the focus are this page's, so a new
+                  // key keeps the text and the caret.
                   child: RawAutocomplete<String>(
+                    key: ObjectKey(catalogue.models),
                     textEditingController: _model,
                     focusNode: _modelFocus,
                     optionsBuilder: (value) => openRouterCatalogueMatches(
@@ -414,36 +436,69 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                     // Choosing fills the field; Apply stays the act.
                     onSelected: (_) {},
                     fieldViewBuilder:
-                        (context, controller, focus, onFieldSubmitted) =>
-                            TextField(
-                              key: openRouterModelFieldKey,
-                              controller: controller,
-                              focusNode: focus,
-                              enableSuggestions: false,
-                              autocorrect: false,
-                              decoration: const InputDecoration(
-                                labelText: 'Model id',
-                                hintText: 'owner/name',
-                                isDense: true,
-                              ),
-                              // Enter takes the highlighted suggestion while
-                              // the list is open; otherwise — no list, or
-                              // the suggestion is what was typed — it
-                              // applies the id, listed or not. The field
-                              // keeps the focus either way (the default
-                              // would drop it on Enter), so a taken
-                              // suggestion is one more Enter from applied;
-                              // an apply leaves the field itself.
-                              onEditingComplete: () {},
-                              onSubmitted: (_) {
-                                final before = controller.text;
-                                onFieldSubmitted();
-                                if (controller.text == before) {
-                                  _applyModel(id, provider, config);
-                                }
-                              },
+                        (context, controller, focus, onFieldSubmitted) => Focus(
+                          canRequestFocus: false,
+                          skipTraversal: true,
+                          // Escape closes the suggestions and keeps
+                          // the field, so Enter then applies what was
+                          // typed even when a listed id begins with
+                          // it; with none open it goes on up, where
+                          // Settings closes on it as everywhere.
+                          onKeyEvent: (node, event) {
+                            if (!_optionsOpen ||
+                                event is! KeyDownEvent ||
+                                event.logicalKey != LogicalKeyboardKey.escape) {
+                              return KeyEventResult.ignored;
+                            }
+                            // From the node's own context: the builder's
+                            // is RawAutocomplete's, above the actions that
+                            // know the list.
+                            Actions.maybeInvoke(
+                              node.context!,
+                              const DismissIntent(),
+                            );
+                            return KeyEventResult.handled;
+                          },
+                          child: TextField(
+                            key: openRouterModelFieldKey,
+                            controller: controller,
+                            focusNode: focus,
+                            enableSuggestions: false,
+                            autocorrect: false,
+                            decoration: const InputDecoration(
+                              labelText: 'Model id',
+                              hintText: 'owner/name',
+                              isDense: true,
                             ),
-                    optionsViewBuilder: _options,
+                            // Enter takes the highlighted suggestion
+                            // while the list is open; otherwise — no
+                            // list, Escape closed it, or the suggestion
+                            // is what was typed — it applies the id,
+                            // listed or not. The field keeps the focus
+                            // either way (the default would drop it on
+                            // Enter), so a taken suggestion is one more
+                            // Enter from applied; an apply leaves the
+                            // field itself.
+                            onEditingComplete: () {},
+                            onSubmitted: (_) {
+                              final before = controller.text;
+                              onFieldSubmitted();
+                              if (controller.text == before) {
+                                _applyModel(id, provider, config);
+                              }
+                            },
+                          ),
+                        ),
+                    optionsViewBuilder: (context, onSelected, options) =>
+                        _OpenRouterOptions(
+                          options: options,
+                          highlighted: AutocompleteHighlightedOption.of(
+                            context,
+                          ),
+                          onSelected: onSelected,
+                          onOpened: () => _optionsOpen = true,
+                          onClosed: () => _optionsOpen = false,
+                        ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -463,13 +518,21 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     );
   }
 
+  /// Whether the suggestions are showing, for Escape: the list widget
+  /// says so as it comes and goes.
+  var _optionsOpen = false;
+
+  /// The list the autocomplete was last built over, by identity.
+  List<String>? _lastModels;
+
   /// One line on the zero-retention list: what is being read, what was
-  /// read, and how the last reading failed — in the transport's fixed
-  /// words, never the answer's own.
+  /// read, how the last reading failed — in the transport's fixed words,
+  /// never the answer's own — or why nothing is read at all, in the
+  /// terms the key row beneath uses for the same state.
   static String _catalogueLine(
     OpenRouterCatalogue catalogue, {
-    required bool keyed,
-    required bool readable,
+    required CredentialStatus status,
+    required bool installed,
   }) {
     String count(List<String> models) =>
         '${models.length} model${models.length == 1 ? '' : 's'}';
@@ -485,56 +548,19 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
           'still works';
     }
     if (models != null) return '${count(models)} with zero retention';
-    if (readable) return 'Loading zero-retention models…';
-    if (!keyed) return 'Save an OpenRouter key to load models';
-    return 'Repair the entry to load models';
-  }
-
-  /// The suggestions under the model field: at most the match limit,
-  /// the highlighted one kept in view, a tap or Enter choosing it.
-  Widget _options(
-    BuildContext context,
-    void Function(String) onSelected,
-    Iterable<String> options,
-  ) {
-    final highlighted = AutocompleteHighlightedOption.of(context);
-    return Align(
-      alignment: Alignment.topLeft,
-      child: Material(
-        elevation: 4,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 240, maxWidth: 480),
-          child: ListView.builder(
-            key: openRouterOptionsKey,
-            shrinkWrap: true,
-            padding: EdgeInsets.zero,
-            itemCount: options.length,
-            itemBuilder: (context, index) {
-              final option = options.elementAt(index);
-              final isHighlighted = index == highlighted;
-              if (isHighlighted) {
-                SchedulerBinding.instance.addPostFrameCallback((_) {
-                  if (context.mounted) {
-                    Scrollable.ensureVisible(context, alignment: 0.5);
-                  }
-                });
-              }
-              return InkWell(
-                onTap: () => onSelected(option),
-                child: Container(
-                  color: isHighlighted ? Theme.of(context).focusColor : null,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  child: Text(option),
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
+    return switch (status) {
+      CredentialStatus.set =>
+        installed
+            ? 'Loading zero-retention models…'
+            : 'Repair the entry to load models',
+      CredentialStatus.missing ||
+      CredentialStatus.none => 'Save an OpenRouter key to load models',
+      // Dev holds no credentials (#95, ADR 0019): no list either.
+      CredentialStatus.absent =>
+        'The dev copy holds no credentials, so no list; use the stable app',
+      CredentialStatus.unavailable =>
+        'The Keychain could not be read, so the list was not either',
+    };
   }
 
   void _applyModel(String id, LlmProvider? provider, ProviderConfig? config) {
@@ -581,8 +607,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       notice.show(e.message);
       return;
     }
-    // Cleared and left: an empty, focused field would offer the whole
-    // list over the key row below.
+    // Cleared and left: the choice is made.
     _model.clear();
     _modelFocus.unfocus();
     notice.show('$id: $model · ${routing.label}');
@@ -795,4 +820,124 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     notice.show(done);
     return true;
   }
+}
+
+/// The suggestions under the model field (#112): at most the match
+/// limit, the highlighted row kept in view as the arrows move it — a
+/// list of fifty is taller than the box — a tap or Enter choosing it.
+/// The rows are one height, so the row to show is arithmetic on its
+/// own controller: the builder's context is the sliver's, and asking
+/// that to come into view would reveal the whole list, not the row.
+/// Says when it comes and goes, for Escape.
+class _OpenRouterOptions extends StatefulWidget {
+  const _OpenRouterOptions({
+    required this.options,
+    required this.highlighted,
+    required this.onSelected,
+    required this.onOpened,
+    required this.onClosed,
+  });
+
+  final Iterable<String> options;
+  final int highlighted;
+  final void Function(String) onSelected;
+  final VoidCallback onOpened;
+  final VoidCallback onClosed;
+
+  static const rowHeight = 36.0;
+  static const maxHeight = 240.0;
+
+  @override
+  State<_OpenRouterOptions> createState() => _OpenRouterOptionsState();
+}
+
+class _OpenRouterOptionsState extends State<_OpenRouterOptions> {
+  final _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.onOpened();
+  }
+
+  @override
+  void didUpdateWidget(_OpenRouterOptions old) {
+    super.didUpdateWidget(old);
+    if (old.highlighted != widget.highlighted) _reveal();
+  }
+
+  @override
+  void dispose() {
+    widget.onClosed();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Scrolls just enough for the highlighted row to be in the box.
+  void _reveal() {
+    if (!_scroll.hasClients) return;
+    final view = _scroll.position;
+    final top = widget.highlighted * _OpenRouterOptions.rowHeight;
+    final bottom = top + _OpenRouterOptions.rowHeight;
+    if (top < view.pixels) {
+      view.jumpTo(top);
+    } else if (bottom > view.pixels + view.viewportDimension) {
+      view.jumpTo(bottom - view.viewportDimension);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.topLeft,
+      child: Material(
+        color: SaiColors.bg,
+        elevation: 3,
+        borderRadius: const BorderRadius.all(Radius.circular(SaiRadius.medium)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxHeight: _OpenRouterOptions.maxHeight,
+            maxWidth: 480,
+          ),
+          child: ListView.builder(
+            key: openRouterOptionsKey,
+            controller: _scroll,
+            shrinkWrap: true,
+            padding: EdgeInsets.zero,
+            itemExtent: _OpenRouterOptions.rowHeight,
+            itemCount: widget.options.length,
+            itemBuilder: (context, index) {
+              final option = widget.options.elementAt(index);
+              final lit = index == widget.highlighted;
+              return Semantics(
+                button: true,
+                selected: lit,
+                child: InkWell(
+                  onTap: () => widget.onSelected(option),
+                  child: Container(
+                    color: lit ? Theme.of(context).focusColor : null,
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      option,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The model field's controller, able to say "changed" with nothing
+/// changed: RawAutocomplete computes its suggestions on the controller's
+/// word alone, so a list that arrives under text already typed is
+/// offered by one such word rather than by the next keystroke.
+class _ModelController extends TextEditingController {
+  void nudge() => notifyListeners();
 }
