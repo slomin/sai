@@ -70,6 +70,10 @@ and `test/no_secrets_test.dart` enforce that.
 - **Removing a provider takes it out of the order**: neither `llm` nor
   `llm_fallback` ever names a provider that is gone, and the next entry
   takes a vacated head.
+- **An order entry that is not a provider id is not an entry.** `llm`
+  and each `llm_fallback` word must match the `id` form above; anything
+  else is dropped on read and not written again — the order is held in
+  memory as one space-joined word, which that form cannot contain.
 - **Using a provider sets the order's first entry, never the whole
   order** (#62). An id already in the order moves to the front and
   nothing is dropped; a new one takes the head's place and the arranged

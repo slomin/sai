@@ -204,6 +204,22 @@ void main() {
       expect(decoded.encode(), '{"llm":null,"version":0}');
     });
 
+    test('an entry that is not a provider id is not an entry', () {
+      // The order is one word with the ids joined by a space, which their
+      // form cannot hold; anything else would split into phantoms.
+      final decoded = Settings.decode(
+        '{"version":0,"llm":"a b","llm_fallback":["c d","e","F"]}',
+      );
+      expect(decoded.llm, isNull);
+      expect(decoded.llmOrder, isEmpty);
+      expect(decoded.encode(), '{"llm":null,"version":0}');
+      final kept = Settings.decode(
+        '{"version":0,"llm":"a","llm_fallback":["b c","d"]}',
+      );
+      expect(kept.llmOrder, ['a', 'd']);
+      expect(kept.llmOrderKey, 'a d');
+    });
+
     test('a mistyped tail is a format error', () {
       for (final bad in [
         '{"version":0,"llm":"a","llm_fallback":"b"}',

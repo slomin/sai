@@ -331,7 +331,7 @@ class ChatNotifier extends Notifier<ChatState> {
       call = await recorder.start(
         provider,
         assembled.request,
-        skipped: resolution.skipped,
+        resolution: resolution,
       );
     } on Object catch (error) {
       if (current()) {
@@ -446,7 +446,7 @@ class ChatNotifier extends Notifier<ChatState> {
                 prep: prep,
                 current: current,
                 triggerRefs: [?turn.event],
-                skipped: resolution.skipped,
+                resolution: resolution,
               );
         if (!current()) return true;
         final turns = [...state.turns];
@@ -545,7 +545,7 @@ class ChatNotifier extends Notifier<ChatState> {
       prep: prep,
       current: current,
       triggerRefs: [said.id],
-      skipped: resolution.skipped,
+      resolution: resolution,
     );
     if (!current()) return true;
     _set(
@@ -603,7 +603,7 @@ class ChatNotifier extends Notifier<ChatState> {
     required _ProposalPrep prep,
     required bool Function() current,
     required List<BlobRef> triggerRefs,
-    List<SkippedProvider> skipped = const [],
+    LlmResolution? resolution,
   }) async {
     final container = ref.container;
     final assembled = prep.assembled!;
@@ -620,7 +620,7 @@ class ChatNotifier extends Notifier<ChatState> {
       call = await recorder.start(
         provider,
         assembled.request,
-        skipped: skipped,
+        resolution: resolution,
       );
     } on Object catch (error) {
       return ProposalRefused('the call could not start: $error');

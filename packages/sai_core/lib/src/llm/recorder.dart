@@ -87,18 +87,29 @@ final class LlmRecorder {
   /// recorded. Returns once the request line is in the archive — a crash
   /// after that still leaves the request on record.
   ///
-  /// [skipped] is what the resolver walked past, in order; empty — the
-  /// default — means the first choice answered and no fallback line is
-  /// written. A caller that names a provider itself (the Providers page's
-  /// Test) passes none: it is testing that provider, not the order.
+  /// [resolution] is the whole answer the resolver gave — the first
+  /// choice, what answered and what was passed over — so the line can
+  /// never pair one walk's skips with another's provider; a resolution
+  /// whose answer *is* the first choice writes no line. A caller that
+  /// names a provider itself (the Providers page's Test) passes none: it
+  /// is testing that provider, not the order.
   ///
   /// Throws [ArgumentError], before the provider is touched, when the
-  /// request is too large to record: what cannot be recorded is not sent.
+  /// request is too large to record: what cannot be recorded is not sent,
+  /// and [StateError] when [resolution] did not resolve to [provider].
   Future<RecordedCall> start(
     LlmProvider provider,
     LlmRequest request, {
-    List<SkippedProvider> skipped = const [],
+    LlmResolution? resolution,
   }) async {
+    if (resolution != null &&
+        resolution.provider != null &&
+        !identical(resolution.provider, provider)) {
+      throw StateError(
+        'the resolution answers with ${resolution.provider!.id}, '
+        'but the call goes to ${provider.id}',
+      );
+    }
     final decision = policy().decide(provider.privacy, request);
     // Local goes untouched; a cloud request is governed even when there
     // is nothing to withhold — task-bearing history follows the switch,
@@ -127,17 +138,13 @@ final class LlmRecorder {
     // any two of them leaves the policy's word on record, and the request
     // refers back to both.
     BlobRef? fell;
-    if (skipped.isNotEmpty) {
+    if (resolution != null && resolution.isFallback) {
       final stored = await archive.append(
         EventDraft(
           type: EventTypes.policyFallback,
           actor: Actor.system,
           source: source,
-          payload: {
-            'first': skipped.first.id,
-            'chosen': provider.id,
-            'skipped': [for (final skip in skipped) skip.toJson()],
-          },
+          payload: fallbackPayload(resolution),
           model: target,
         ),
       );

@@ -144,13 +144,24 @@ void main() {
   });
 
   group('the fallback line (#62)', () {
-    const skipped = [
-      SkippedProvider('lan', SkipReason.unreachable, detail: 'timeout'),
-      SkippedProvider('openrouter', SkipReason.cloudDisallowed),
-    ];
+    /// A resolution that fell through `lan` and `openrouter` to reach
+    /// [answered].
+    LlmResolution fellTo(LlmProvider answered) => LlmResolution(
+      provider: answered,
+      first: 'lan',
+      skipped: const [
+        SkippedProvider('lan', SkipReason.unreachable, detail: 'timeout'),
+        SkippedProvider('openrouter', SkipReason.cloudDisallowed),
+      ],
+    );
 
     test('a call that went to the first choice writes none', () async {
-      final call = await recorder.start(FakeLlmProvider(), ask('hi'));
+      final first = FakeLlmProvider();
+      final call = await recorder.start(
+        first,
+        ask('hi'),
+        resolution: LlmResolution(provider: first, first: first.id),
+      );
       await call.done;
       expect(call.fallback, isNull);
       final log = lines();
@@ -163,10 +174,11 @@ void main() {
     });
 
     test('a call that fell through writes one, before the request', () async {
+      final local = FakeLlmProvider(id: 'local');
       final call = await recorder.start(
-        FakeLlmProvider(id: 'local'),
+        local,
         ask('hi'),
-        skipped: skipped,
+        resolution: fellTo(local),
       );
       expect(call.fallback, isNotNull);
       await call.done;
@@ -194,10 +206,15 @@ void main() {
 
     test('a cloud call that fell through names both lines', () async {
       policy = const PrivacyPolicy(shareTasksWithCloud: true);
+      final cloudy = FakeLlmProvider(id: 'cloudy', privacy: LlmPrivacy.cloud);
       final call = await recorder.start(
-        FakeLlmProvider(id: 'cloudy', privacy: LlmPrivacy.cloud),
+        cloudy,
         ask('hi'),
-        skipped: const [SkippedProvider('lan', SkipReason.unreachable)],
+        resolution: LlmResolution(
+          provider: cloudy,
+          first: 'lan',
+          skipped: const [SkippedProvider('lan', SkipReason.unreachable)],
+        ),
       );
       await call.done;
       final log = lines();
@@ -222,16 +239,33 @@ void main() {
     });
 
     test('a request too large to record writes no fallback line', () async {
+      final local = FakeLlmProvider(id: 'local');
       expect(
         () => recorder.start(
-          FakeLlmProvider(),
+          local,
           LlmRequest(messages: [LlmMessage(LlmRole.user, 'x' * 600 * 1024)]),
-          skipped: skipped,
+          resolution: fellTo(local),
         ),
         throwsArgumentError,
       );
       expect(lines(), isEmpty);
     });
+
+    test(
+      'a resolution that answers with another provider is refused',
+      () async {
+        final local = FakeLlmProvider(id: 'local');
+        expect(
+          () => recorder.start(
+            FakeLlmProvider(id: 'other'),
+            ask('hi'),
+            resolution: fellTo(local),
+          ),
+          throwsStateError,
+        );
+        expect(lines(), isEmpty);
+      },
+    );
   });
 
   group('the privacy policy (#27)', () {

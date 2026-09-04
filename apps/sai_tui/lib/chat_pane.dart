@@ -51,7 +51,7 @@ class ChatPane extends StatelessComponent {
             style: TextStyle(color: Colors.gray),
           ),
         Text(
-          'sai${state.tasksWithheld ? ' · $tasksWithheldWord' : ''} › '
+          'sai${state.tasksWithheld ? tasksWithheldSuffix : ''} › '
           '${state.streaming!.isEmpty ? (state.phase == ChatPhase.proposing
                     ? proposingWord
                     : state.reasoning == null

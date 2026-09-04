@@ -303,7 +303,7 @@ class AppCommands {
   }) {
     // An OpenAI kind carries its own effort (#26): the chord opens the
     // provider's setting instead of flipping a switch that is not its.
-    if (container.read(firstChoiceLlmProvider) is ConfiguredEffort) {
+    if (container.read(effortOwnerLlmProvider) is ConfiguredEffort) {
       openProviders();
       return;
     }

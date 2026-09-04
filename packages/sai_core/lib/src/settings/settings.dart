@@ -309,14 +309,23 @@ final class Settings {
         'llm_fallback must be a list of non-empty strings',
       );
     }
-    // Normalised as read: a tail entry repeating the head or itself says
-    // nothing, and a tail without a head is not an order at all — an
-    // older sai reading `llm` alone sees the same nothing. Being a known
-    // key, what is dropped is not written again.
+    // Normalised as read: an entry that is not a provider id at all says
+    // nothing (and would split the order's key, which joins ids with the
+    // space their form cannot hold), a tail entry repeating the head or
+    // itself says nothing, and a tail without a head is not an order —
+    // an older sai reading `llm` alone sees the same nothing. Being
+    // known keys, what is dropped is not written again.
+    final head = llm is String && ProviderConfig.idForm.hasMatch(llm)
+        ? llm
+        : null;
     final tail = <String>[];
-    if (llm != null) {
+    if (head != null) {
       for (final id in fallback as List? ?? const []) {
-        if (id != llm && !tail.contains(id)) tail.add(id as String);
+        if (id != head &&
+            !tail.contains(id) &&
+            ProviderConfig.idForm.hasMatch(id as String)) {
+          tail.add(id);
+        }
       }
     }
     rejectSecretLike(json, where: 'settings');
@@ -351,7 +360,7 @@ final class Settings {
       }
     }
     return Settings(
-      llm: llm as String?,
+      llm: head,
       llmFallback: List.unmodifiable(tail),
       providers: providers,
       shareTasksWithCloud: share as bool? ?? false,

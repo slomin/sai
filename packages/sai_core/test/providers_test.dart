@@ -2357,6 +2357,37 @@ void main() {
         expect(container.read(chatBudgetProvider).maxTokens, 99999);
       });
 
+      test('the reasoning effort belongs to whatever would carry it', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        expect(container.read(effortOwnerLlmProvider), isNull);
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'openai',
+            kind: openAiKind,
+            defaultModel: 'gpt-5.6-sol',
+            credential: 'provider:openai',
+            reasoningEffort: 'high',
+          ),
+        );
+        settings.setLlmOrder(['openai']);
+        // Nothing answers — cloud, and no key — so the menu still reaches
+        // the first choice's own setting.
+        expect(container.read(activeLlmProvider), isNull);
+        expect(container.read(effortOwnerLlmProvider)?.id, 'openai');
+        // With something behind it the order falls through to a provider
+        // that has no effort of its own: the switch governs the next
+        // request, so the menu must offer the switch.
+        settings.setLlmOrder(['openai', 'fake']);
+        expect(container.read(activeLlmProvider)?.id, 'fake');
+        expect(container.read(effortOwnerLlmProvider)?.id, 'fake');
+        // Once it can answer, its own effort is the one that travels.
+        container.read(credentialsProvider.notifier).set('openai', 'k');
+        settings.setShareTasksWithCloud(true);
+        expect(container.read(activeLlmProvider)?.id, 'openai');
+        expect(container.read(effortOwnerLlmProvider)?.id, 'openai');
+      });
+
       test('the status line names the answer and what it passed over', () {
         final container = make();
         final settings = container.read(settingsProvider.notifier);

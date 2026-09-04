@@ -756,7 +756,7 @@ Future<int> runCli(
         };
         container.read(settingsProvider.notifier).setReasoning(show);
         out.writeln(reasoningLine(container.read(reasoningProvider)));
-        final active = container.read(firstChoiceLlmProvider);
+        final active = container.read(effortOwnerLlmProvider);
         if (active != null && active is ConfiguredEffort) {
           out.writeln(
             '${active.id} carries its own reasoning effort; the switch is '

@@ -821,6 +821,14 @@ final firstChoiceLlmProvider = Provider<LlmProvider?>((ref) {
   return ref.watch(llmRegistryProvider)[order.first];
 });
 
+/// Whose reasoning effort the next request would carry (#26, #62): the
+/// provider that answers, or — while nothing does — the first choice, so
+/// an OpenAI kind's own setting stays reachable from the menu even when
+/// the order cannot reach the provider itself.
+final effortOwnerLlmProvider = Provider<LlmProvider?>(
+  (ref) => ref.watch(activeLlmProvider) ?? ref.watch(firstChoiceLlmProvider),
+);
+
 /// The warning both clients show for the first choice — a cloud one
 /// while sharing is off, which the order passes over entirely (#62) — or
 /// null when there is nothing to say. The first choice, not the answer:
@@ -858,9 +866,9 @@ final llmStatusProvider = Provider<String>((ref) {
         CredentialStatus.none || CredentialStatus.set => '',
       };
   if (resolution.provider case final active?) {
-    return llmStatusLine(active, policy: policy) +
-        fallbackSuffix(resolution) +
-        credential(active.id);
+    // No credential suffix: a provider whose key cannot be used is
+    // passed over, so the one that answers never has one to report.
+    return llmStatusLine(active, policy: policy) + fallbackSuffix(resolution);
   }
   final id = order.first;
   final built = ref.watch(llmRegistryProvider)[id];
@@ -1406,7 +1414,11 @@ class CacheWarmer extends Notifier<WarmState> {
     }
 
     if (!ref.watch(warmEnabledProvider)) return stopped();
-    final provider = ref.watch(activeLlmProvider);
+    // The whole resolution, not just its answer: the warm records what
+    // the order passed over, and the two must belong to the same walk
+    // even though the call itself starts after an await (#62).
+    final resolution = ref.watch(llmResolutionProvider);
+    final provider = resolution.provider;
     if (provider == null ||
         provider.privacy != LlmPrivacy.local ||
         provider is! LlmEndpointProbe) {
@@ -1467,7 +1479,10 @@ class CacheWarmer extends Notifier<WarmState> {
     final debounce = ref.watch(warmDebounceProvider);
     if (debounce == null) return const WarmState(WarmPhase.idle);
     final epoch = _epoch;
-    _debounce = Timer(debounce, () => _warm(epoch, provider, request, key));
+    _debounce = Timer(
+      debounce,
+      () => _warm(epoch, provider, request, key, resolution),
+    );
     return const WarmState(WarmPhase.idle);
   }
 
@@ -1476,6 +1491,7 @@ class CacheWarmer extends Notifier<WarmState> {
     LlmProvider provider,
     LlmRequest request,
     (String, ReasoningEffort?) key,
+    LlmResolution resolution,
   ) async {
     if (epoch != _epoch || !ref.mounted) return;
     final container = ref.container;
@@ -1504,11 +1520,13 @@ class CacheWarmer extends Notifier<WarmState> {
       final recorder = await container.read(llmRecorderProvider.future);
       if (epoch != _epoch || !ref.mounted) return;
       // A warm is a request like any other: it goes to the provider the
-      // order resolved to, and says what it passed over (#62).
+      // order resolved to, and says what that walk passed over (#62) —
+      // the resolution this warm was scheduled for, not whichever one
+      // stands now.
       final call = await recorder.start(
         provider,
         request,
-        skipped: container.read(llmResolutionProvider).skipped,
+        resolution: resolution,
       );
       if (epoch != _epoch || !ref.mounted) {
         call.cancel();

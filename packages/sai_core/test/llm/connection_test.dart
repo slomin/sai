@@ -188,7 +188,6 @@ void main() {
         final head = _Probed(down, id: 'head');
         final tail = _Probed(ok, id: 'tail');
         final c = walking([head, tail], ['head', 'tail']);
-        addTearDown(c.dispose);
         async.flushMicrotasks();
         expect(c.read(activeLlmProvider)?.id, 'tail');
         head.answer = ok;

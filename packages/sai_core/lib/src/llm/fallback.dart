@@ -172,7 +172,8 @@ final class LlmCandidates {
 }
 
 /// The `policy.fallback` payload for [resolution] — written only when
-/// something was skipped, so [LlmResolution.provider] is never null here.
+/// the answer did not come from the first choice, so neither
+/// [LlmResolution.provider] nor [LlmResolution.first] is null here.
 Map<String, Object?> fallbackPayload(LlmResolution resolution) => {
   'first': resolution.first,
   'chosen': resolution.provider!.id,
