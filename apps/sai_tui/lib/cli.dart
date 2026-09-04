@@ -15,6 +15,9 @@ usage: sai_tui                       open the terminal client
                                     [--effort default|<word>]
        sai_tui provider remove <id>
        sai_tui provider use <id|none>
+                                    put a provider first in the order
+       sai_tui provider order [<id> ...]
+                                    show or set the fallback order
        sai_tui provider login <id> [--device-code]
                                     sign in to ChatGPT (chatgpt_subscription)
        sai_tui provider account <id> who is signed in, and the plan's usage
@@ -176,9 +179,19 @@ Future<int> runCli(
           err.writeln('$program: ${settings.problem}');
         }
         final registry = container.read(llmRegistryProvider);
+        final order = container.read(llmOrderProvider);
+        final resolution = container.read(llmResolutionProvider);
+        // Where an id stands in the preference order, and whether it is
+        // the one answering (#62): `1*` is a first choice that answers.
+        String markFor(String id) {
+          final at = order.indexOf(id);
+          return '${at < 0 ? ' ' : at + 1}'
+              '${resolution.provider?.id == id ? '*' : ' '}';
+        }
+
         for (final provider in registry.values) {
           final config = settings.provider(provider.id);
-          final mark = settings.llm == provider.id ? '*' : ' ';
+          final mark = markFor(provider.id);
           final key = credentialSuffix(
             container.read(credentialStatusProvider(provider.id)),
             config,
@@ -213,14 +226,23 @@ Future<int> runCli(
         final misconfigured = container.read(misconfiguredLlmsProvider);
         for (final config in settings.providers) {
           if (registry.containsKey(config.id)) continue;
-          final mark = settings.llm == config.id ? '*' : ' ';
+          final mark = markFor(config.id);
           final why = misconfigured[config.id];
           out.writeln(
             '$mark ${config.id}  ${config.kind}  — '
             '${why == null ? 'kind not available in this build' : misconfiguredNote(why)}',
           );
         }
-        if (settings.llm == null) out.writeln('  (no provider selected)');
+        if (order.isEmpty) {
+          out.writeln('   (no provider selected)');
+        } else if (resolution.provider == null) {
+          out.writeln('   ${noEligibleProviderError(resolution.skipped)}');
+        } else if (resolution.isFallback) {
+          out.writeln(
+            '   answering: ${resolution.provider!.id}'
+            '${fallbackSuffix(resolution)}',
+          );
+        }
         return cliOk;
 
       case ['provider', 'add', final id, ...final rest]:
@@ -674,10 +696,36 @@ Future<int> runCli(
         }
         notifier.selectLlm(id);
         out.writeln(container.read(llmStatusProvider));
+        // Only when there is a chain to say: a single choice prints the
+        // one line it always did.
+        if (container.read(llmOrderProvider).length > 1) {
+          out.writeln(_orderLine(container));
+        }
         final warning = container.read(activeLlmWarningProvider);
         if (warning != null) {
           out.writeln('$warning: $program privacy share-tasks on');
         }
+        return cliOk;
+
+      case ['provider', 'order']:
+        out.writeln(_orderLine(container));
+        return cliOk;
+
+      case ['provider', 'order', ...final ids]:
+        final registry = container.read(llmRegistryProvider);
+        final seen = <String>{};
+        for (final id in ids) {
+          if (!registry.containsKey(id)) {
+            err.writeln("$program: provider '$id' is not available");
+            return cliFailed;
+          }
+          if (!seen.add(id)) {
+            throw _Usage('provider order names $id twice');
+          }
+        }
+        container.read(settingsProvider.notifier).setLlmOrder(ids);
+        out.writeln(_orderLine(container));
+        out.writeln(container.read(llmStatusProvider));
         return cliOk;
 
       case ['privacy']:
@@ -708,7 +756,7 @@ Future<int> runCli(
         };
         container.read(settingsProvider.notifier).setReasoning(show);
         out.writeln(reasoningLine(container.read(reasoningProvider)));
-        final active = container.read(activeLlmProvider);
+        final active = container.read(firstChoiceLlmProvider);
         if (active != null && active is ConfiguredEffort) {
           out.writeln(
             '${active.id} carries its own reasoning effort; the switch is '
@@ -1020,6 +1068,12 @@ String _planLine(CodexRateLimits limits) {
   ];
   if (parts.isEmpty) return 'plan usage: not reported';
   return '${parts.join(' · ')}${limits.limitReached ? ' · limit reached' : ''}';
+}
+
+/// The preference order as one line (#62): what is tried, in order.
+String _orderLine(ProviderContainer container) {
+  final order = container.read(llmOrderProvider);
+  return order.isEmpty ? 'order: none' : 'order: ${order.join(', ')}';
 }
 
 final class _Usage implements Exception {

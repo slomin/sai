@@ -95,7 +95,7 @@ void main() {
     }, size: size);
   });
 
-  test('the footer says when the cloud provider gets no tasks', () async {
+  test('the footer says when a cloud provider is passed over', () async {
     await testNocterm('privacy footer', (tester) async {
       final container = await pumpTui(tester);
       final settings = container.read(settingsProvider.notifier);
@@ -103,11 +103,14 @@ void main() {
         ProviderConfig(id: 'cloudy', kind: 'fake', privacy: LlmPrivacy.cloud),
       );
       settings.selectLlm('cloudy');
-      await pumpUntilText(tester, 'cloudy (fake-1) — cloud · tasks withheld');
+      await pumpUntilText(
+        tester,
+        'cloudy (fake-1) — cloud · cloud not allowed',
+      );
       settings.setShareTasksWithCloud(true);
       await pumpUntilText(tester, 'cloudy (fake-1) — cloud');
       await tester.pump(const Duration(milliseconds: 20));
-      expect(tester.terminalState, isNot(containsText('tasks withheld')));
+      expect(tester.terminalState, isNot(containsText('cloud not allowed')));
     }, size: size);
   });
 
@@ -955,27 +958,31 @@ void main() {
       }, size: big);
     });
 
-    test(
-      'a cloud provider with sharing off says the tasks are withheld',
-      () async {
-        await testNocterm('withheld', (tester) async {
-          await pumpChat(
-            tester,
-            FakeLlmProvider(
-              id: 'cloudy',
-              privacy: LlmPrivacy.cloud,
-              script: (r) => r.messages.any((m) => m.text.contains('Call mom'))
-                  ? 'saw it'
-                  : 'blind',
-            ),
-            select: 'cloudy',
-          );
-          await pumpUntilText(tester, tasksWithheldSuffix);
-          await ask(tester, 'due?');
-          await pumpUntilText(tester, 'sai · tasks withheld › blind');
-        }, size: big);
-      },
-    );
+    test('a cloud provider with sharing off is passed over, and answers once '
+        'it is on', () async {
+      await testNocterm('cloud gate', (tester) async {
+        final container = await pumpChat(
+          tester,
+          FakeLlmProvider(
+            id: 'cloudy',
+            privacy: LlmPrivacy.cloud,
+            script: (r) => r.messages.any((m) => m.text.contains('Call mom'))
+                ? 'saw it'
+                : 'blind',
+          ),
+          select: 'cloudy',
+        );
+        await pumpUntilText(tester, cloudSkippedSuffix);
+        await ask(tester, 'due?');
+        await pumpUntilText(
+          tester,
+          'no provider can answer — cloudy cloud not allowed',
+        );
+        container.read(settingsProvider.notifier).setShareTasksWithCloud(true);
+        await ask(tester, 'due?');
+        await pumpUntilText(tester, 'saw it');
+      }, size: big);
+    });
 
     test('without a provider the send is refused and the line kept', () async {
       await testNocterm('no provider', (tester) async {
