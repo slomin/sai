@@ -100,6 +100,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     group: 'llm-order',
     onDrop: _moveAfter,
     refusal: 'only providers reorder here',
+    onRefused: (reason) => ref.read(noticeProvider.notifier).show(reason),
   );
 
   RecordedCall? _test;
@@ -128,18 +129,22 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     final settings = ref.watch(settingsProvider);
     final registry = ref.watch(llmRegistryProvider);
     final misconfigured = ref.watch(misconfiguredLlmsProvider);
+    final llmOrder = ref.watch(llmOrderProvider);
     final ids = [
       ...registry.keys,
       for (final p in settings.providers)
         if (!registry.containsKey(p.id)) p.id,
+      // An id the order names that nothing here can offer — a file from
+      // a build with one more built-in, say. Shown, or the arrows and ✕
+      // would move and hide an entry the page never draws.
+      for (final id in llmOrder)
+        if (registry[id] == null && settings.provider(id) == null) id,
     ];
     // The preference order first, in its own order, then everything else
     // (#62): the order is what a person arranges, the rest is what they
-    // may put into it.
-    final order = [
-      for (final id in ref.watch(llmOrderProvider))
-        if (ids.contains(id)) id,
-    ];
+    // may put into it. Every entry is drawn, so what the controls move is
+    // what the page shows.
+    final order = llmOrder;
     final rest = [
       for (final id in ids)
         if (!order.contains(id)) id,
@@ -207,16 +212,15 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
                   verdict: _verdictFor(id, resolution, health, registry[id]),
                 ),
               ),
-            if (rest.isNotEmpty)
-              for (final id in rest)
-                _row(
-                  id,
-                  config: settings.provider(id),
-                  provider: registry[id],
-                  missing: misconfigured[id],
-                  answering: false,
-                  selected: selected == id,
-                ),
+            for (final id in rest)
+              _row(
+                id,
+                config: settings.provider(id),
+                provider: registry[id],
+                missing: misconfigured[id],
+                answering: false,
+                selected: selected == id,
+              ),
             SwitchListTile(
               key: shareTasksSwitchKey,
               dense: true,
@@ -281,14 +285,17 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     for (final skip in resolution.skipped) {
       if (skip.id == id) return skip.word;
     }
-    if (resolution.provider?.id != id) return 'not asked';
     return switch (health[id]?.health) {
       EndpointHealth.ok => 'ready',
       EndpointHealth.loading => 'loading',
       EndpointHealth.unavailable =>
         health[id]?.failure?.kind.name ?? 'unavailable',
+      // Nothing filed: it answers by construction, or it stands behind
+      // the entry that did and the walk never reached it.
       null || EndpointHealth.unknown =>
-        provider is LlmEndpointProbe ? 'answering' : 'ready',
+        resolution.provider?.id == id
+            ? (provider is LlmEndpointProbe ? 'answering' : 'ready')
+            : 'not asked',
     };
   }
 
@@ -321,9 +328,12 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     };
     final where = verdict == null ? '' : ' · $verdict';
     final subtitle = provider == null
-        ? (missing == null
-              ? "kind '${config?.kind}' is not available in this build"
-              : misconfiguredNote(missing))
+        ? (missing != null
+              ? misconfiguredNote(missing)
+              : config == null
+              // An id only the order names: nothing here configures it.
+              ? 'not available in this build$where'
+              : "kind '${config.kind}' is not available in this build")
         : '${provider.defaultModel} — ${provider.privacy.name}$billing$routing$key$where';
     final first = place == 1;
     return ListTile(

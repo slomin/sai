@@ -420,6 +420,28 @@ void main() {
       expect(find.byKey(providerDropKey('a')), findsNothing);
     });
 
+    testWidgets('an id only the order names is still shown and removable', (
+      tester,
+    ) async {
+      // A settings file from a build with one more provider: `ghost` is
+      // in the order and nothing here can offer it. Drawn all the same,
+      // or the arrows would move an entry the page never shows.
+      final container = await pumpApp(tester);
+      container.read(settingsProvider.notifier).setLlmOrder(['ghost', 'fake']);
+      await tester.pump();
+      await open(tester);
+      expect(find.text('1. ghost'), findsOneWidget);
+      expect(find.textContaining('not available in this build'), findsWidgets);
+      // Moving the shown head moves the shown head, not a hidden entry.
+      await tester.tap(find.byKey(providerDownKey('ghost')));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['fake', 'ghost']);
+      await tester.tap(find.byKey(providerDropKey('ghost')));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['fake']);
+      expect(find.byKey(providerRowKey('ghost')), findsNothing);
+    });
+
     testWidgets('a handle drags a row to another place', (tester) async {
       final container = await withOrder(
         tester,
