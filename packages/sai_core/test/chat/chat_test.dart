@@ -412,6 +412,98 @@ void main() {
     );
   });
 
+  group('falling through the order (#62)', () {
+    /// A provider that names a key nothing holds, so the order passes it
+    /// over without asking any endpoint.
+    ProviderConfig keyless(String id) =>
+        ProviderConfig(id: id, kind: 'fake', credential: 'provider:$id');
+
+    test('the answer comes from the next entry, and says what it passed '
+        'over', () async {
+      final container = await make();
+      final settings = container.read(settingsProvider.notifier);
+      settings.upsertProvider(keyless('keyed'));
+      settings.setLlmOrder(['keyed', 'fake']);
+      expect(await container.read(chatProvider.notifier).send('due?'), isTrue);
+      final answer = container.read(chatProvider).turns.last;
+      // A local provider answered, so the shape is the catalog (#105).
+      expect(answer.provenance, TaskProvenance.catalog);
+      expect(answer.text, contains('Call mom'));
+      final log = lines().where((l) => l['type'] != 'task.create').toList();
+      expect(log.map((l) => l['type']), [
+        'chat.message',
+        'policy.fallback',
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+        'chat.message',
+      ]);
+      final fallback = log[1];
+      expect(fallback['payload'], {
+        'first': 'keyed',
+        'chosen': 'fake',
+        'skipped': [
+          {'provider': 'keyed', 'reason': 'no_key', 'detail': 'no key'},
+        ],
+      });
+      expect(fallback['model'], {'provider': 'fake', 'id': 'fake-1'});
+      // The request names it; the linkage itself is pinned in
+      // `recorder_test`.
+      expect(log[2]['refs'], hasLength(1));
+    });
+
+    test('the shape follows the provider that answered, not the first '
+        'choice', () async {
+      final cloudy = FakeLlmProvider(
+        id: 'cloudy',
+        privacy: LlmPrivacy.cloud,
+        script: echo,
+      );
+      final container = await make(extraLlms: [cloudy]);
+      final settings = container.read(settingsProvider.notifier);
+      settings.setShareTasksWithCloud(true);
+      settings.upsertProvider(keyless('keyed'));
+      settings.setLlmOrder(['keyed', 'cloudy']);
+      expect(container.read(activeLlmProvider)?.id, 'cloudy');
+      await container.read(chatProvider.notifier).send('due?');
+      final answer = container.read(chatProvider).turns.last;
+      // The cloud provider answered, so it saw the compact lists only.
+      expect(answer.provenance, TaskProvenance.compact);
+      expect(answer.text, isNot(contains('TASK CATALOG')));
+      expect(answer.text, contains('Call mom @today'));
+      final types = lines()
+          .map((l) => l['type'])
+          .where((t) => t != 'task.create');
+      expect(types, [
+        'chat.message',
+        'policy.fallback',
+        'policy.decision',
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+        'chat.message',
+      ]);
+    });
+
+    test('nothing eligible refuses the send and writes nothing', () async {
+      final container = await make();
+      final settings = container.read(settingsProvider.notifier);
+      settings.upsertProvider(keyless('keyed'));
+      settings.upsertProvider(
+        ProviderConfig(id: 'cloudy', kind: 'fake', privacy: LlmPrivacy.cloud),
+      );
+      settings.setLlmOrder(['keyed', 'cloudy', 'gone']);
+      expect(await container.read(chatProvider.notifier).send('due?'), isFalse);
+      expect(
+        container.read(chatProvider).error,
+        'no provider can answer — keyed no key, cloudy cloud not allowed, '
+        'gone not available',
+      );
+      expect(container.read(chatProvider).turns, isEmpty);
+      expect(lines().where((l) => l['type'] != 'task.create'), isEmpty);
+    });
+  });
+
   group('with a cloud provider', () {
     setUp(() {
       fake = FakeLlmProvider(
@@ -421,42 +513,45 @@ void main() {
       );
     });
 
-    test('sharing off withholds the list and says so', () async {
+    test('sharing off passes it over and nothing is sent or written', () async {
       final container = await make();
       container.read(settingsProvider.notifier).selectLlm('cloudy');
-      await container.read(chatProvider.notifier).send('due?');
+      // The order ends at the last local one (#62); with nothing behind
+      // it, the send is refused before a word is written.
+      expect(await container.read(chatProvider.notifier).send('due?'), isFalse);
       final state = container.read(chatProvider);
-      final answer = state.turns.last;
-      expect(answer.tasksWithheld, isTrue);
-      expect(answer.text, isNot(contains('Call mom')));
-      expect(answer.text, contains('system:$defaultProfile'));
+      expect(state.turns, isEmpty);
+      expect(state.error, 'no provider can answer — cloudy cloud not allowed');
       final types = lines()
           .map((l) => l['type'])
           .where((t) => t != 'task.create');
-      expect(types.first, 'chat.message');
-      expect(types.elementAt(1), 'policy.decision');
-      expect(jsonEncode(lines()), isNot(contains('Call mom @today')));
+      expect(types, isEmpty);
     });
 
-    test('the withheld flag does not leak into the next turn', () async {
-      final container = await make();
-      final settings = container.read(settingsProvider.notifier);
-      settings.selectLlm('cloudy');
-      final chat = container.read(chatProvider.notifier);
-      await chat.send('due?');
-      expect(container.read(chatProvider).tasksWithheld, isTrue);
-      settings.setShareTasksWithCloud(true);
-      final next = chat.send('and now?');
-      // Busy already, before any await — and not claiming a withheld list.
-      expect(container.read(chatProvider).busy, isTrue);
-      expect(container.read(chatProvider).tasksWithheld, isFalse);
-      await next;
-      expect(container.read(chatProvider).turns.last.tasksWithheld, isFalse);
-    });
+    test(
+      'turning sharing on lets it answer, from the same conversation',
+      () async {
+        final container = await make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.selectLlm('cloudy');
+        final chat = container.read(chatProvider.notifier);
+        expect(await chat.send('due?'), isFalse);
+        settings.setShareTasksWithCloud(true);
+        final next = chat.send('and now?');
+        // Busy already, before any await — and not claiming a withheld list.
+        expect(container.read(chatProvider).busy, isTrue);
+        expect(container.read(chatProvider).tasksWithheld, isFalse);
+        await next;
+        final answer = container.read(chatProvider).turns.last;
+        expect(answer.tasksWithheld, isFalse);
+        expect(answer.text, contains('Call mom @today'));
+      },
+    );
 
-    test('an answer that saw the list stays out of a withheld call', () async {
-      // Turn 1 on the local fake quotes the list; turn 2 goes to the
-      // cloud fake with sharing off and must not carry that answer.
+    test('an answer that saw the catalog stays out of a cloud call', () async {
+      // Turn 1 on the local fake quotes the catalog; turn 2 goes to the
+      // cloud fake — sharing on, since nothing else may — and must not
+      // carry that answer (#105).
       final local = FakeLlmProvider(id: 'homely', script: echo);
       final container = await make(extraLlms: [local]);
       final settings = container.read(settingsProvider.notifier);
@@ -465,37 +560,22 @@ void main() {
       await chat.send('due?');
       expect(
         container.read(chatProvider).turns.last.provenance,
-        isNot(TaskProvenance.none),
+        TaskProvenance.catalog,
       );
       expect(
         container.read(chatProvider).turns.last.text,
         contains('Call mom'),
       );
+      settings.setShareTasksWithCloud(true);
       settings.selectLlm('cloudy');
       await chat.send('and then?');
       final answer = container.read(chatProvider).turns.last;
-      expect(answer.tasksWithheld, isTrue);
-      // The catalog answer's question goes with it — the withheld
+      expect(answer.provenance, TaskProvenance.compact);
+      // The catalog answer's question goes with it — the governed
       // request keeps its roles alternating.
       expect(answer.text, isNot(contains('user:due?')));
       expect(answer.text, contains('user:and then?'));
-      expect(answer.text, isNot(contains('Call mom')));
-      expect(
-        jsonEncode(lines()).split('Call mom @today').length - 1,
-        3,
-        reason:
-            'the first request, its response and its chat line — '
-            'nothing of the second call',
-      );
-      // Sharing on covers the compact lists only: the first answer saw
-      // the catalog, so it stays out of the history even now (#105) —
-      // the withheld second answer, which saw nothing, may return.
-      settings.setShareTasksWithCloud(true);
-      await chat.send('again?');
-      final again = container.read(chatProvider).turns.last.text;
-      expect(again, isNot(contains('user:due?')));
-      expect(again, contains('user:and then?'));
-      expect(again, isNot(contains('TASK CATALOG')));
+      expect(answer.text, isNot(contains('TASK CATALOG')));
     });
 
     test('sharing on sends it', () async {
@@ -604,8 +684,18 @@ void main() {
       final container = await make(
         extraLlms: [FakeLlmProvider(id: 'cloudy', privacy: LlmPrivacy.cloud)],
       );
-      container.read(settingsProvider.notifier).selectLlm('cloudy');
-      expect(await container.read(chatProvider.notifier).propose('x'), isFalse);
+      final settings = container.read(settingsProvider.notifier);
+      settings.selectLlm('cloudy');
+      final chat = container.read(chatProvider.notifier);
+      // While sharing is off the order does not reach it at all (#62).
+      expect(await chat.propose('x'), isFalse);
+      expect(
+        container.read(chatProvider).error,
+        'no provider can answer — cloudy cloud not allowed',
+      );
+      // With sharing on it answers chat, but never a proposal.
+      settings.setShareTasksWithCloud(true);
+      expect(await chat.propose('x'), isFalse);
       expect(container.read(chatProvider).error, proposalsNeedLocal);
       expect(lines().where((l) => l['type'] == 'chat.message'), isEmpty);
     });

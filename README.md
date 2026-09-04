@@ -128,7 +128,25 @@ dart run apps/sai_tui/bin/sai_tui.dart secret set box     # hidden prompt
 dart run apps/sai_tui/bin/sai_tui.dart provider add lan --kind openai_compatible \
   --endpoint http://192.168.1.5:8080/v1 --model <model-id>
 dart run apps/sai_tui/bin/sai_tui.dart provider list
+# the fallback order: the first entry that can answer does (#62)
+dart run apps/sai_tui/bin/sai_tui.dart provider order lan local openrouter
+dart run apps/sai_tui/bin/sai_tui.dart provider order
 ```
+
+Providers are tried **in order**. `provider use <id>` sets the first
+entry — an id already in the order moves to the front, a new one takes
+the head's place — and `provider order` sets the whole list; `provider
+list` numbers it and marks the one answering. sai picks the first entry
+that is configured, holds the key it needs, is allowed by the privacy
+switch below, and whose last health probe did not say otherwise; the
+entries behind it are never asked. Health comes from the probe both
+clients already run (never from retrying a chat), refreshed on a timer
+and right after a failed call, so a first choice that comes back is used
+again without a restart. sai never starts, restarts or configures a
+backend. When the answer does not come from the first choice, both
+clients say so — `local · lan unreachable` — and the archive carries a
+`policy.fallback` line naming every entry passed over and why; when
+nothing in the order can answer, the send is refused and says the same.
 
 Five kinds exist: `fake` (offline), `openai_compatible` (any `/v1`
 endpoint: `llama-server`, LM Studio, the LAN server), the two OpenAI
@@ -197,7 +215,11 @@ dev flavor runs no App Server and holds no key. A person runs the cloud
 smoke (`docs/smoke/cloud.md`); an agent never does.
 
 The app reads the same settings and keys: Settings › Providers (⌘,)
-lists every provider, switches the active one in a click, refreshes an endpoint's
+lists the order first — dragged by its handles or moved with the row's
+arrows, ✕ takes an entry out of it — then every other provider below,
+each with a + that puts it at the end of the order;
+each row in the order says what became of it (`ready`, `no key`,
+`unreachable`, `not asked`). It switches the first choice in a click, refreshes an endpoint's
 health, models and context window, runs a recorded streaming test (the
 result and llama.cpp tokens/s land in the archive), suggests the
 OpenRouter models that have a zero-retention endpoint (read once a key
@@ -210,15 +232,18 @@ list only while the switch "Allow cloud providers to see my tasks" is
 on — off by default, in Settings › Providers or `sai_tui privacy
 share-tasks on|off` (`sai_tui privacy` shows it) — and the switch
 covers Today and Upcoming only: the complete catalog a local model
-reads, and answers derived from it, never go to the cloud (#105). While it is off the
-status line reads `· tasks withheld`, selecting a cloud provider says
-so, and the assistant answers without the list; each cloud call is
-preceded by a `policy.decision` line in the archive (ADR 0010). An
+reads, and answers derived from it, never go to the cloud (#105). While
+it is off a cloud provider is **passed over entirely** (#62, ADR 0024):
+the order ends at the last local one, the status line reads `· cloud not
+allowed`, choosing one says it will not be used until sharing is on, and
+with nothing else in the order the send is refused. With it on, each
+cloud call is preceded by a `policy.decision` line in the archive (ADR
+0010). An
 `openai_compatible` endpoint counts as `local` on this machine or the
 LAN and `cloud` on any other host; `--privacy local|cloud` overrides
-that when you know better (a tunnel, a reverse proxy). No cloud kind
-exists yet: to try the policy, give the fake one a tag —
-`provider add cloudy --kind fake --privacy cloud`.
+that when you know better (a tunnel, a reverse proxy). To try the policy
+without a key, give the fake a tag — `provider add cloudy --kind fake
+--privacy cloud`.
 
 For a local test, LM Studio's server (default port 1234) or
 `llama-server -m <model.gguf> --port 8080` work as they are; give
@@ -304,8 +329,9 @@ can withhold them (ADR 0011, 0010); the assistant reads the list and
 cannot change it. Every turn is in the archive — the user's
 `chat.message`, the call's `provider.*` lines with a `context_hash` of
 exactly what the model saw, and the assistant's `chat.message` naming
-the model that answered. With a cloud provider and sharing off, the
-answer is marked `tasks withheld`. A model that
+the model that answered. A cloud provider is not asked at all while
+sharing is off (#62), so a turn either sees the lists its tag allows or
+does not happen. A model that
 thinks before it answers (LM Studio's reasoning models do) is asked not
 to unless the reasoning switch is on — in Settings › Providers, View ›
 **Enable Reasoning** (⌘R), or `sai_tui reasoning on`; off is faster and

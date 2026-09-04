@@ -52,6 +52,12 @@ void main() {
     );
     settings.upsertProvider(entry('high'));
     settings.selectLlm('openai');
+    // It must be the provider that answers for its effort to be the one
+    // the next request carries (#62): a cloud kind needs its key and the
+    // sharing switch.
+    container.read(credentialsProvider.notifier).set('openai', 'k');
+    settings.setShareTasksWithCloud(true);
+    expect(container.read(activeLlmProvider)?.id, 'openai');
     expect(container.read(reasoningShownProvider), isTrue);
     settings.upsertProvider(entry(null));
     expect(

@@ -12,17 +12,17 @@ import 'stub_server.dart';
 /// A provider that answers a scripted probe, so cadence can be tested
 /// under a fake clock without a socket.
 final class _Probed implements LlmProvider, LlmEndpointProbe {
-  _Probed(this.answer);
+  _Probed(this.answer, {this.id = 'probed', this.privacy = LlmPrivacy.local});
 
   EndpointInfo answer;
   var probes = 0;
 
   @override
-  String get id => 'probed';
+  final String id;
   @override
-  String get displayName => 'probed';
+  String get displayName => id;
   @override
-  LlmPrivacy get privacy => LlmPrivacy.local;
+  final LlmPrivacy privacy;
   @override
   String get defaultModel => 'm';
   @override
@@ -88,6 +88,164 @@ void main() {
   );
 
   Future<void> settle() => Future<void>.delayed(Duration.zero);
+
+  group('the walk over the order (#62)', () {
+    const ok = EndpointInfo(health: EndpointHealth.ok);
+    const down = EndpointInfo(
+      health: EndpointHealth.unavailable,
+      failure: LlmFailure(LlmFailureKind.unreachable, 'no'),
+    );
+    const loading = EndpointInfo(health: EndpointHealth.loading);
+
+    /// A container whose order is [ids], over the given probeable
+    /// providers.
+    ProviderContainer walking(List<_Probed> probes, List<String> order) {
+      final c = make(builtins: [for (final probe in probes) () => probe]);
+      addTearDown(c.dispose);
+      c.read(settingsProvider.notifier).setLlmOrder(order);
+      // A client holds the connection for its life, which is what arms
+      // the walk (`bootstrap.dart`, the assistant band).
+      c.listen(connectionProvider, (_, _) {});
+      return c;
+    }
+
+    test(
+      'stops at the first that answers; what is behind it is not asked',
+      () async {
+        final head = _Probed(ok, id: 'head');
+        final tail = _Probed(ok, id: 'tail');
+        final c = walking([head, tail], ['head', 'tail']);
+        await settle();
+        expect(head.probes, 1);
+        expect(tail.probes, 0, reason: 'never reached');
+        expect(
+          c.read(connectionProvider),
+          const ConnectionStatus.ready('ready'),
+        );
+        expect(c.read(activeLlmProvider)?.id, 'head');
+        expect(c.read(llmResolutionProvider).skipped, isEmpty);
+      },
+    );
+
+    test(
+      'files every answer it collects and falls through on a bad head',
+      () async {
+        final head = _Probed(down, id: 'head');
+        final tail = _Probed(ok, id: 'tail');
+        final c = walking([head, tail], ['head', 'tail']);
+        await settle();
+        expect(head.probes, 1);
+        expect(tail.probes, 1);
+        final health = c.read(providerHealthProvider);
+        expect(health['head']?.health, EndpointHealth.unavailable);
+        expect(health['tail']?.health, EndpointHealth.ok);
+        expect(c.read(activeLlmProvider)?.id, 'tail');
+        final resolution = c.read(llmResolutionProvider);
+        expect(resolution.isFallback, isTrue);
+        expect(resolution.skipped.single.id, 'head');
+        expect(
+          c.read(connectionProvider),
+          const ConnectionStatus.ready('ready'),
+        );
+        expect(
+          c.read(llmStatusProvider),
+          'tail (m) — local · head unreachable',
+        );
+      },
+    );
+
+    test('a loading endpoint is passed over and shows amber when it is all '
+        'there is', () async {
+      final head = _Probed(loading, id: 'head');
+      final c = walking([head], ['head']);
+      await settle();
+      expect(c.read(activeLlmProvider), isNull);
+      expect(
+        c.read(connectionProvider),
+        const ConnectionStatus.attention('loading'),
+      );
+    });
+
+    test(
+      'nothing answering is down, with the first choice\'s own reason',
+      () async {
+        final head = _Probed(down, id: 'head');
+        final tail = _Probed(down, id: 'tail');
+        final c = walking([head, tail], ['head', 'tail']);
+        await settle();
+        expect(c.read(activeLlmProvider), isNull);
+        expect(
+          c.read(connectionProvider),
+          const ConnectionStatus.down('unreachable'),
+        );
+        expect(c.read(llmResolutionProvider).skipped, hasLength(2));
+      },
+    );
+
+    test('a recovered first choice takes over on the next tick, with no '
+        'restart', () {
+      fakeAsync((async) {
+        final head = _Probed(down, id: 'head');
+        final tail = _Probed(ok, id: 'tail');
+        final c = walking([head, tail], ['head', 'tail']);
+        async.flushMicrotasks();
+        expect(c.read(activeLlmProvider)?.id, 'tail');
+        head.answer = ok;
+        async.elapse(Connection.probeEvery);
+        async.flushMicrotasks();
+        expect(head.probes, 2, reason: 'the head is asked every time');
+        expect(c.read(activeLlmProvider)?.id, 'head');
+        expect(c.read(llmResolutionProvider).isFallback, isFalse);
+        // The tail is not asked again once the head answers.
+        expect(tail.probes, 1);
+      });
+    });
+
+    test('a failed call walks again at once', () async {
+      final head = _Probed(down, id: 'head');
+      final tail = _Probed(ok, id: 'tail');
+      final c = walking([head, tail], ['head', 'tail']);
+      await settle();
+      expect(head.probes, 1);
+      head.answer = ok;
+      c
+          .read(connectionProvider.notifier)
+          .callFailed(const LlmFailure(LlmFailureKind.timeout, 'slow'));
+      await settle();
+      expect(head.probes, 2);
+      expect(c.read(activeLlmProvider)?.id, 'head');
+    });
+
+    test('an entry the policy passes over is never probed', () async {
+      final cloudy = _Probed(ok, id: 'cloudy', privacy: LlmPrivacy.cloud);
+      final local = _Probed(ok, id: 'local');
+      final c = walking([cloudy, local], ['cloudy', 'local']);
+      await settle();
+      expect(cloudy.probes, 0, reason: 'not a candidate while sharing is off');
+      expect(local.probes, 1);
+      expect(c.read(activeLlmProvider)?.id, 'local');
+      c.read(settingsProvider.notifier).setShareTasksWithCloud(true);
+      await settle();
+      expect(cloudy.probes, 1);
+      expect(c.read(activeLlmProvider)?.id, 'cloudy');
+    });
+
+    test('an unprobeable entry ends the walk and arms no timer', () {
+      fakeAsync((async) {
+        final tail = _Probed(ok, id: 'tail');
+        final c = make(builtins: [FakeLlmProvider.new, () => tail]);
+        addTearDown(c.dispose);
+        c.read(settingsProvider.notifier).setLlmOrder(['fake', 'tail']);
+        expect(
+          c.read(connectionProvider),
+          const ConnectionStatus.ready('ready'),
+        );
+        async.elapse(Connection.probeEvery * 3);
+        expect(tail.probes, 0);
+        expect(c.read(activeLlmProvider)?.id, 'fake');
+      });
+    });
+  });
 
   group('connectionProvider (#40)', () {
     test('no provider is down; the fake is ready without a probe', () async {

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderContainer;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/commands.dart';
+import 'package:sai_app/reorder/drag_handle.dart';
 import 'package:sai_app/settings/providers_page.dart';
 import 'package:sai_app/settings/settings_screen.dart';
 import 'package:sai_core/process_testing.dart';
@@ -304,6 +305,182 @@ void main() {
     expect(tester.widget<TextButton>(use('bare')).onPressed, isNull);
   });
 
+  group('the preference order (#62)', () {
+    ProviderConfig fake(String id) => ProviderConfig(id: id, kind: 'fake');
+
+    Future<ProviderContainer> withOrder(
+      WidgetTester tester,
+      List<String> order, {
+      List<ProviderConfig> configs = const [],
+    }) async {
+      final container = await pumpApp(tester);
+      final settings = container.read(settingsProvider.notifier);
+      for (final config in configs) {
+        settings.upsertProvider(config);
+      }
+      settings.setLlmOrder(order);
+      await tester.pump();
+      await open(tester);
+      return container;
+    }
+
+    testWidgets('the order is numbered, the rest sits below it', (
+      tester,
+    ) async {
+      final container = await withOrder(
+        tester,
+        ['b', 'fake'],
+        configs: [fake('a'), fake('b')],
+      );
+      expect(find.text('2. fake'), findsOneWidget);
+      expect(find.text('1. b'), findsOneWidget);
+      // Configured but not in the order: no place, no order controls.
+      expect(find.text('a'), findsOneWidget);
+      expect(find.byKey(providerUpKey('a')), findsNothing);
+      expect(find.byKey(providerDropKey('a')), findsNothing);
+      expect(container.read(llmOrderProvider), ['b', 'fake']);
+    });
+
+    testWidgets('Use puts a row first and keeps the arranged tail', (
+      tester,
+    ) async {
+      final container = await withOrder(
+        tester,
+        ['b', 'fake'],
+        configs: [fake('a'), fake('b')],
+      );
+      expect(tester.widget<TextButton>(use('b')).onPressed, isNull);
+      await tester.tap(use('fake'));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['fake', 'b']);
+      // A row from outside takes the head's place; the tail stands.
+      await tester.tap(use('a'));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['a', 'b']);
+    });
+
+    testWidgets('Move up and Move down reorder, and stop at the ends', (
+      tester,
+    ) async {
+      final container = await withOrder(
+        tester,
+        ['a', 'b', 'fake'],
+        configs: [fake('a'), fake('b')],
+      );
+      expect(
+        tester.widget<IconButton>(find.byKey(providerUpKey('a'))).onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(providerDownKey('fake')))
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(find.byKey(providerDownKey('a')));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['b', 'a', 'fake']);
+      await tester.tap(find.byKey(providerUpKey('a')));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['a', 'b', 'fake']);
+    });
+
+    testWidgets('the add button puts a row at the end of the order', (
+      tester,
+    ) async {
+      final container = await withOrder(
+        tester,
+        ['fake'],
+        configs: [fake('a'), fake('b')],
+      );
+      // Use makes a first choice; only this one lengthens the order.
+      expect(find.byKey(providerAddKey('fake')), findsNothing);
+      await tester.tap(find.byKey(providerAddKey('a')));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['fake', 'a']);
+      await tester.tap(find.byKey(providerAddKey('b')));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['fake', 'a', 'b']);
+      expect(find.byKey(providerAddKey('a')), findsNothing);
+    });
+
+    testWidgets('the close button takes a row out of the order', (
+      tester,
+    ) async {
+      final container = await withOrder(
+        tester,
+        ['a', 'fake'],
+        configs: [fake('a')],
+      );
+      await tester.tap(find.byKey(providerDropKey('a')));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['fake']);
+      // Still configured, still listed — just not tried.
+      expect(find.byKey(providerRowKey('a')), findsOneWidget);
+      expect(find.byKey(providerDropKey('a')), findsNothing);
+    });
+
+    testWidgets('an id only the order names is still shown and removable', (
+      tester,
+    ) async {
+      // A settings file from a build with one more provider: `ghost` is
+      // in the order and nothing here can offer it. Drawn all the same,
+      // or the arrows would move an entry the page never shows.
+      final container = await pumpApp(tester);
+      container.read(settingsProvider.notifier).setLlmOrder(['ghost', 'fake']);
+      await tester.pump();
+      await open(tester);
+      expect(find.text('1. ghost'), findsOneWidget);
+      expect(find.textContaining('not available in this build'), findsWidgets);
+      // Moving the shown head moves the shown head, not a hidden entry.
+      await tester.tap(find.byKey(providerDownKey('ghost')));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['fake', 'ghost']);
+      await tester.tap(find.byKey(providerDropKey('ghost')));
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['fake']);
+      expect(find.byKey(providerRowKey('ghost')), findsNothing);
+    });
+
+    testWidgets('a handle drags a row to another place', (tester) async {
+      final container = await withOrder(
+        tester,
+        ['a', 'b', 'fake'],
+        configs: [fake('a'), fake('b')],
+      );
+      await dragRow(
+        tester,
+        handle: find.byKey(dragHandleKey('a')),
+        source: find.byKey(providerRowKey('a')),
+        target: find.byKey(providerRowKey('b')),
+      );
+      await tester.pump();
+      expect(container.read(llmOrderProvider), ['b', 'a', 'fake']);
+    });
+
+    testWidgets('each row says what the order made of it', (tester) async {
+      final container = await withOrder(
+        tester,
+        ['keyed', 'fake'],
+        configs: [
+          ProviderConfig(
+            id: 'keyed',
+            kind: 'fake',
+            credential: 'provider:keyed',
+          ),
+        ],
+      );
+      expect(find.textContaining('· no key'), findsWidgets);
+      // The second entry answered, and the check mark is on it.
+      expect(container.read(activeLlmProvider)?.id, 'fake');
+      expect(find.textContaining('local · ready'), findsOneWidget);
+      container.read(credentialsProvider.notifier).set('keyed', 'k');
+      await tester.pump();
+      expect(container.read(activeLlmProvider)?.id, 'keyed');
+      expect(find.textContaining('local · not asked'), findsOneWidget);
+    });
+  });
+
   group('the privacy switch (#27)', () {
     final cloudy = ProviderConfig(
       id: 'cloudy',
@@ -319,7 +496,7 @@ void main() {
         isFalse,
       );
       expect(
-        find.text('Cloud providers answer without the task list.'),
+        find.text('Cloud providers are passed over until this is on.'),
         findsOneWidget,
       );
       await tester.tap(find.byKey(shareTasksSwitchKey));
@@ -351,20 +528,23 @@ void main() {
       await tester.tap(use('cloudy'));
       await tester.pump();
       const warning =
-          "cloud provider 'cloudy' will not see your tasks until sharing is on";
+          "cloud provider 'cloudy' will not be used until sharing is on";
       expect(container.read(noticeProvider), warning);
       expect(
         container.read(llmStatusProvider),
-        'cloudy (fake-1) — cloud · tasks withheld',
+        'cloudy (fake-1) — cloud · cloud not allowed',
       );
       expect(
-        find.text('cloudy (fake-1) — cloud · tasks withheld'),
+        find.text('cloudy (fake-1) — cloud · cloud not allowed'),
         findsOneWidget,
       );
+      // Passed over entirely while the switch is off (#62).
+      expect(container.read(activeLlmProvider), isNull);
       await tester.tap(find.byKey(shareTasksSwitchKey));
       await tester.pump();
       expect(container.read(llmStatusProvider), 'cloudy (fake-1) — cloud');
-      expect(find.textContaining('tasks withheld'), findsNothing);
+      expect(container.read(activeLlmProvider)?.id, 'cloudy');
+      expect(find.textContaining('cloud not allowed'), findsNothing);
       await tester.tap(find.byKey(shareTasksSwitchKey));
       await tester.pump();
       expect(container.read(noticeProvider), warning, reason: 'off again');

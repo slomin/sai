@@ -35,6 +35,14 @@ that injects a capped key it cannot read — is **not built**: it would
 still put a live key in an agent-reachable process on a machine without
 the App Sandbox (ADR 0001).
 
+Every provider here is `cloud`-tagged, so the preference order passes it
+over until **Allow cloud providers to see my tasks** is on (#62, ADR
+0024): turn the switch on before any step that sends a chat, and while
+it is off expect the row to read `· cloud not allowed` and a send to be
+refused with `no provider can answer — <id> cloud not allowed`, writing
+nothing. Test is not a send — it names the provider itself and streams
+either way.
+
 ## Claude subscription (route C)
 
 Preconditions: `claude` signed in with the plan (`claude auth status`),
@@ -180,17 +188,25 @@ there on every install, inactive, on its recommended preset.
    showing N models cached`, the suggestions still there; Wi-Fi on,
    Refresh: the count again. Tap the recommended preset before going
    on.
-3. Test, then Use and send one short chat. Both stream; the archive
-   holds, per call, `policy.decision` (tasks withheld — sharing is off
-   by default), `provider.request`, `provider.response`,
-   `provider.usage` with a `cost`.
+3. Test, then Use. Test names the provider itself, so it streams while
+   the sharing switch is still off; the send does not — a cloud provider
+   is passed over entirely until the switch is on (#62, ADR 0024), the
+   row reads `· cloud not allowed` and the send is refused with `no
+   provider can answer — <id> cloud not allowed`, writing nothing. Turn
+   "Allow cloud providers to see my tasks" on and send one short chat.
+   Both stream; the archive holds, per call, `policy.decision`
+   (`task_context: none` for Test, `sent` for the chat),
+   `provider.request`, `provider.response`, `provider.usage` with a
+   `cost`.
 4. On OpenRouter's activity page the two generations name the exact
    model and **DeepInfra** as the provider — success under `only` plus
    `quantizations: [fp8]` is the proof the pinned route was there. Note
    `limit_remaining` again; the difference is the two calls' cost, and
    Settings › Usage shows the same number.
-5. Confirm "Allow cloud providers to see my tasks" is off and the
-   requests carried no task list; confirm no key in `settings.json`,
+5. Turn the switch back off and send again: refused, and nothing
+   written. Confirm the chat's request carried the compact lists only —
+   Today and Upcoming, never the catalog; confirm no key in
+   `settings.json`,
    the archive, the screenshots or any error text (grep the scratch
    dir for the key's first characters), and nothing of the list's
    body either (grep for `provider_name` and `endpoints/zdr`).

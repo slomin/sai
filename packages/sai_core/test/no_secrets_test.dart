@@ -333,6 +333,8 @@ void main() {
     final results = <LlmResult>[];
     await capturing(() async {
       container.read(settingsProvider.notifier).selectLlm('openrouter');
+      // A cloud provider answers only while sharing is on (#62).
+      container.read(settingsProvider.notifier).setShareTasksWithCloud(true);
       // The built-in is configured as it ships by the first key stored.
       container.read(credentialsProvider.notifier).set('openrouter', canary);
       final recorder = await container.read(llmRecorderProvider.future);
@@ -430,6 +432,7 @@ void main() {
           ),
         );
         settings.selectLlm('openai');
+        settings.setShareTasksWithCloud(true);
         container.read(credentialsProvider.notifier).set('openai', canary);
         final recorder = await container.read(llmRecorderProvider.future);
         final provider =

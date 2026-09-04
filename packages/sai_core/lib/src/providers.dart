@@ -17,6 +17,7 @@ import 'llm/call.dart';
 import 'llm/connection.dart';
 import 'llm/effort.dart';
 import 'llm/failure.dart';
+import 'llm/fallback.dart';
 import 'llm/builtins.dart';
 import 'llm/factory.dart';
 import 'llm/codex_app_server/config.dart';
@@ -261,15 +262,18 @@ final archiveVerifyProvider = NotifierProvider<ArchiveVerify, VerifyState>(
   ArchiveVerify.new,
 );
 
-/// The assistant header's light (#40): the active provider probed when
-/// it is selected, every [Connection.probeEvery], on [Connection.refresh]
-/// and after a call fails. A provider that cannot be probed (the fake)
-/// is ready; no provider, a misconfigured one or a missing key is down.
+/// The assistant header's light (#40), and the walk behind it (#62): the
+/// preference order is asked from the top when it changes, every
+/// [Connection.probeEvery], on [Connection.refresh] and after a call
+/// fails, stopping at the first entry that answers. A provider that
+/// cannot be probed (the fake) answers by construction; a light that is
+/// down means nothing in the order can answer, and says the first
+/// choice's reason.
 final connectionProvider = NotifierProvider<Connection, ConnectionStatus>(
   Connection.new,
 );
 
-/// How often the light asks again — null never asks on a timer. Widget
+/// How often the walk runs again — null never asks on a timer. Widget
 /// tests override it: a periodic timer would outlive the test.
 final connectionProbeEveryProvider = Provider<Duration?>(
   (ref) => Connection.probeEvery,
@@ -577,6 +581,16 @@ final misconfiguredLlmsProvider = Provider<Map<String, String>>((ref) {
   return out;
 });
 
+/// The word a status line puts after a provider whose credential cannot
+/// be used, or null when it can be (or it takes none). The resolver skips
+/// on exactly this (#62), in the words the connection has always shown.
+String? credentialProblemWord(CredentialStatus status) => switch (status) {
+  CredentialStatus.none || CredentialStatus.set => null,
+  CredentialStatus.missing => 'no key',
+  CredentialStatus.unavailable => 'keychain unavailable',
+  CredentialStatus.absent => 'no credentials in dev',
+};
+
 /// The credential suffix both clients append to a provider line.
 String credentialSuffix(CredentialStatus status, ProviderConfig? config) =>
     switch (status) {
@@ -681,14 +695,97 @@ final llmRegistryProvider = Provider<Map<String, LlmProvider>>((ref) {
   return Map.unmodifiable(registry);
 });
 
-/// The selected provider, or null when nothing is selected or the
-/// selected id is not installed. Selection is an app-level setting, not
-/// per conversation.
-final activeLlmProvider = Provider<LlmProvider?>((ref) {
-  final id = ref.watch(settingsProvider.select((s) => s.llm));
-  if (id == null) return null;
-  return ref.watch(llmRegistryProvider)[id];
+/// The preference order (#62), as settings hold it: the first choice and
+/// the ids tried behind it. Read through the order's own key, so a
+/// workspace save (#76) never re-resolves the provider.
+final llmOrderProvider = Provider<List<String>>((ref) {
+  final key = ref.watch(settingsProvider.select((s) => s.llmOrderKey));
+  return key.isEmpty ? const [] : List.unmodifiable(key.split(' '));
 });
+
+/// The entries of the order worth asking an endpoint about: installed,
+/// holding their key, allowed by the policy. What [Connection] walks —
+/// deliberately free of health, which is what the walk produces.
+final llmCandidatesProvider = Provider<LlmCandidates>((ref) {
+  final order = ref.watch(llmOrderProvider);
+  if (order.isEmpty) return LlmCandidates.none;
+  final registry = ref.watch(llmRegistryProvider);
+  final policy = ref.watch(privacyPolicyProvider);
+  return LlmCandidates(
+    List.unmodifiable([
+      for (final id in order)
+        if (registry[id] case final provider?)
+          if (credentialProblemWord(ref.watch(credentialStatusProvider(id))) ==
+                  null &&
+              !policy.withholdsFrom(provider.privacy))
+            provider,
+    ]),
+  );
+});
+
+/// What each provider's endpoint said when it was last asked, by id
+/// (#62). Retained across resolutions so a send reads health without
+/// waiting for a probe, and never past its own truth: editing or
+/// removing a provider's configuration clears its entry, the way
+/// [contextWindowsProvider] is cleared. Written only by [Connection]'s
+/// walk — nothing here watches it, or the walk would re-arm itself.
+final providerHealthProvider =
+    NotifierProvider<ProviderHealth, Map<String, EndpointInfo>>(
+      ProviderHealth.new,
+    );
+
+class ProviderHealth extends Notifier<Map<String, EndpointInfo>> {
+  @override
+  Map<String, EndpointInfo> build() => const {};
+
+  /// Files what [providerId]'s endpoint answered. A report that changes
+  /// neither the health nor the failure behind it is not news: the
+  /// resolver reads those two and nothing else.
+  void report(String providerId, EndpointInfo info) {
+    final held = state[providerId];
+    if (held != null &&
+        held.health == info.health &&
+        held.failure?.kind == info.failure?.kind) {
+      return;
+    }
+    state = Map.unmodifiable({...state, providerId: info});
+  }
+
+  /// Forgets what [providerId] answered — its configuration changed under
+  /// it, so the answer was another backend's.
+  void clear(String providerId) {
+    if (!state.containsKey(providerId)) return;
+    state = Map.unmodifiable({...state}..remove(providerId));
+  }
+}
+
+/// Which provider answers the next request, and what the order passed
+/// over to get there (#62). Resolved from the order, the registry, the
+/// credentials, the privacy switch and the health the last walk filed —
+/// never by asking the network, so a send reads it synchronously.
+final llmResolutionProvider = Provider<LlmResolution>((ref) {
+  final order = ref.watch(llmOrderProvider);
+  if (order.isEmpty) return LlmResolution.none;
+  return resolveLlm(
+    order: order,
+    registry: ref.watch(llmRegistryProvider),
+    misconfigured: ref.watch(misconfiguredLlmsProvider),
+    // Watched as it is asked, so only the entries the ladder actually
+    // reached wake the resolution when their key changes.
+    credentialProblem: (id) =>
+        credentialProblemWord(ref.watch(credentialStatusProvider(id))),
+    health: ref.watch(providerHealthProvider),
+    policy: ref.watch(privacyPolicyProvider),
+  );
+});
+
+/// The provider that answers the next request — the first entry of the
+/// preference order that can (#62). Null when nothing in the order can,
+/// or nothing is selected. Not a per-conversation choice: the whole
+/// application talks to whatever this resolves to.
+final activeLlmProvider = Provider<LlmProvider?>(
+  (ref) => ref.watch(llmResolutionProvider).provider,
+);
 
 /// Releases the idle sockets of the provider the selection moved away
 /// from — to another, or to none — while the instance (and any running
@@ -714,39 +811,75 @@ final privacyPolicyProvider = Provider<PrivacyPolicy>(
   ),
 );
 
-/// The warning both clients show for the active provider — a cloud one
-/// while sharing is off — or null when there is nothing to say.
-final activeLlmWarningProvider = Provider<String?>((ref) {
-  final active = ref.watch(activeLlmProvider);
-  if (active == null) return null;
-  return selectionWarning(active, ref.watch(privacyPolicyProvider));
+/// The provider at the head of the preference order — the person's own
+/// first choice — whether or not it can answer (#62). What a warning or
+/// a hint about "the provider you chose" names; what the *next request*
+/// carries comes from [activeLlmProvider] instead.
+final firstChoiceLlmProvider = Provider<LlmProvider?>((ref) {
+  final order = ref.watch(llmOrderProvider);
+  if (order.isEmpty) return null;
+  return ref.watch(llmRegistryProvider)[order.first];
 });
 
-/// The status-bar line naming the active LLM provider and its privacy
-/// tag — the same words in every client (`llm/status.dart`).
+/// Whose reasoning effort the next request would carry (#26, #62): the
+/// provider that answers, or — while nothing does — the first choice, so
+/// an OpenAI kind's own setting stays reachable from the menu even when
+/// the order cannot reach the provider itself.
+final effortOwnerLlmProvider = Provider<LlmProvider?>(
+  (ref) => ref.watch(activeLlmProvider) ?? ref.watch(firstChoiceLlmProvider),
+);
+
+/// The warning both clients show for the first choice — a cloud one
+/// while sharing is off, which the order passes over entirely (#62) — or
+/// null when there is nothing to say. The first choice, not the answer:
+/// a provider the policy skips is never the answer, and skipping it
+/// silently is the thing worth saying.
+final activeLlmWarningProvider = Provider<String?>((ref) {
+  final first = ref.watch(firstChoiceLlmProvider);
+  if (first == null) return null;
+  return selectionWarning(first, ref.watch(privacyPolicyProvider));
+});
+
+/// The status-bar line naming the provider that answers, its privacy tag
+/// and — when it is not the first choice — what was passed over to reach
+/// it (#62). The same words in every client (`llm/status.dart`).
+///
+/// When nothing in the order can answer, the line describes the *first
+/// choice* in the words it has always used: the person chose it, and why
+/// it cannot answer is what they need to read. The complete list of what
+/// was passed over belongs to the refusal (`noEligibleProviderError`) and
+/// to the Providers page, not to one status line.
 final llmStatusProvider = Provider<String>((ref) {
   // Only what the line is made of: the workspace part of settings moves
   // with every click and must not redraw it.
-  final (problem, id) = ref.watch(
-    settingsProvider.select((s) => (s.problem, s.llm)),
-  );
+  final problem = ref.watch(settingsProvider.select((s) => s.problem));
   if (problem != null) return unreadableSettingsStatus;
-  if (id == null) return noProviderStatus;
-  final active = ref.watch(activeLlmProvider);
-  if (active == null) {
-    final config = ref.watch(settingsProvider.select((s) => s.provider(id)));
-    if (config == null) return missingProviderStatus(id);
-    final missing = ref.watch(misconfiguredLlmsProvider)[id];
-    if (missing != null) return misconfiguredStatus(id, missing);
-    return unavailableKindStatus(id, config.kind);
-  }
-  return llmStatusLine(active, policy: ref.watch(privacyPolicyProvider)) +
+  final order = ref.watch(llmOrderProvider);
+  if (order.isEmpty) return noProviderStatus;
+  final policy = ref.watch(privacyPolicyProvider);
+  final resolution = ref.watch(llmResolutionProvider);
+  String credential(String id) =>
       switch (ref.watch(credentialStatusProvider(id))) {
         CredentialStatus.missing => missingCredentialSuffix,
         CredentialStatus.unavailable => unavailableSecretsSuffix,
         CredentialStatus.absent => absentCredentialSuffix,
         CredentialStatus.none || CredentialStatus.set => '',
       };
+  if (resolution.provider case final active?) {
+    // No credential suffix: a provider whose key cannot be used is
+    // passed over, so the one that answers never has one to report.
+    return llmStatusLine(active, policy: policy) + fallbackSuffix(resolution);
+  }
+  final id = order.first;
+  final built = ref.watch(llmRegistryProvider)[id];
+  if (built == null) {
+    final config = ref.watch(settingsProvider.select((s) => s.provider(id)));
+    if (config == null) return missingProviderStatus(id);
+    final missing = ref.watch(misconfiguredLlmsProvider)[id];
+    if (missing != null) return misconfiguredStatus(id, missing);
+    return unavailableKindStatus(id, config.kind);
+  }
+  return llmStatusLine(built, policy: policy) + credential(id);
 });
 
 /// What the endpoint of provider [id] says about itself, asked once per
@@ -1281,7 +1414,22 @@ class CacheWarmer extends Notifier<WarmState> {
     }
 
     if (!ref.watch(warmEnabledProvider)) return stopped();
-    final provider = ref.watch(activeLlmProvider);
+    // An endpoint the walk found unavailable may have restarted, and
+    // what it held is then gone — forgotten here rather than in the
+    // down branch below, which a provider that stopped answering at all
+    // never reaches (the resolution has no provider to bring it there).
+    final health = ref.watch(providerHealthProvider);
+    for (final id in [..._warmed.keys, ..._failed.keys]) {
+      if (health[id]?.health == EndpointHealth.unavailable) {
+        _warmed.remove(id);
+        _failed.remove(id);
+      }
+    }
+    // The whole resolution, not just its answer: the warm records what
+    // the order passed over, and the two must belong to the same walk
+    // even though the call itself starts after an await (#62).
+    final resolution = ref.watch(llmResolutionProvider);
+    final provider = resolution.provider;
     if (provider == null ||
         provider.privacy != LlmPrivacy.local ||
         provider is! LlmEndpointProbe) {
@@ -1342,7 +1490,10 @@ class CacheWarmer extends Notifier<WarmState> {
     final debounce = ref.watch(warmDebounceProvider);
     if (debounce == null) return const WarmState(WarmPhase.idle);
     final epoch = _epoch;
-    _debounce = Timer(debounce, () => _warm(epoch, provider, request, key));
+    _debounce = Timer(
+      debounce,
+      () => _warm(epoch, provider, request, key, resolution),
+    );
     return const WarmState(WarmPhase.idle);
   }
 
@@ -1351,6 +1502,7 @@ class CacheWarmer extends Notifier<WarmState> {
     LlmProvider provider,
     LlmRequest request,
     (String, ReasoningEffort?) key,
+    LlmResolution resolution,
   ) async {
     if (epoch != _epoch || !ref.mounted) return;
     final container = ref.container;
@@ -1378,7 +1530,15 @@ class CacheWarmer extends Notifier<WarmState> {
     try {
       final recorder = await container.read(llmRecorderProvider.future);
       if (epoch != _epoch || !ref.mounted) return;
-      final call = await recorder.start(provider, request);
+      // A warm is a request like any other: it goes to the provider the
+      // order resolved to, and says what that walk passed over (#62) —
+      // the resolution this warm was scheduled for, not whichever one
+      // stands now.
+      final call = await recorder.start(
+        provider,
+        request,
+        resolution: resolution,
+      );
       if (epoch != _epoch || !ref.mounted) {
         call.cancel();
         return;
@@ -1501,16 +1661,21 @@ class SettingsNotifier extends Notifier<Settings> {
     return settings;
   }
 
-  /// Selects the provider with [id] (null for none), writing the file
-  /// before the state changes. Throws [StateError] when the file belongs
-  /// to a newer sai and must not be overwritten.
+  /// Puts the provider with [id] first in the preference order (#62),
+  /// keeping the rest behind it — or, for null, selects nothing at all.
+  /// Writes the file before the state changes. Throws [StateError] when
+  /// the file belongs to a newer sai and must not be overwritten.
   void selectLlm(String? id) => _commit(state.withLlm(id));
+
+  /// Sets the whole preference order.
+  void setLlmOrder(List<String> order) => _commit(state.withLlmOrder(order));
 
   /// Adds [config], or replaces the provider with its id in place. The
   /// id's reported context window is forgotten either way: a changed
   /// endpoint or model makes the old number another backend's (#105).
   void upsertProvider(ProviderConfig config) {
     ref.read(contextWindowsProvider.notifier).clear(config.id);
+    ref.read(providerHealthProvider.notifier).clear(config.id);
     _commit(state.withProvider(config));
   }
 
@@ -1520,6 +1685,7 @@ class SettingsNotifier extends Notifier<Settings> {
   /// is.
   void removeProvider(String id) {
     ref.read(contextWindowsProvider.notifier).clear(id);
+    ref.read(providerHealthProvider.notifier).clear(id);
     _commit(state.withoutProvider(id));
   }
 
@@ -1928,86 +2094,72 @@ String _describeArchiveError(Object error) => switch (error) {
 String _basename(String path) => path.substring(path.lastIndexOf('/') + 1);
 
 class Connection extends Notifier<ConnectionStatus> {
-  /// How often a probeable provider is asked again.
+  /// How often the order is walked again.
   static const probeEvery = Duration(seconds: 60);
 
   Timer? _timer;
-  LlmEndpointProbe? _probe;
 
-  /// The selected provider's id while [_probe] is set — where a probe
-  /// answer's context window is filed (#105).
-  String? _id;
+  /// The candidates of the build that armed the timer, in order.
+  List<LlmProvider> _candidates = const [];
 
-  /// Which selection a probe answer belongs to; an older one is dropped.
+  /// Which build a walk belongs to; a later answer from an older one is
+  /// dropped.
   var _epoch = 0;
 
-  /// Which probe is the newest; an older one still in flight is dropped
+  /// Which walk is the newest; an older one still in flight is dropped
   /// too, so a slow "unavailable" cannot overwrite a fresh "ready".
-  var _request = 0;
+  var _walk = 0;
 
   @override
   ConnectionStatus build() {
     _timer?.cancel();
     _timer = null;
-    _probe = null;
-    _id = null;
+    _candidates = const [];
     final epoch = ++_epoch;
     ref.onDispose(() {
       _timer?.cancel();
       _timer = null;
       _epoch++;
     });
-    // Selected, not the whole file: a workspace save (#76) must not turn
-    // a ready connection amber and ask the endpoint again.
-    final (problem, id) = ref.watch(
-      settingsProvider.select((s) => (s.problem, s.llm)),
-    );
-    // Holds the release watcher for the session; and the active provider
-    // is watched above the early returns, so even deselecting recomputes
-    // it and the watcher sees the move.
+    // Only the problem: a workspace save (#76) must not turn a ready
+    // connection amber and ask the endpoints again.
+    final problem = ref.watch(settingsProvider.select((s) => s.problem));
+    // Holds the release watcher for the session; and the candidates are
+    // watched above the early returns, so even deselecting recomputes
+    // this and the watcher sees the move.
     ref.watch(_llmIdleReleaseProvider);
-    final active = ref.watch(activeLlmProvider);
+    final order = ref.watch(llmOrderProvider);
+    final candidates = ref.watch(llmCandidatesProvider);
     if (problem != null) {
       return const ConnectionStatus.down('settings unreadable');
     }
-    if (id == null) return const ConnectionStatus.down('no provider');
-    if (active == null) {
-      final missing = ref.watch(misconfiguredLlmsProvider)[id];
-      return ConnectionStatus.down(
-        missing == null ? 'not available' : 'misconfigured',
-      );
+    if (order.isEmpty) return const ConnectionStatus.down('no provider');
+    // Nothing worth asking: the resolution already knows why, in the same
+    // words. Read, never watched — the walk writes what it watches.
+    if (candidates.isEmpty) return _statusFor(ref.read(llmResolutionProvider));
+    // The walk stops at the first provider that answers, and one that
+    // cannot be asked answers by construction (the fake): with such an
+    // entry at the head nothing is ever probed, so no timer is armed.
+    if (candidates.providers.first is! LlmEndpointProbe) {
+      return const ConnectionStatus.ready('ready');
     }
-    switch (ref.watch(credentialStatusProvider(id))) {
-      case CredentialStatus.missing:
-        return const ConnectionStatus.down('no key');
-      case CredentialStatus.unavailable:
-        return const ConnectionStatus.down('keychain unavailable');
-      case CredentialStatus.absent:
-        return const ConnectionStatus.down('no credentials in dev');
-      case CredentialStatus.none || CredentialStatus.set:
-        break;
+    _candidates = candidates.providers;
+    scheduleMicrotask(() => _ask(epoch));
+    if (ref.watch(connectionProbeEveryProvider) case final every?) {
+      _timer = Timer.periodic(every, (_) => _ask(epoch));
     }
-    if (active case final LlmEndpointProbe probe) {
-      _probe = probe;
-      _id = id;
-      scheduleMicrotask(() => _ask(epoch));
-      if (ref.watch(connectionProbeEveryProvider) case final every?) {
-        _timer = Timer.periodic(every, (_) => _ask(epoch));
-      }
-      return const ConnectionStatus.attention('probing…');
-    }
-    return const ConnectionStatus.ready('ready');
+    return const ConnectionStatus.attention('probing…');
   }
 
-  /// Asks the endpoint again now.
+  /// Asks the endpoints again now.
   void refresh() {
-    if (_probe == null) return;
+    if (_candidates.isEmpty) return;
     state = const ConnectionStatus.attention('probing…');
     _ask(_epoch);
   }
 
-  /// A call ended in [failure]: re-probe now rather than on the timer,
-  /// so the light shows what the person just saw.
+  /// A call ended in [failure]: walk again now rather than on the timer,
+  /// so the light — and the order — show what the person just saw.
   void callFailed(LlmFailure failure) {
     switch (failure.kind) {
       case LlmFailureKind.unreachable ||
@@ -2021,47 +2173,76 @@ class Connection extends Notifier<ConnectionStatus> {
     }
   }
 
+  /// Walks the candidates top-down, filing what each endpoint says, and
+  /// stops at the first that can answer — the entries behind it are not
+  /// asked, so a healthy local box costs no cloud traffic. The head is
+  /// asked every time, which is how a recovered first choice is picked up
+  /// again without a restart.
   Future<void> _ask(int epoch) async {
-    final probe = _probe;
-    if (probe == null) return;
-    final request = ++_request;
-    EndpointInfo info;
-    try {
-      info = await probe.probe();
-    } on Object catch (error) {
-      // The contract says it never throws; if it does, that is "down".
-      info = EndpointInfo(
-        health: EndpointHealth.unavailable,
-        failure: LlmFailure(LlmFailureKind.internal, '$error'),
-      );
-    }
-    if (epoch != _epoch || request != _request || !ref.mounted) return;
-    // The probe's other answer: what window the endpoint reports, kept
-    // for the chat budget (#105). A healthy endpoint's word is final —
-    // silence means it has no window to report, so a stale one from a
-    // previous backend behind the same id is cleared. A failed probe
-    // says nothing either way.
-    if (_id case final id?) {
-      final windows = ref.read(contextWindowsProvider.notifier);
-      switch (info.health) {
-        case EndpointHealth.ok || EndpointHealth.loading:
-          if (info.contextWindow case final window?) {
-            windows.report(id, window);
-          } else {
-            windows.clear(id);
-          }
-        case EndpointHealth.unavailable || EndpointHealth.unknown:
+    final candidates = _candidates;
+    if (candidates.isEmpty) return;
+    final walk = ++_walk;
+    for (final provider in candidates) {
+      // An entry that cannot be asked answers by construction (the fake),
+      // and the walk ends there rather than reaching past it.
+      if (provider case final LlmEndpointProbe endpoint) {
+        EndpointInfo info;
+        try {
+          info = await endpoint.probe();
+        } on Object catch (error) {
+          // The contract says it never throws; if it does, that is "down".
+          info = EndpointInfo(
+            health: EndpointHealth.unavailable,
+            failure: LlmFailure(LlmFailureKind.internal, '$error'),
+          );
+        }
+        if (epoch != _epoch || walk != _walk || !ref.mounted) return;
+        _file(provider.id, info);
+        if (info.health == EndpointHealth.ok ||
+            info.health == EndpointHealth.unknown) {
           break;
+        }
+      } else {
+        break;
       }
     }
-    state = switch (info.health) {
-      EndpointHealth.ok => const ConnectionStatus.ready('ready'),
-      EndpointHealth.loading => const ConnectionStatus.attention('loading'),
-      EndpointHealth.unavailable => ConnectionStatus.down(
-        info.failure?.kind.name ?? 'unavailable',
-      ),
-      EndpointHealth.unknown => const ConnectionStatus.ready('ready'),
-    };
+    if (epoch != _epoch || walk != _walk || !ref.mounted) return;
+    state = _statusFor(ref.read(llmResolutionProvider));
+  }
+
+  /// Files a probe's two answers: the health the order resolves on, and
+  /// the context window the chat budget reads (#105). A healthy
+  /// endpoint's word on the window is final — silence means it has none
+  /// to report, so a stale one from a previous backend behind the same id
+  /// is cleared. A failed probe says nothing either way.
+  void _file(String id, EndpointInfo info) {
+    ref.read(providerHealthProvider.notifier).report(id, info);
+    final windows = ref.read(contextWindowsProvider.notifier);
+    switch (info.health) {
+      case EndpointHealth.ok || EndpointHealth.loading:
+        if (info.contextWindow case final window?) {
+          windows.report(id, window);
+        } else {
+          windows.clear(id);
+        }
+      case EndpointHealth.unavailable || EndpointHealth.unknown:
+        break;
+    }
+  }
+
+  /// The light for a resolution: green while something answers, amber
+  /// while an endpoint is still loading, red with the first choice's own
+  /// reason otherwise.
+  static ConnectionStatus _statusFor(LlmResolution resolution) {
+    if (resolution.provider != null) {
+      return const ConnectionStatus.ready('ready');
+    }
+    final skipped = resolution.skipped;
+    if (skipped.isEmpty) return const ConnectionStatus.down('no provider');
+    if (skipped.any((skip) => skip.reason == SkipReason.loading)) {
+      return const ConnectionStatus.attention('loading');
+    }
+    return ConnectionStatus.down(skipped.first.word);
   }
 }
 

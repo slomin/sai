@@ -175,3 +175,13 @@ Two context shapes now exist, and the follow-ups above landed:
   policy would withhold a catalog anyway).
 - Accepted limit: two identical titles in identically-titled containers
   render indistinguishably — ids stay out of the prompt.
+
+## Amendment (2026-09-04, #62, ADR [0024](0024-provider-choice-is-an-order-resolved-at-send.md))
+
+"The active provider" is now the first entry of a preference order that
+can answer, resolved at the top of `send` and `propose` — before this
+function is called, because the shape, the budget, the effort and the
+provenance all belong to whichever provider answers, not to the one the
+person named first. Assembly is unchanged and still knows nothing of
+providers: the caller maps the *answering* provider's tag to a shape and
+hands in its window. The cache warmer follows the same resolution.

@@ -903,11 +903,17 @@ void main() {
         settings.upsertProvider(lan);
         expect(container.read(llmRegistryProvider).keys, ['fake', 'lan']);
         settings.selectLlm('lan');
-        expect(container.read(activeLlmProvider)?.defaultModel, 'qwen');
+        // The key it names is not in the store, so the order passes it
+        // over (#62) — and, with nothing behind it, nothing answers. The
+        // line still names the first choice and what it is missing.
+        expect(container.read(activeLlmProvider), isNull);
         expect(
           container.read(llmStatusProvider),
           'lan (qwen) — local · no key',
         );
+        container.read(credentialsProvider.notifier).set('lan', 'k');
+        expect(container.read(activeLlmProvider)?.defaultModel, 'qwen');
+        expect(container.read(llmStatusProvider), 'lan (qwen) — local');
         expect(
           jsonDecode(File('${tmp.path}/settings.json').readAsStringSync()),
           {
@@ -1089,8 +1095,11 @@ void main() {
           expect(
             container.read(llmStatusProvider),
             'openrouter @ https://openrouter.ai ($openRouterPresetModel) — '
-            'cloud$tasksWithheldSuffix$missingCredentialSuffix',
+            'cloud$cloudSkippedSuffix$missingCredentialSuffix',
           );
+          // A cloud provider is passed over while sharing is off, first
+          // choice or not (#62): nothing answers.
+          expect(container.read(activeLlmProvider), isNull);
           expect(
             container.read(activeLlmWarningProvider),
             cloudSelectionWarning(openRouterProviderId),
@@ -1604,6 +1613,13 @@ void main() {
             routing: 'exact',
           ),
         );
+        // Cloud and keyed, so it answers only with a key stored and
+        // sharing on (#62).
+        expect(container.read(activeLlmProvider), isNull);
+        settings.setShareTasksWithCloud(true);
+        container
+            .read(credentialsProvider.notifier)
+            .set(openRouterProviderId, 'k');
         final built = container.read(activeLlmProvider)!;
         expect(built.defaultModel, 'qwen/qwen3-8b');
         expect(built.privacy, LlmPrivacy.cloud);
@@ -1679,8 +1695,9 @@ void main() {
             ),
           );
           settings.selectLlm('local');
-          final active = container.read(activeLlmProvider);
+          final active = container.read(llmRegistryProvider)['local'];
           expect(active, isA<OpenAiCompatibleProvider>());
+          expect(container.read(activeLlmProvider), same(active));
           // Storing a key binds it without rebuilding the provider a call
           // may be running on: the binding is pushed into the live one.
           settings.upsertProvider(
@@ -1689,22 +1706,24 @@ void main() {
                 .provider('local')!
                 .copyWith(credential: () => 'provider:local'),
           );
-          final keyed = container.read(activeLlmProvider);
+          final keyed = container.read(llmRegistryProvider)['local'];
           expect(
             identical(keyed, active),
             isFalse,
             reason: 'credential changed',
           );
+          // Naming a key it has not got passes it over (#62); storing one
+          // brings it back without rebuilding it.
+          expect(container.read(activeLlmProvider), isNull);
           container.read(credentialsProvider.notifier).set('local', 'k');
           expect(
-            identical(container.read(activeLlmProvider), keyed),
+            identical(container.read(llmRegistryProvider)['local'], keyed),
             isTrue,
             reason: 'a key save is not a rebuild',
           );
+          expect(container.read(activeLlmProvider), same(keyed));
           expect(
-            (container.read(
-              activeLlmProvider,
-            ) as OpenAiCompatibleProvider).credentialOrigin,
+            (keyed! as OpenAiCompatibleProvider).credentialOrigin,
             stub.origin,
           );
           container.read(credentialsProvider.notifier).clear('local');
@@ -2048,8 +2067,11 @@ void main() {
           ),
         );
         settings.selectLlm('cloud');
+        // Holding no credential at all passes it over (#62), so nothing
+        // answers; called directly it still says the dev words.
+        expect(container.read(activeLlmProvider), isNull);
         final result = await container
-            .read(activeLlmProvider)!
+            .read(llmRegistryProvider)['cloud']!
             .start(LlmRequest(messages: [LlmMessage(LlmRole.user, 'hi')]))
             .done;
         expect(result.failure?.kind, LlmFailureKind.credential);
@@ -2125,7 +2147,7 @@ void main() {
         settings.selectLlm('hosted');
         expect(
           container.read(llmStatusProvider),
-          'hosted @ https://api.example.com (m) — cloud · tasks withheld',
+          'hosted @ https://api.example.com (m) — cloud · cloud not allowed',
         );
         // Re-tagging rebuilds the provider with the new tag.
         settings.upsertProvider(
@@ -2157,7 +2179,8 @@ void main() {
         expect(call.taskContextWithheld, isFalse);
       });
 
-      test('the status line and the warning say tasks are withheld', () {
+      test('the status line and the warning say a cloud provider is passed '
+          'over', () {
         final container = make();
         final settings = container.read(settingsProvider.notifier);
         settings.upsertProvider(cloudy);
@@ -2165,14 +2188,16 @@ void main() {
         settings.selectLlm('cloudy');
         expect(
           container.read(llmStatusProvider),
-          'cloudy (fake-1) — cloud · tasks withheld',
+          'cloudy (fake-1) — cloud · cloud not allowed',
         );
+        expect(container.read(activeLlmProvider), isNull);
         expect(
           container.read(activeLlmWarningProvider),
-          "cloud provider 'cloudy' will not see your tasks until sharing is on",
+          "cloud provider 'cloudy' will not be used until sharing is on",
         );
         settings.setShareTasksWithCloud(true);
         expect(container.read(llmStatusProvider), 'cloudy (fake-1) — cloud');
+        expect(container.read(activeLlmProvider)?.id, 'cloudy');
         expect(container.read(activeLlmWarningProvider), isNull);
         settings.selectLlm('fake');
         settings.setShareTasksWithCloud(false);
@@ -2224,6 +2249,160 @@ void main() {
         'provider.usage',
       ]);
       expect(events.every((e) => e.event.source == 'sai/test'), isTrue);
+    });
+
+    group('the preference order (#62)', () {
+      ProviderConfig fake(String id, {LlmPrivacy? privacy}) =>
+          ProviderConfig(id: id, kind: 'fake', privacy: privacy);
+
+      test('the order comes off settings and moves only when it does', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        expect(container.read(llmOrderProvider), isEmpty);
+        settings.setLlmOrder(['fake', 'other']);
+        final before = container.read(llmOrderProvider);
+        expect(before, ['fake', 'other']);
+        // A workspace save moves the file, never the order (#76): the
+        // very same value stands, so nothing downstream re-resolves.
+        settings.setWorkspace(const WorkspaceState(task: 'x'));
+        settings.setReasoning(true);
+        expect(container.read(llmOrderProvider), same(before));
+        settings.selectLlm('other');
+        expect(container.read(llmOrderProvider), ['other', 'fake']);
+      });
+
+      test('setLlmOrder and selectLlm write the file the order lives in', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(fake('a'));
+        settings.upsertProvider(fake('b'));
+        settings.setLlmOrder(['a', 'b']);
+        final file = File('${tmp.path}/settings.json');
+        expect(
+          jsonDecode(file.readAsStringSync()),
+          containsPair('llm_fallback', ['b']),
+        );
+        expect(container.read(activeLlmProvider)?.id, 'a');
+        settings.selectLlm('b');
+        expect(container.read(llmOrderProvider), ['b', 'a']);
+        expect(container.read(activeLlmProvider)?.id, 'b');
+      });
+
+      test('removing a provider takes it out of the order', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(fake('a'));
+        settings.upsertProvider(fake('b'));
+        settings.setLlmOrder(['a', 'b']);
+        settings.removeProvider('a');
+        expect(container.read(llmOrderProvider), ['b']);
+        expect(container.read(activeLlmProvider)?.id, 'b');
+      });
+
+      test('health is forgotten when a provider is edited or removed', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        final health = container.read(providerHealthProvider.notifier);
+        settings.upsertProvider(fake('a'));
+        health.report('a', const EndpointInfo(health: EndpointHealth.ok));
+        expect(container.read(providerHealthProvider).keys, ['a']);
+        // A changed configuration is another backend behind the same id.
+        settings.upsertProvider(
+          ProviderConfig(id: 'a', kind: 'fake', defaultModel: 'other'),
+        );
+        expect(container.read(providerHealthProvider), isEmpty);
+        health.report('a', const EndpointInfo(health: EndpointHealth.ok));
+        settings.removeProvider('a');
+        expect(container.read(providerHealthProvider), isEmpty);
+      });
+
+      test('a report that changes neither the health nor its failure is not '
+          'news', () {
+        final container = make();
+        final health = container.read(providerHealthProvider.notifier);
+        final seen = <int>[];
+        container.listen(
+          providerHealthProvider,
+          (_, next) => seen.add(next.length),
+        );
+        const ok = EndpointInfo(health: EndpointHealth.ok);
+        health.report('a', ok);
+        health.report('a', const EndpointInfo(health: EndpointHealth.ok));
+        expect(seen, [1]);
+        health.report(
+          'a',
+          const EndpointInfo(
+            health: EndpointHealth.unavailable,
+            failure: LlmFailure(LlmFailureKind.timeout, 'slow'),
+          ),
+        );
+        expect(seen, [1, 1]);
+      });
+
+      test('the budget follows the provider that answers, not the first '
+          'choice', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          fake('keyed').copyWith(credential: () => 'provider:keyed'),
+        );
+        settings.upsertProvider(fake('other'));
+        settings.setLlmOrder(['keyed', 'other']);
+        container.read(contextWindowsProvider.notifier).report('keyed', 99999);
+        container.read(contextWindowsProvider.notifier).report('other', 40000);
+        expect(container.read(activeLlmProvider)?.id, 'other');
+        expect(container.read(chatBudgetProvider).maxTokens, 40000);
+        container.read(credentialsProvider.notifier).set('keyed', 'k');
+        expect(container.read(activeLlmProvider)?.id, 'keyed');
+        expect(container.read(chatBudgetProvider).maxTokens, 99999);
+      });
+
+      test('the reasoning effort belongs to whatever would carry it', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        expect(container.read(effortOwnerLlmProvider), isNull);
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'openai',
+            kind: openAiKind,
+            defaultModel: 'gpt-5.6-sol',
+            credential: 'provider:openai',
+            reasoningEffort: 'high',
+          ),
+        );
+        settings.setLlmOrder(['openai']);
+        // Nothing answers — cloud, and no key — so the menu still reaches
+        // the first choice's own setting.
+        expect(container.read(activeLlmProvider), isNull);
+        expect(container.read(effortOwnerLlmProvider)?.id, 'openai');
+        // With something behind it the order falls through to a provider
+        // that has no effort of its own: the switch governs the next
+        // request, so the menu must offer the switch.
+        settings.setLlmOrder(['openai', 'fake']);
+        expect(container.read(activeLlmProvider)?.id, 'fake');
+        expect(container.read(effortOwnerLlmProvider)?.id, 'fake');
+        // Once it can answer, its own effort is the one that travels.
+        container.read(credentialsProvider.notifier).set('openai', 'k');
+        settings.setShareTasksWithCloud(true);
+        expect(container.read(activeLlmProvider)?.id, 'openai');
+        expect(container.read(effortOwnerLlmProvider)?.id, 'openai');
+      });
+
+      test('the status line names the answer and what it passed over', () {
+        final container = make();
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          fake('keyed').copyWith(credential: () => 'provider:keyed'),
+        );
+        settings.setLlmOrder(['keyed', 'fake']);
+        expect(
+          container.read(llmStatusProvider),
+          'fake (fake-1) — local · keyed no key',
+        );
+        expect(container.read(llmResolutionProvider).isFallback, isTrue);
+        container.read(credentialsProvider.notifier).set('keyed', 'k');
+        expect(container.read(llmStatusProvider), 'keyed (fake-1) — local');
+      });
     });
   });
 }

@@ -69,3 +69,27 @@ yes/no per provider.
   tag already says what matters, and two switches disagree); refusing
   the selection (the user asked for that provider; the policy's job is
   to bound what it sees, not to second-guess the choice).
+
+## Amendment (2026-09-04, #62, ADR [0024](0024-provider-choice-is-an-order-resolved-at-send.md))
+
+The switch became an **eligibility** gate, as the consequence above
+anticipated — and further than it did. A `cloud`-tagged provider is
+passed over by the preference order while sharing is off, **first choice
+or not**: a chat never goes to a cloud provider under that switch, and
+with nothing else in the order the send is refused, naming what was
+passed over and why. "Selecting a cloud provider warns, never refuses"
+above is superseded for that case: both clients still show the tag and
+still say so on selection — `cloud provider 'x' will not be used until
+sharing is on`, and `· cloud not allowed` on the status line where
+`· tasks withheld` used to stand — but the provider does not answer.
+
+The skip is its own event, `policy.fallback`, written before the
+`policy.decision` line of the call that did happen; it names every entry
+the order passed over, not only the cloud one, since unreachable, still
+loading and no-key are the same kind of fact about the same list.
+
+One consequence for the check itself: with a cloud provider answering
+only while sharing is on, and the chat sending it the compact shape,
+`task_context: withheld` no longer arises from a chat turn. The check
+stays where it is — it is the guarantee this ADR rests on, and the
+Providers page's Test and any later caller still pass through it.

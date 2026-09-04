@@ -40,6 +40,86 @@ void main() {
 
   File settingsFile() => container.read(settingsFileProvider);
 
+  group('the preference order (#62)', () {
+    Future<void> add(String id, {String? privacy, bool key = false}) async {
+      final flags = [
+        'provider add $id --kind fake',
+        if (privacy != null) '--privacy $privacy',
+        if (key) '--key',
+      ].join(' ');
+      expect(await run(flags), cliOk);
+      out.clear();
+    }
+
+    test('order with no arguments says what is tried', () async {
+      expect(await run('provider order'), cliOk);
+      expect(out.toString().trim(), 'order: none');
+      out.clear();
+      expect(await run('provider use fake'), cliOk);
+      out.clear();
+      expect(await run('provider order'), cliOk);
+      expect(out.toString().trim(), 'order: fake');
+    });
+
+    test('order sets the whole list and writes it', () async {
+      await add('lan');
+      await add('local');
+      expect(await run('provider order lan local fake'), cliOk);
+      expect(out.toString().split('\n').where((l) => l.isNotEmpty), [
+        'order: lan, local, fake',
+        'lan (fake-1) — local',
+      ]);
+      expect(
+        jsonDecode(settingsFile().readAsStringSync()),
+        containsPair('llm_fallback', ['local', 'fake']),
+      );
+      expect(container.read(llmOrderProvider), ['lan', 'local', 'fake']);
+    });
+
+    test('order refuses an unknown id and a repeat', () async {
+      expect(await run('provider order fake nope'), cliFailed);
+      expect(err.toString(), contains("provider 'nope' is not available"));
+      expect(container.read(llmOrderProvider), isEmpty);
+      err.clear();
+      expect(await run('provider order fake fake'), cliUsageError);
+      expect(err.toString(), contains('provider order names fake twice'));
+      expect(container.read(llmOrderProvider), isEmpty);
+    });
+
+    test('use puts an id first and keeps the rest, saying the order', () async {
+      await add('lan');
+      await add('local');
+      expect(await run('provider order lan local fake'), cliOk);
+      out.clear();
+      expect(await run('provider use local'), cliOk);
+      expect(out.toString().split('\n').where((l) => l.isNotEmpty), [
+        'local (fake-1) — local',
+        'order: local, lan, fake',
+      ]);
+      // A new id takes the head's place; the arranged tail stands.
+      await add('other');
+      out.clear();
+      expect(await run('provider use other'), cliOk);
+      expect(container.read(llmOrderProvider), ['other', 'lan', 'fake']);
+      out.clear();
+      // `none` clears the whole order.
+      expect(await run('provider use none'), cliOk);
+      expect(out.toString().trim(), 'no provider selected');
+      expect(container.read(llmOrderProvider), isEmpty);
+    });
+
+    test('list marks the place in the order and the one answering', () async {
+      await add('keyed', key: true);
+      expect(await run('provider order keyed fake'), cliOk);
+      out.clear();
+      expect(await run('provider list'), cliOk);
+      final lines = out.toString().split('\n').where((l) => l.isNotEmpty);
+      expect(lines, contains(startsWith('1  keyed')));
+      expect(lines, contains(startsWith('2* fake')));
+      expect(lines, contains(contains('answering: fake · keyed no key')));
+    });
+  });
+
   group('usage (#30)', () {
     test('a quiet day says so', () async {
       expect(await run('usage'), cliOk);
@@ -501,10 +581,15 @@ void main() {
     out.clear();
 
     expect(await run('provider list'), cliOk);
+    // The mark is the place in the preference order (#62); nothing
+    // answers here, because the key it names is not stored.
     expect(
       out.toString(),
-      contains('* lan  fake @ https://lan.example/v1  (qwen) · local · no key'),
+      contains(
+        '1  lan  fake @ https://lan.example/v1  (qwen) · local · no key',
+      ),
     );
+    expect(out.toString(), contains('no provider can answer — lan no key'));
     out.clear();
 
     expect(await run('provider add lan --model other'), cliOk);
@@ -1140,8 +1225,8 @@ void main() {
 
     expect(await run('provider use cloudy'), cliOk);
     expect(out.toString().split('\n').where((l) => l.isNotEmpty), [
-      'cloudy (fake-1) — cloud · tasks withheld',
-      "cloud provider 'cloudy' will not see your tasks until sharing is on: "
+      'cloudy (fake-1) — cloud · cloud not allowed',
+      "cloud provider 'cloudy' will not be used until sharing is on: "
           'sai_tui privacy share-tasks on',
     ]);
     out.clear();
@@ -1161,7 +1246,7 @@ void main() {
     expect(await run('privacy share-tasks off'), cliOk);
     expect(out.toString().split('\n').where((l) => l.isNotEmpty), [
       'cloud sharing: off — cloud providers do not see your tasks',
-      "cloud provider 'cloudy' will not see your tasks until sharing is on",
+      "cloud provider 'cloudy' will not be used until sharing is on",
     ]);
     expect(container.read(settingsProvider).shareTasksWithCloud, isFalse);
     out.clear();

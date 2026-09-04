@@ -168,7 +168,8 @@ Restore from a replica (#15); do not edit the log.
 | `provider.response` | assistant | the assembled response as received; `model.request_id` and `version` where exposed; `refs` → the request |
 | `provider.failure` | system | a call that produced no answer; `refs` → the request |
 | `provider.usage` | system | tokens and timings, written for every call including failures; `refs` → the request |
-| `policy.decision` | system | the privacy policy's word on a call to a cloud provider, written before its request; the request's `refs` name it — see [policy](#policy-27) |
+| `policy.decision` | system | the privacy policy's word on a call to a cloud provider, written before its request; the request's `refs` name it — see [policy](#policy-27-62) |
+| `policy.fallback` | system | what the preference order passed over to reach the provider that answered, written before its request; the request's `refs` name it — see [policy](#policy-27-62) |
 | `tool.call` | assistant | `payload.name`, `payload.arguments` |
 | `tool.result` | system | `refs` → the `tool.call` |
 | `proposal.made` | assistant | the validated suggestions, task ids resolved; `model`, `refs` → the `provider.response` that carried them and the `chat.message` that triggered the call — see [proposals](#proposals-35) |
@@ -188,8 +189,10 @@ it (#29 keeps keys in the Keychain).
 One model call is **three lines, never more**: the request, then either
 the response or the failure, then the usage. (A call to a `cloud`-tagged
 provider is additionally announced by a `policy.decision` line written
-before its request — [policy](#policy-27); that line belongs to the
-policy, and the call itself stays three.) Streamed deltas are not
+before its request, and one that did not go to the first choice of the
+preference order by a `policy.fallback` line before that —
+[policy](#policy-27-62); those lines belong to the policy, and the call
+itself stays three.) Streamed deltas are not
 events — an append is a locked, fsynced line, and a paragraph is not
 worth five hundred of them (ADR
 [0007](../decisions/0007-provider-traffic-is-three-events-per-call.md)).
@@ -198,7 +201,8 @@ line's `model` carries the target `{provider, id}`, and the response adds
 `version` and `request_id` where the backend exposes them. `refs` on the
 response, failure and usage lines name the request line (usage also
 names the response, when there is one); a request to a cloud provider
-names its decision line.
+names its decision line, and one that fell through names its fallback
+line as well — fallback first, then decision.
 
 | type | payload |
 | --- | --- |
@@ -219,7 +223,7 @@ cut beats a lost record, and it is the one place "raw" is qualified. A
 call the archive itself refuses to record is reported to the caller as
 a failure and is, by definition, not in the log.
 
-### Policy (#27)
+### Policy (#27, #62)
 
 Every call to a `cloud`-tagged provider writes exactly one
 `policy.decision` line (actor `system`, `model` naming the same target as
@@ -233,9 +237,21 @@ enters neither the wire nor the log. A decision whose request never
 followed (the archive refused the request line) is a call that was not
 made.
 
+Every call that did not go to the **first choice** of the preference
+order writes exactly one `policy.fallback` line (actor `system`, `model`
+naming the same target as the request) before both of the above (#62, ADR
+[0024](../decisions/0024-provider-choice-is-an-order-resolved-at-send.md)):
+what the order passed over, in order, and why. A call that went to the
+first choice has none, and neither has one whose caller named the
+provider itself (the Providers page's Test). The pairing is again the
+request's `refs`. `reason` is the resolver's own word; `detail` refines
+it where the reason alone is too coarse — the failure kind behind
+`unreachable`, the secret store's answer behind `no_key`.
+
 | type | payload |
 | --- | --- |
 | `policy.decision` | `privacy` ∈ `cloud`, `share_tasks` (the switch as it stood), `task_context` ∈ `none` \| `sent` \| `withheld` |
+| `policy.fallback` | `first` — the id at the head of the order; `chosen` — the id that answered; `skipped` — `[{provider, reason, detail?}]` in the order they were passed over, `reason` ∈ `unavailable` \| `misconfigured` \| `no_key` \| `cloud_disallowed` \| `unreachable` \| `loading` |
 
 ### Conversation (#34)
 
