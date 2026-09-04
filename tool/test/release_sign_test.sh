@@ -92,7 +92,7 @@ fixture() {
   commit=${1:-$head} flavor=${2:-stable}
   rm -rf "$prepared"
   app="$prepared/sai.app"
-  mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks/Foo.framework" "$prepared/tui/bundle/bin" "$prepared/tui/bundle/lib"
+  mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks/Foo.framework" "$app/Contents/Helpers" "$app/Contents/Resources" "$prepared/tui/bundle/bin" "$prepared/tui/bundle/lib" "$prepared/tui/bundle/libexec"
   cat > "$work/sai.c" <<C
 #include <stdio.h>
 int main(void) { puts("sai app fixture"); return 0; }
@@ -104,6 +104,16 @@ C
   printf 'int foo(void) { return 1; }\n' > "$work/foo.c"
   cc -o "$app/Contents/MacOS/sai" "$work/sai.c"
   cc -o "$prepared/tui/bundle/bin/sai_tui" "$work/tui.c"
+  # The App Server sidecar (#26): a helper in the app, a slice in the
+  # client; the licence texts (not Mach-Os) under Resources and libexec.
+  cc -arch arm64 -o "$work/helper-arm64" "$work/sai.c"
+  cc -arch x86_64 -o "$work/helper-x86_64" "$work/sai.c"
+  lipo -create "$work/helper-arm64" "$work/helper-x86_64" -output "$app/Contents/Helpers/codex-app-server"
+  cc -o "$prepared/tui/bundle/libexec/codex-app-server" "$work/sai.c"
+  for dir in "$app/Contents/Resources" "$prepared/tui/bundle/libexec"; do
+    echo fixture > "$dir/codex-app-server.LICENSE"
+    echo fixture > "$dir/codex-app-server.NOTICE"
+  done
   cc -dynamiclib -o "$app/Contents/Frameworks/Foo.framework/Foo" "$work/foo.c"
   mkdir -p "$app/Contents/Frameworks/Foo.framework/Resources"
   cat > "$app/Contents/Frameworks/Foo.framework/Resources/Info.plist" <<PLIST
@@ -134,7 +144,7 @@ PLIST
 </dict>
 </plist>
 PLIST
-  for f in "$app/Contents/Frameworks/Foo.framework" "$app" "$prepared/tui/bundle/lib/libfoo.dylib" "$prepared/tui/bundle/bin/sai_tui"; do
+  for f in "$app/Contents/Frameworks/Foo.framework" "$app/Contents/Helpers/codex-app-server" "$app" "$prepared/tui/bundle/lib/libfoo.dylib" "$prepared/tui/bundle/libexec/codex-app-server" "$prepared/tui/bundle/bin/sai_tui"; do
     /usr/bin/codesign --force --sign - "$f" >/dev/null 2>&1
   done
   echo "$commit" > "$prepared/tui/bundle/commit"
@@ -216,8 +226,10 @@ reset_fake
 sign || { cat "$work/out"; fail "sign failed"; }
 signs=$(grep -- '--sign' "$FAKE/codesign.log")
 expected="--force --sign $hash --timestamp=none --keychain $keychain $dist/.signing.PID/sai.app/Contents/Frameworks/Foo.framework
+--force --sign $hash --timestamp=none --keychain $keychain $dist/.signing.PID/sai.app/Contents/Helpers/codex-app-server
 --force --sign $hash --timestamp=none --keychain $keychain --entitlements apps/sai_app/macos/Runner/Release.entitlements $dist/.signing.PID/sai.app
 --force --sign $hash --timestamp=none --keychain $keychain $dist/.signing.PID/tui/bundle/lib/libfoo.dylib
+--force --sign $hash --timestamp=none --keychain $keychain $dist/.signing.PID/tui/bundle/libexec/codex-app-server
 --force --sign $hash --timestamp=none --keychain $keychain $dist/.signing.PID/tui/bundle/bin/sai_tui"
 [ "$(echo "$signs" | sed 's/\.signing\.[0-9]*/.signing.PID/')" = "$expected" ] || fail "signing order or arguments differ:
 $signs"
@@ -225,6 +237,8 @@ grep -- '--sign' "$FAKE/codesign.log" | grep -q -- '--deep' && fail "signed with
 grep -q -- "--verify --deep --strict $dist/.signing.[0-9]*/sai.app" "$FAKE/codesign.log" || fail "the app was not verified deep and strict"
 grep -q -- "--verify --strict $dist/.signing.[0-9]*/tui/bundle/bin/sai_tui" "$FAKE/codesign.log" || fail "the client was not verified strict"
 grep -q -- "--verify --strict $dist/.signing.[0-9]*/tui/bundle/lib/libfoo.dylib" "$FAKE/codesign.log" || fail "the dylib was not verified strict"
+grep -q -- "--verify --strict $dist/.signing.[0-9]*/tui/bundle/libexec/codex-app-server" "$FAKE/codesign.log" || fail "the client's sidecar was not verified strict"
+grep -- '--sign' "$FAKE/codesign.log" | grep -q 'codex-app-server.LICENSE\|codex-app-server.NOTICE' && fail "a licence text was signed as a Mach-O"
 [ "$(cat "$FAKE/security.log")" = "find-identity -v -p codesigning $keychain" ] || fail "security was called more than once"
 grep -q "$hash\|Apple Development" "$work/out" && fail "the identity leaked into the output"
 grep -rq "$hash\|Apple Development" "$dist" && fail "the identity leaked into dist/"
@@ -234,7 +248,7 @@ grep -rq "$hash\|Apple Development" "$dist" && fail "the identity leaked into di
 [ "$(manifest "$prepared")" = "$before" ] || fail "sign changed the prepared tree"
 [ -z "$(ls -A "$dist" | grep '^\.')" ] || fail "staging left behind: $(ls -A "$dist")"
 [ "$(sed -n 's/^manifest //p' "$release/seal")" = "$(sed -n 's/^manifest //p' "$prepared/seal")" ] || fail "the release seal does not name the prepared manifest"
-pass "sign goes inside out — framework, app, dylib, client — from the dedicated keychain, verifies, seals and leaves no trace of the identity"
+pass "sign goes inside out — framework, helper, app, dylib, sidecar, client — from the dedicated keychain, verifies, seals and leaves no trace of the identity"
 
 # --- the signed release is what the installer and publish accept ----------------
 export SAI_INSTALL_APPS_DIR="$work/home/Applications"

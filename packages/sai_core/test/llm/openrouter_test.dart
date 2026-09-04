@@ -48,7 +48,7 @@ void main() {
     messages: [LlmMessage(LlmRole.user, text)],
     maxTokens: 64,
     temperature: 0,
-    reasoning: reasoning,
+    reasoningEffort: reasoning == false ? ReasoningEffort.none : null,
   );
 
   void answerWith(List<String> words) {

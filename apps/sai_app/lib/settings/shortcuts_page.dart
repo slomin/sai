@@ -23,7 +23,11 @@ const shortcutRows = <(String, String)>[
   ('⌘J', 'Open the assistant, or tuck it away'),
   ('⇧⌘P', 'Ask the assistant to propose changes'),
   ('⌘Z', 'Undo the last change'),
-  ('⌘R', 'Let the model think before it answers, or not'),
+  (
+    '⌘R',
+    'Let the model think before it answers, or not (an OpenAI '
+        'provider: set its reasoning effort)',
+  ),
   ('⌘,', 'Settings'),
   ('⏎', 'Send the message to the assistant'),
   ('⇧⏎', 'New line in the message (⌥⏎ works too)'),

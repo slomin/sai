@@ -130,8 +130,9 @@ dart run apps/sai_tui/bin/sai_tui.dart provider add lan --kind openai_compatible
 dart run apps/sai_tui/bin/sai_tui.dart provider list
 ```
 
-Three kinds exist: `fake` (offline), `openai_compatible` (any `/v1`
-endpoint: `llama-server`, LM Studio, the LAN server) and `openrouter`
+Five kinds exist: `fake` (offline), `openai_compatible` (any `/v1`
+endpoint: `llama-server`, LM Studio, the LAN server), the two OpenAI
+kinds of #26 (below) and `openrouter`
 (ADR 0022: fixed to `https://openrouter.ai/api/v1`, always `cloud`,
 always keyed — `secret set openrouter` configures the built-in and
 files the key; on its recommended preset every request pins
@@ -157,6 +158,43 @@ another host, port or scheme means entering its key again. Adding an
 existing id changes only the options given (`--no-key` drops the key
 reference); `secret clear <id>` removes a key whether or not its
 provider is still configured.
+
+OpenAI is two providers, never one (#26, ADR 0023), because a ChatGPT
+plan and an API key are two products with two bills:
+
+```sh
+# your ChatGPT plan, through OpenAI's own Codex App Server, which sai
+# runs as a child — no key; sign in once inside sai
+dart run apps/sai_tui/bin/sai_tui.dart provider add chatgpt --kind chatgpt_subscription
+dart run apps/sai_tui/bin/sai_tui.dart provider login chatgpt              # browser, or --device-code
+dart run apps/sai_tui/bin/sai_tui.dart provider models chatgpt             # the plan's models and their efforts
+dart run apps/sai_tui/bin/sai_tui.dart provider add chatgpt --model gpt-5.6-sol --effort high
+# the OpenAI API, billed to your API project, the key in the Keychain
+dart run apps/sai_tui/bin/sai_tui.dart provider add openai --kind openai --model gpt-5.6-sol
+dart run apps/sai_tui/bin/sai_tui.dart secret set openai
+dart run apps/sai_tui/bin/sai_tui.dart provider reasoning openai xhigh    # or default
+```
+
+`chatgpt_subscription` is served by a pinned, checksum-verified App
+Server bundled with the stable release (`docs/release/README.md`): sai
+holds no token, the runtime owns the login in its own credential home
+(`~/Library/Application Support/sai/codex`, keyring-backed), and it runs
+under a Seatbelt profile as a text bridge — a command, a file change or a
+tool call it attempts stops the turn. The model comes from the live
+`model/list`; the reasoning effort from that model's advertised list, or
+**Model default**. `openai` is the Responses API at
+`https://api.openai.com` with `store: false`, no tools and no conversation
+state; the model is an exact id (Settings suggests the ids the key can
+reach, as guidance), the effort one of `none minimal low medium high
+xhigh max` or Model default — which a model takes is the model's business,
+and an unsupported pair fails once on Test and every call, with neither
+choice moved. Neither kind takes an endpoint or `--privacy local`; a
+failure on one is never retried on the other, and switching billing is
+choosing the other provider. Both carry their own effort: the global
+reasoning switch below is for the other kinds, and View › Enable
+Reasoning reads **Set Reasoning Effort…** while one of them is active. The
+dev flavor runs no App Server and holds no key. A person runs the cloud
+smoke (`docs/smoke/cloud.md`); an agent never does.
 
 The app reads the same settings and keys: Settings › Providers (⌘,)
 lists every provider, switches the active one in a click, refreshes an endpoint's
@@ -271,7 +309,11 @@ answer is marked `tasks withheld`. A model that
 thinks before it answers (LM Studio's reasoning models do) is asked not
 to unless the reasoning switch is on — in Settings › Providers, View ›
 **Enable Reasoning** (⌘R), or `sai_tui reasoning on`; off is faster and
-the default. On, the thinking streams too, is recorded on the response
+the default. The two OpenAI kinds (#26) carry a reasoning effort of
+their own instead — a word the model advertises, or Model default — set
+in Settings › Providers or with `sai_tui provider reasoning <id>`; ⌘R
+opens that setting while one of them is active, and the archive's
+`provider.request` line records the effort asked for. On, the thinking streams too, is recorded on the response
 line, and shows dimmed above the answer. While an answer is awaited the
 app shows three dots breathing in turn (a still *Thinking* under Reduce
 Motion; the TUI keeps its `…`), then the answer with a thin cursor as
@@ -350,6 +392,7 @@ dart build cli -t apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/
 dart build cli -t apps/sai_tui/bin/sai_tui-dev.dart --root-package=sai_tui -o build/tui-dev
 sh tool/test/install_local_test.sh       # the installer, both flavors, against temporary roots
 sh tool/test/release_sign_test.sh        # the signing phase, with a fake security/codesign on PATH
+sh tool/test/vendor_app_server_test.sh   # the pinned App Server: digests, placement, never executed
 gitleaks git . --config .gitleaks.toml   # no secret in any commit
 ```
 

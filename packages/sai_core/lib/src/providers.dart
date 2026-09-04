@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:riverpod/riverpod.dart';
 
 import 'app_info.dart';
@@ -14,9 +15,18 @@ import 'archive/event.dart';
 import 'archive/verify_state.dart';
 import 'llm/call.dart';
 import 'llm/connection.dart';
+import 'llm/effort.dart';
 import 'llm/failure.dart';
 import 'llm/builtins.dart';
 import 'llm/factory.dart';
+import 'llm/codex_app_server/config.dart';
+import 'llm/codex_app_server/runtime.dart';
+import 'llm/codex_app_server/protocol.dart';
+import 'llm/codex_app_server/sidecar.dart';
+import 'llm/codex_app_server/state.dart';
+import 'llm/codex_app_server/text.dart';
+import 'llm/openai/openai.dart';
+import 'llm/openai/provider.dart';
 import 'llm/openai_compatible/policy.dart';
 import 'llm/openai_compatible/provider.dart';
 import 'llm/openrouter.dart';
@@ -26,6 +36,8 @@ import 'llm/provider.dart';
 import 'llm/recorder.dart';
 import 'llm/status.dart';
 import 'llm/usage.dart';
+import 'process/dart_runner.dart';
+import 'process/runner.dart';
 import 'proposals/notifier.dart';
 import 'proposals/proposal.dart';
 import 'secrets/keychain.dart';
@@ -289,6 +301,26 @@ final reasoningProvider = Provider<bool>(
   (ref) => ref.watch(settingsProvider.select((s) => s.reasoningOn)),
 );
 
+/// The reasoning effort the next request to the active provider carries
+/// (#26): an OpenAI kind's own `reasoning_effort` setting — null for
+/// Model default — or, for every other kind, the switch above translated
+/// as it always was (on → the backend's default, off → `none`). Resolved
+/// here, before assembly, so a client never decides a wire word.
+final requestedEffortProvider = Provider<ReasoningEffort?>((ref) {
+  final provider = ref.watch(activeLlmProvider);
+  final on = ref.watch(reasoningProvider);
+  if (provider == null) return on ? null : ReasoningEffort.none;
+  return requestedEffortFor(provider, reasoningOn: on);
+});
+
+/// Whether the clients show the model's reasoning (#26): what the next
+/// request carries is not `none` — the switch for most kinds; for an
+/// OpenAI kind its entry's own effort, where Model default may reason
+/// and the switch is not its.
+final reasoningShownProvider = Provider<bool>(
+  (ref) => ref.watch(requestedEffortProvider) != ReasoningEffort.none,
+);
+
 /// When a finished task leaves its working views (#97), as settings hold
 /// it (`finished_task_visibility`, end of the local day by default).
 final finishedTaskVisibilityProvider = Provider<FinishedTaskVisibility>(
@@ -430,15 +462,104 @@ String? _shippedCredential(LlmProvider? provider) =>
 /// to anything else.
 final openRouterEndpointProvider = Provider<Uri>((ref) => openRouterEndpoint);
 
+/// Where the `openai` kind dials (#26): OpenAI's fixed origin, or the
+/// loopback stub a test hands in — the factory refuses any other host.
+final openAiEndpointProvider = Provider<Uri>((ref) => openAiEndpoint);
+
 /// The factories this build can turn a [ProviderConfig] into, by kind.
 final llmFactoriesProvider = Provider<Map<String, LlmProviderFactory>>((ref) {
   final openRouter = ref.watch(openRouterEndpointProvider);
+  final openAi = ref.watch(openAiEndpointProvider);
+  final runtime = ref.watch(appServerRuntimeProvider);
+  // No runtime has a reason: the dev copy runs none, or the home named
+  // for it was refused. The ChatGPT kind says which.
+  final noRuntimeText = ref.watch(codexHomeRefusedProvider)
+      ? CodexText.homeUnsafe
+      : CodexText.devRefused;
   return {
     'fake': fakeProviderFactory,
     'openai_compatible': openAiCompatibleFactory,
     openRouterKind: (config, secrets) =>
         openRouterFactory(config, secrets, endpoint: openRouter),
+    openAiKind: (config, secrets) =>
+        openAiFactory(config, secrets, endpoint: openAi),
+    chatGptKind: (config, secrets) =>
+        chatGptFactory(config, runtime: runtime, noRuntimeText: noRuntimeText),
   };
+});
+
+/// The process runner the App Server is started through (#26, ADR 0013):
+/// `dart:io` in production, the only real spawn in `lib/`; every test
+/// overrides it with a scripted fake, so nothing under `test/` starts the
+/// real binary against a real home (`no_spawn_test`).
+final processRunnerProvider = Provider<ProcessRunner>(
+  (ref) => const DartProcessRunner(),
+);
+
+/// Where the bundled App Server is (#26): beside the running executable
+/// in a release, nowhere in a `dart run` or a dev build. Tests hand in a
+/// path of their own.
+final sidecarLocatorProvider = Provider<SidecarLocator?>(
+  (ref) => SidecarLocator.beside(Platform.resolvedExecutable),
+);
+
+/// The credential home as resolved, and whether it was refused: a
+/// `SAI_CODEX_HOME` that is relative, or the person's own `~/.codex`, is
+/// refused — and the refusal reaches the ChatGPT kind alone, in fixed
+/// words, never the registry every other provider lives in.
+final _codexHomeResolutionProvider =
+    Provider<({Directory? home, bool refused})>((ref) {
+      try {
+        return (
+          home: resolveCodexHome(
+            environment: ref.watch(environmentProvider),
+            operatingSystem: Platform.operatingSystem,
+            identity: ref.watch(identityProvider),
+          ),
+          refused: false,
+        );
+      } on ArgumentError {
+        return (home: null, refused: true);
+      } on StateError {
+        return (home: null, refused: true);
+      }
+    });
+
+/// The credential home the runtime owns, or null: the dev flavor (#95),
+/// or an override that was refused. `<data dir>/codex`, or
+/// `SAI_CODEX_HOME` for a scratch smoke.
+final codexHomeProvider = Provider<Directory?>(
+  (ref) => ref.watch(_codexHomeResolutionProvider).home,
+);
+
+/// Whether `SAI_CODEX_HOME` named a home sai refuses to use.
+final codexHomeRefusedProvider = Provider<bool>(
+  (ref) => ref.watch(_codexHomeResolutionProvider).refused,
+);
+
+/// The one App Server runtime of this process (#26): one child, one
+/// lock, one credential home, shared by every `chatgpt_subscription`
+/// entry — they are all the same login. Null where no runtime can run:
+/// the dev flavor, or a build with no sidecar; the factory then builds a
+/// provider that refuses in fixed words before any spawn.
+final appServerRuntimeProvider = Provider<AppServerRuntime?>((ref) {
+  final home = ref.watch(codexHomeProvider);
+  final sidecar = ref.watch(sidecarLocatorProvider);
+  final environment = ref.watch(environmentProvider);
+  final keychains = resolveKeychainsDir(environment);
+  if (home == null || sidecar == null || keychains == null) return null;
+  final runtime = AppServerRuntime(
+    CodexLaunch(
+      sidecar: sidecar,
+      home: home,
+      tempRoot: Directory(p.join(home.parent.path, 'codex-tmp')),
+      keychainsDir: keychains,
+      runner: ref.watch(processRunnerProvider),
+      clientVersion: saiVersion,
+    ),
+  );
+  ref.onDispose(() => unawaited(runtime.close()));
+  return runtime;
 });
 
 /// Configured providers whose kind is known but whose configuration the
@@ -772,6 +893,309 @@ class OpenRouterCatalogueNotifier extends Notifier<OpenRouterCatalogue> {
   }
 }
 
+/// The `openai` model list (#26): the ids the stored key can reach,
+/// read once the block shows with a key and on its own Refresh — never on
+/// the connection watcher's timer — kept for the session, written
+/// nowhere. Guidance, not a gate: the list says nothing about which ids
+/// take the Responses API or an effort; a typed id stands whether or not
+/// it is listed. Forgotten when a key is stored or removed.
+final openAiCatalogueProvider =
+    NotifierProvider<OpenAiCatalogueNotifier, OpenAiCatalogue>(
+      OpenAiCatalogueNotifier.new,
+    );
+
+class OpenAiCatalogueNotifier extends Notifier<OpenAiCatalogue> {
+  Future<void>? _reading;
+  var _epoch = 0;
+
+  @override
+  OpenAiCatalogue build() {
+    ref.listen(credentialsProvider, (_, _) => forget());
+    return const OpenAiCatalogue();
+  }
+
+  Future<void> get done => _reading ?? Future.value();
+
+  String? _readingId;
+
+  /// The session's first reading through the `openai` provider [id]
+  /// names; nothing once one was attempted for that entry — Refresh is
+  /// the retry. Another entry is another key: it is read afresh.
+  Future<void> load(String id) =>
+      state.attempted && state.id == id ? done : _read(id);
+
+  /// A new reading; a call while one runs for the same entry joins it.
+  Future<void> refresh(String id) =>
+      _reading != null && _readingId == id ? _reading! : _read(id);
+
+  void forget() {
+    if (!state.attempted) return;
+    _epoch++;
+    _reading = null;
+    state = const OpenAiCatalogue();
+  }
+
+  Future<void> _read(String id) {
+    final provider = ref.read(llmRegistryProvider)[id];
+    if (provider is! OpenAiResponsesProvider) return Future.value();
+    // A reading for another entry under way is superseded: its answer
+    // is dropped when it lands.
+    if (_reading != null && _readingId != id) _epoch++;
+    _readingId = id;
+    final kept = state.id == id ? state.models : null;
+    state = OpenAiCatalogue(id: id, models: kept, loading: true);
+    late final Future<void> mine;
+    mine = _fetch(provider, kept, _epoch).whenComplete(() {
+      if (identical(_reading, mine)) _reading = null;
+    });
+    return _reading = mine;
+  }
+
+  Future<void> _fetch(
+    OpenAiResponsesProvider provider,
+    List<String>? kept,
+    int epoch,
+  ) async {
+    OpenAiCatalogueAnswer answer;
+    try {
+      answer = await fetchOpenAiCatalogue(provider);
+    } on Object catch (error) {
+      answer = (
+        models: null,
+        failure: LlmFailure(
+          LlmFailureKind.internal,
+          TransportText.threw(error),
+          endpoint: provider.origin,
+        ),
+      );
+    }
+    if (!ref.mounted || epoch != _epoch) return;
+    if (answer.failure != null && provider.isClosed) {
+      state = OpenAiCatalogue(id: provider.id, models: kept);
+      return;
+    }
+    state = OpenAiCatalogue(
+      id: provider.id,
+      models: answer.models ?? kept,
+      failure: answer.failure,
+    );
+  }
+}
+
+/// The ChatGPT subscription's live state (#26): the account, the model
+/// list with each model's efforts, the plan's limits and the sign-in
+/// under way — one state for every entry of the kind, since they share
+/// the one runtime and the one login. Read on demand and on Refresh;
+/// concurrent reads join the one under way; the runtime's own
+/// notifications (a login finished, the account changed, the limits
+/// moved) update it as they land. Nothing here is persisted: the email
+/// and the plan word are shown and forgotten.
+final chatGptProvider = NotifierProvider<ChatGptNotifier, ChatGptState>(
+  ChatGptNotifier.new,
+);
+
+class ChatGptNotifier extends Notifier<ChatGptState> {
+  Future<void>? _reading;
+  var _epoch = 0;
+
+  /// Whether the account changed under a reading, so another follows it.
+  var _stale = false;
+  final _subscriptions = <StreamSubscription<Object?>>[];
+
+  @override
+  ChatGptState build() {
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+    final runtime = ref.watch(appServerRuntimeProvider);
+    if (runtime != null) {
+      _subscriptions.add(
+        runtime.accountUpdates.listen((_) {
+          // Whoever is signed in may have changed: re-read, and drop the
+          // list — it is the account's. A reading under way is left to
+          // finish; another follows it.
+          if (!ref.mounted) return;
+          state = state.copyWith(models: () => null, limits: () => null);
+          if (_reading != null) {
+            _stale = true;
+            return;
+          }
+          unawaited(_read());
+        }),
+      );
+      _subscriptions.add(
+        runtime.loginCompleted.listen((event) {
+          if (!ref.mounted) return;
+          final login = state.login;
+          // A completion for a cancelled or replaced attempt is not this
+          // one's.
+          if (event.loginId != null &&
+              login.loginId != null &&
+              event.loginId != login.loginId) {
+            return;
+          }
+          if (!login.inProgress) return;
+          state = state.copyWith(
+            login: login.as(
+              event.success
+                  ? ChatGptLoginPhase.completing
+                  : ChatGptLoginPhase.failed,
+            ),
+          );
+          if (event.success) {
+            unawaited(
+              _read().then((_) {
+                if (ref.mounted &&
+                    state.login.phase == ChatGptLoginPhase.completing) {
+                  state = state.copyWith(login: ChatGptLogin.idle);
+                }
+              }),
+            );
+          }
+        }),
+      );
+      _subscriptions.add(
+        runtime.rateLimitUpdates.listen((limits) {
+          if (ref.mounted) state = state.copyWith(limits: () => limits);
+        }),
+      );
+      ref.onDispose(() {
+        for (final sub in _subscriptions) {
+          sub.cancel();
+        }
+      });
+    }
+    return const ChatGptState();
+  }
+
+  Future<void> get done => _reading ?? Future.value();
+
+  /// The session's first reading; nothing once one was attempted.
+  Future<void> load() => state.attempted ? done : _read();
+
+  /// A new reading; a call while one runs joins it.
+  Future<void> refresh() => _reading ?? _read();
+
+  /// Drops what was read, so the next [load] reads again.
+  void forget() {
+    _epoch++;
+    _reading = null;
+    state = ChatGptState(login: state.login);
+  }
+
+  Future<void> _read() {
+    final runtime = ref.read(appServerRuntimeProvider);
+    if (runtime == null) {
+      state = state.copyWith(
+        loading: false,
+        failure: () =>
+            const LlmFailure(LlmFailureKind.credential, CodexText.devRefused),
+      );
+      return Future.value();
+    }
+    state = state.copyWith(loading: true);
+    late final Future<void> mine;
+    mine = _fetch(runtime, _epoch).whenComplete(() {
+      if (identical(_reading, mine)) _reading = null;
+      if (_stale && ref.mounted) {
+        _stale = false;
+        unawaited(_read());
+      }
+    });
+    return _reading = mine;
+  }
+
+  Future<void> _fetch(AppServerRuntime runtime, int epoch) async {
+    CodexAccount account;
+    List<CodexModel>? models;
+    CodexRateLimits? limits;
+    LlmFailure? failure;
+    try {
+      account = await runtime.account();
+      if (account.isChatGpt) {
+        models = await runtime.models();
+        try {
+          limits = await runtime.rateLimits();
+        } on CodexException {
+          // Limits are a courtesy; the list and the account stand.
+        }
+      }
+    } on CodexException catch (e) {
+      account = const CodexAccount(CodexAccountType.none);
+      failure = LlmFailure(
+        e.credential ? LlmFailureKind.credential : LlmFailureKind.unreachable,
+        e.text,
+      );
+    }
+    if (!ref.mounted || epoch != _epoch) return;
+    state = state.copyWith(
+      account: () => failure == null ? account : state.account,
+      models: () => models ?? (failure == null ? null : state.models),
+      limits: () => limits ?? (failure == null ? null : state.limits),
+      loading: false,
+      failure: () => failure,
+    );
+  }
+
+  /// Starts a sign-in: the browser flow (the URL comes back for the
+  /// client to open) or the device code (the URL and the code come back
+  /// to show). One at a time.
+  Future<ChatGptLogin> signIn({required bool deviceCode}) async {
+    if (state.login.inProgress) {
+      throw const CodexException(CodexText.loginBusy);
+    }
+    final runtime = ref.read(appServerRuntimeProvider);
+    if (runtime == null) {
+      throw const CodexException(CodexText.devRefused, credential: true);
+    }
+    final start = await runtime.startLogin(deviceCode: deviceCode);
+    if (!ref.mounted) return ChatGptLogin.idle;
+    final login = ChatGptLogin(
+      start.isDeviceCode
+          ? ChatGptLoginPhase.deviceCode
+          : ChatGptLoginPhase.browser,
+      loginId: start.loginId,
+      authUrl: start.authUrl,
+      verificationUrl: start.verificationUrl,
+      userCode: start.userCode,
+    );
+    state = state.copyWith(login: login);
+    return login;
+  }
+
+  /// Cancels the sign-in under way, if any.
+  Future<void> cancelSignIn() async {
+    final login = state.login;
+    if (!login.inProgress) return;
+    state = state.copyWith(login: login.as(ChatGptLoginPhase.cancelled));
+    final runtime = ref.read(appServerRuntimeProvider);
+    final id = login.loginId;
+    if (runtime != null && id != null) await runtime.cancelLogin(id);
+  }
+
+  /// Clears a finished, failed or cancelled attempt from view.
+  void dismissLogin() {
+    if (state.login.inProgress) return;
+    state = state.copyWith(login: ChatGptLogin.idle);
+  }
+
+  /// Signs out through the runtime and re-reads: the list and the limits
+  /// go with the account.
+  Future<void> signOut() async {
+    final runtime = ref.read(appServerRuntimeProvider);
+    if (runtime == null) {
+      throw const CodexException(CodexText.devRefused, credential: true);
+    }
+    await runtime.logout();
+    if (!ref.mounted) return;
+    _epoch++;
+    _reading = null;
+    state = ChatGptState();
+    await _read();
+  }
+}
+
 /// Whether the cache warmer runs at all. Test harnesses switch it off
 /// so a probeable provider in a widget test never fires an inference.
 final warmEnabledProvider = Provider<bool>((ref) => true);
@@ -806,12 +1230,12 @@ class CacheWarmer extends Notifier<WarmState> {
   var _epoch = 0;
 
   /// The prefix each provider id last warmed (catalog bytes and the
-  /// reasoning flag), so an unchanged prefix is never re-sent.
-  final _warmed = <String, (String, bool?)>{};
+  /// reasoning effort), so an unchanged prefix is never re-sent.
+  final _warmed = <String, (String, ReasoningEffort?)>{};
 
   /// The prefix each id last failed on — retried only once something
   /// changes, so a probe-ok-but-chat-failing endpoint cannot loop.
-  final _failed = <String, (String, bool?)>{};
+  final _failed = <String, (String, ReasoningEffort?)>{};
 
   /// Measured ingestion per id, in recorded request bytes per second,
   /// behind the indicator's percentage.
@@ -824,7 +1248,7 @@ class CacheWarmer extends Notifier<WarmState> {
   /// make the TUI re-read the log every two seconds, and cancelling on
   /// every content-identical projection turned one warm into a stutter
   /// of one-second bursts (measured before this guard existed).
-  (String, bool?)? _inFlight;
+  (String, ReasoningEffort?)? _inFlight;
 
   /// The last fraction shown, so the keep path can return it.
   double? _lastFraction;
@@ -880,14 +1304,14 @@ class CacheWarmer extends Notifier<WarmState> {
       return stopped();
     }
     if (connection.level != ConnectionLevel.ready) return stopped();
-    final reasoning = ref.watch(reasoningProvider) ? null : false;
+    final effort = ref.watch(requestedEffortProvider);
     final request = assembleWarmup(
       profile: defaultProfile,
       projection: projection,
       today: ref.watch(todayProvider),
-      reasoning: reasoning,
+      reasoningEffort: effort,
     );
-    final key = (request.taskContext!, reasoning);
+    final key = (request.taskContext!, effort);
     // A finished local catalog turn ingested this very prefix; note it
     // rather than re-sending 35 KB of request line after every answer.
     ref.listen(chatProvider, (previous, next) {
@@ -926,7 +1350,7 @@ class CacheWarmer extends Notifier<WarmState> {
     int epoch,
     LlmProvider provider,
     LlmRequest request,
-    (String, bool?) key,
+    (String, ReasoningEffort?) key,
   ) async {
     if (epoch != _epoch || !ref.mounted) return;
     final container = ref.container;

@@ -50,6 +50,38 @@ void main() {
     ];
   }
 
+  test(
+    'the request line names the explicit effort, never the default',
+    () async {
+      LlmRequest at(ReasoningEffort? effort) => LlmRequest(
+        messages: const [LlmMessage(LlmRole.user, 'hi')],
+        reasoningEffort: effort,
+      );
+      await (await recorder.start(FakeLlmProvider(), at(null))).done;
+      await (await recorder.start(
+        FakeLlmProvider(),
+        at(ReasoningEffort.none),
+      )).done;
+      await (await recorder.start(
+        FakeLlmProvider(),
+        at(const ReasoningEffort('xhigh')),
+      )).done;
+      final requests = lines()
+          .where((l) => l['type'] == 'provider.request')
+          .map((l) => l['payload'] as Map)
+          .toList();
+      expect(requests, hasLength(3));
+      expect(requests[0], isNot(contains('reasoning_effort')));
+      expect(requests[0], isNot(contains('reasoning')));
+      expect(requests[1]['reasoning_effort'], 'none');
+      expect(requests[2]['reasoning_effort'], 'xhigh');
+      // The old boolean is never written again (#26); old lines stand.
+      for (final r in requests) {
+        expect(r, isNot(contains('reasoning')));
+      }
+    },
+  );
+
   test('a successful call is request, response and usage', () async {
     final call = await recorder.start(FakeLlmProvider(), ask('hello world'));
     final result = await call.done;

@@ -130,10 +130,17 @@ the layout and the toolchain; this file has the rules.
   rewrite `.claude/settings.json`, so a sandboxed `git rebase` or
   `checkout` that would touch it fails part-way — edit that file with
   the Edit tool and leave history rewrites to a terminal.
-- Outbound HTTP goes only through `OpenAiCompatibleProvider`'s transport
-  in `sai_core` (ADR 0009): no redirects, no proxy, no certificate
-  bypass, plaintext only to this machine or the LAN (ADR 0012), fixed
-  failure text naming an origin. Tests talk to a loopback stub, never the network.
+- Outbound HTTP goes only through `BoundedHttp` in
+  `sai_core/lib/src/llm/openai_compatible/transport.dart` (ADR 0009,
+  0023) — the chat-completions and the Responses dialects both compose
+  it: no redirects, no proxy, no certificate bypass, plaintext only to
+  this machine or the LAN (ADR 0012), fixed failure text naming an
+  origin. Tests talk to a loopback stub, never the network. The ChatGPT
+  runtime (`codex-app-server`, #26) is the one child sai starts, through
+  the one `ProcessRunner` in `sai_core/lib/src/process/`, under the
+  checked-in Seatbelt profile, with six environment variables and no
+  inherited key; tests drive `package:sai_core/process_testing.dart`'s
+  scripted fake, never the binary.
 - Task data reaches a provider only through `LlmRecorder`, which applies
   the privacy policy (ADR 0010): a caller puts the list in
   `LlmRequest.taskContext`, never in a message of its own, so a cloud

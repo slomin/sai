@@ -1,7 +1,9 @@
 import '../secrets/secret_store.dart';
 import '../settings/endpoint.dart';
 import '../settings/provider_config.dart';
+import 'codex_app_server/config.dart';
 import 'fake.dart';
+import 'openai/openai.dart';
 import 'openai_compatible/provider.dart';
 import 'openrouter.dart';
 import 'provider.dart';
@@ -35,10 +37,21 @@ const llmKindNeeds = <String, List<String>>{
 };
 
 /// The first key of [llmKindNeeds] that [config] lacks, or null. The
-/// `openrouter` kind judges its own (`openRouterProblem`): an absent key
-/// by name, a wrong value as a phrase — either way the entry is
-/// misconfigured, never built and never silently re-routed.
+/// cloud kinds judge their own (`openRouterProblem`, `openAiProblem`,
+/// `chatGptProblem`): an absent key by name, a wrong value as a phrase —
+/// either way the entry is misconfigured, never built and never silently
+/// re-routed. A reasoning effort (#26) belongs to the two OpenAI kinds
+/// alone; another kind carrying one is misconfigured too.
 String? missingForKind(ProviderConfig config) {
+  switch (config.kind) {
+    case openAiKind:
+      return openAiProblem(config);
+    case chatGptKind:
+      return chatGptProblem(config);
+  }
+  if (config.reasoningEffort != null) {
+    return 'carrying a reasoning effort, which only the OpenAI kinds take';
+  }
   if (config.kind == openRouterKind) return openRouterProblem(config);
   for (final key in llmKindNeeds[config.kind] ?? const <String>[]) {
     final present = switch (key) {

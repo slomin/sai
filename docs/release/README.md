@@ -237,6 +237,62 @@ packaging tools runs after the keychain has been asked. `spctl -a -t
 exec sai.app` is expected to say *rejected* — that is Gatekeeper
 reporting the missing notarisation, not a broken signature.
 
+## The bundled App Server
+
+A stable release carries OpenAI's Codex App Server (#26, ADR 0023): the
+runtime that serves the ChatGPT subscription provider, owning the login
+so sai never holds a token (ADR 0013). It is a third-party binary, and
+it is pinned to the byte:
+
+- `tool/vendor/codex-app-server.pin` names one exact stable release of
+  `openai/codex` (today `rust-v0.152.0`), the two official macOS
+  archives (`aarch64` and `x86_64`) with the SHA-256 GitHub reports for
+  each, and the upstream `LICENSE` and `NOTICE` with theirs. Never a
+  floating "latest", never an alpha, never anything found on this Mac —
+  no Homebrew or npm Codex, not your own installation, not `PATH`.
+- `prepare stable` runs `tool/vendor-app-server.sh place`: the archives
+  are fetched into `build/vendor/codex-app-server/` (outside the tracked
+  tree; `SAI_VENDOR_CACHE` moves it), each verified against its pinned
+  digest **before** anything is extracted — a mismatch is fatal and the
+  file is removed — then joined with `lipo` into one universal helper at
+  `sai.app/Contents/Helpers/codex-app-server` and copied as this Mac's
+  slice to `bundle/libexec/codex-app-server` in the terminal client, the
+  Apache-2.0 licence and the notice with each
+  (`codex-app-server.LICENSE`, `codex-app-server.NOTICE` — under
+  `Contents/Resources/` in the app, where a bundle keeps text, and in
+  `libexec/` in the client), and the tag in `codex-app-server.version`. Nothing runs a downloaded binary during
+  preparation: the digest is the version.
+- `sign` signs both copies inside out with the rest (the helper before
+  the app, the client's slice before the client); the manifest seals
+  them; `verify-release.sh` refuses a stable release whose helper does
+  not verify, is not universal, or lacks its notices — and a dev release
+  that carries one at all: the dev copy runs no runtime (#95).
+- `tool/test/vendor_app_server_test.sh` proves the rules against
+  fixtures (a fake `curl`, two `cc`-built slices, a tripwire that would
+  show if the binary ever ran); CI runs it.
+
+Upgrading the runtime is its own pull request, never a side effect:
+fetch the new stable release's asset digests
+(`gh release view <tag> -R openai/codex --json assets`), move the pin —
+tag, URLs, digests — and the `release` constant in
+`packages/sai_core/lib/src/llm/codex_app_server/protocol.dart`, replace
+the two fixtures under
+`packages/sai_core/test/llm/codex_app_server/fixtures/` with the README
+and v2 schema at that tag, re-diff what the allowlists name, run the
+whole suite, then the cloud smoke (`docs/smoke/cloud.md`, route G) on a
+stable build. A runtime that changed its protocol, its config keys or
+its Keychain scheme shows up there, not in production.
+
+At run time the app finds its helper beside its executable and the
+terminal client its slice beside its own (`bundle/libexec/`); a `dart
+run`, a debug build or a dev release has none, and the ChatGPT provider
+says so in fixed words. The runtime's credential home is
+`~/Library/Application Support/sai/codex/` — created 0700 with sai's own
+`config.toml`, keyring-backed, ChatGPT-only login, no history, no MCP, no
+web search — and its Keychain item is the runtime's own (`Codex Auth`),
+never read by sai. Removing sai does not sign that item out: revoke the
+ChatGPT session at chatgpt.com, or sign out in Settings › Providers first.
+
 ### The dedicated signing keychain, once
 
 The stable identity lives in its own keychain at
@@ -275,7 +331,9 @@ Mac's own backup, or re-create the identity.
 **Dev holds no credentials.** The dev flavor never opens a Keychain: a
 credential-backed provider is *no credentials in dev* in the app, the
 connection light and `sai_tui-dev provider list`, and `sai_tui-dev secret
-…` refuses. Items an earlier dev copy filed under `me.slominski.sai.dev`
+…` refuses. It runs no ChatGPT runtime either (#26): the dev release
+carries no App Server, and `sai_tui-dev provider login …` refuses before
+anything is spawned. Items an earlier dev copy filed under `me.slominski.sai.dev`
 are left untouched and never read; remove them by hand in Keychain
 Access (search for `me.slominski.sai.dev`) when you want them gone. A
 cloud smoke uses a stable-signed bundle with scratch archive and

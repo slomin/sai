@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sai_app/commands.dart';
 import 'package:sai_app/settings/providers_page.dart';
 import 'package:sai_app/settings/settings_screen.dart';
+import 'package:sai_core/process_testing.dart';
 import 'package:sai_core/sai_core.dart';
 
 import 'harness.dart';
@@ -405,6 +406,383 @@ void main() {
       expect(lines[0], contains('"share_tasks":false'));
       expect(lines[1], contains('"provider.request"'));
       expect(lines[1], contains('"refs"'));
+    });
+  });
+
+  group('the OpenAI API kind (#26)', () {
+    late StubServer stub;
+    HttpOverrides? blocked;
+    setUp(() async {
+      blocked = HttpOverrides.current;
+      HttpOverrides.global = null;
+      stub = await StubServer.start();
+      stub.openAiModels = ['gpt-5.6-luna', 'gpt-5.6-sol', 'o4-mini'];
+    });
+    tearDown(() async {
+      await stub.close();
+      HttpOverrides.global = blocked;
+    });
+
+    Future<ProviderContainer> setUpOpenAi(WidgetTester tester) async {
+      final container = await pumpApp(
+        tester,
+        openAiEndpoint: Uri.parse(stub.v1),
+      );
+      container
+          .read(settingsProvider.notifier)
+          .upsertProvider(
+            ProviderConfig(
+              id: 'openai',
+              kind: openAiKind,
+              defaultModel: 'gpt-5.6-sol',
+              credential: 'provider:openai',
+            ),
+          );
+      await tester.pump();
+      await open(tester);
+      await select(tester, 'openai');
+      return container;
+    }
+
+    Map<String, Object?> entry(ProviderContainer container) =>
+        container.read(settingsProvider).provider('openai')!.toJson();
+
+    testWidgets('names its billing, keeps its own effort, lists models '
+        'once a key is stored, and applies an exact id', (tester) async {
+      final container = await setUpOpenAi(tester);
+      expect(
+        find.textContaining(
+          'gpt-5.6-sol — cloud · OpenAI API, billed separately',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('OpenAI API — billed separately'), findsOneWidget);
+      // The global switch is not this kind's: its effort menu is.
+      expect(find.byKey(reasoningSwitchKey), findsNothing);
+      expect(find.byKey(openAiEffortKey), findsOneWidget);
+      expect(find.text('Model default'), findsOneWidget);
+      expect(find.text('Save an OpenAI key to list models'), findsOneWidget);
+      expect(find.byKey(apiKeyFieldKey), findsOneWidget);
+      // A key: the list is read, once, and offered as one types.
+      await tester.enterText(find.byKey(apiKeyFieldKey), canary);
+      await tapVisible(tester, find.widgetWithText(FilledButton, 'Save'));
+      await until(
+        tester,
+        () => container.read(openAiCatalogueProvider).models != null,
+      );
+      await tester.pump();
+      expect(
+        find.textContaining('3 models this key can reach — guidance only'),
+        findsOneWidget,
+      );
+      expect(stub.requests.where((r) => r == 'GET /v1/models'), hasLength(1));
+      await tester.enterText(find.byKey(openAiModelFieldKey), 'luna');
+      await tester.pump();
+      expect(find.text('gpt-5.6-luna'), findsOneWidget);
+      await tapVisible(tester, find.text('gpt-5.6-luna'));
+      await tapVisible(tester, find.byKey(openAiModelApplyKey));
+      expect(entry(container)['default_model'], 'gpt-5.6-luna');
+      expect(entry(container), isNot(contains('reasoning_effort')));
+      // A typed id that is not listed still applies: guidance, not a gate.
+      await tester.enterText(find.byKey(openAiModelFieldKey), 'gpt-6-preview');
+      await tapVisible(tester, find.byKey(openAiModelApplyKey));
+      expect(entry(container)['default_model'], 'gpt-6-preview');
+      // The effort is its own choice; the model stays.
+      await tapVisible(tester, find.byKey(openAiEffortKey));
+      await tester.pump();
+      await tester.tap(find.text('xhigh').last);
+      await tester.pump();
+      expect(entry(container)['reasoning_effort'], 'xhigh');
+      expect(entry(container)['default_model'], 'gpt-6-preview');
+      expect(find.textContaining('depends on the model'), findsOneWidget);
+      // Nothing of the key or the list on disk.
+      final settings = File(container.read(settingsFileProvider).path)
+          .readAsStringSync();
+      expect(settings, isNot(contains(canary)));
+      expect(settings, isNot(contains('o4-mini')));
+      await close(tester);
+      await container.read(llmRegistryProvider)['openai']!.close();
+    });
+
+    testWidgets('Test runs the exact pair; an unsupported effort fails once '
+        'and changes nothing', (tester) async {
+      final container = await setUpOpenAi(tester);
+      container.read(credentialsProvider.notifier).set('openai', canary);
+      container
+          .read(settingsProvider.notifier)
+          .upsertProvider(
+            container
+                .read(settingsProvider)
+                .provider('openai')!
+                .copyWith(reasoningEffort: () => 'xhigh'),
+          );
+      await tester.pump();
+      stub.responsesStatus = 400;
+      stub.responsesParam = 'reasoning.effort';
+      await tapVisible(tester, find.widgetWithText(TextButton, 'Test'));
+      await until(
+        tester,
+        () => find
+            .textContaining('the model does not take this reasoning effort')
+            .evaluate()
+            .isNotEmpty,
+      );
+      expect(stub.responsesBodies, hasLength(1), reason: 'no retry');
+      expect(stub.responsesBodies.single['reasoning'], {'effort': 'xhigh'});
+      expect(stub.responsesBodies.single['store'], isFalse);
+      expect(stub.responsesBodies.single, isNot(contains('temperature')));
+      expect(entry(container)['reasoning_effort'], 'xhigh');
+      expect(entry(container)['default_model'], 'gpt-5.6-sol');
+      // The pair the model takes streams.
+      stub.responsesStatus = 200;
+      stub.words = ['ready', '.'];
+      await tapVisible(tester, find.widgetWithText(TextButton, 'Test'));
+      await until(
+        tester,
+        () => find.textContaining('stop ·').evaluate().isNotEmpty,
+      );
+      expect(find.text('ready.'), findsOneWidget);
+      final lines = archiveLines(container.read(archiveRootProvider));
+      expect(
+        lines.where((l) => l.contains('"provider.request"')),
+        hasLength(2),
+      );
+      for (final l in lines.where((l) => l.contains('"provider.request"'))) {
+        expect(l, contains('"reasoning_effort":"xhigh"'));
+      }
+      expect(lines.join(), isNot(contains(canary)));
+      await close(tester);
+      await container.read(llmRegistryProvider)['openai']!.close();
+    });
+  });
+
+  group('the ChatGPT subscription kind (#26)', () {
+    late FakeAppServer server;
+    late Directory sidecarDir;
+
+    setUp(() {
+      server = FakeAppServer();
+      sidecarDir = Directory.systemTemp.createTempSync('sai_app_sidecar');
+      File('${sidecarDir.path}/codex-app-server').writeAsStringSync('stub');
+    });
+    tearDown(() => sidecarDir.deleteSync(recursive: true));
+
+    Future<ProviderContainer> setUpChatGpt(
+      WidgetTester tester, {
+      SaiIdentity identity = SaiIdentity.stable,
+      String? model = 'gpt-5.6-sol',
+    }) async {
+      final container = await pumpApp(
+        tester,
+        identity: identity,
+        processRunner: server.runner,
+        sidecar: identity.isDev
+            ? null
+            : SidecarLocator('${sidecarDir.path}/codex-app-server'),
+      );
+      container
+          .read(settingsProvider.notifier)
+          .upsertProvider(
+            ProviderConfig(
+              id: 'chatgpt',
+              kind: chatGptKind,
+              defaultModel: model,
+            ),
+          );
+      await tester.pump();
+      await open(tester, app: identity.isDev ? 'sai dev' : 'sai');
+      await select(tester, 'chatgpt');
+      return container;
+    }
+
+    Map<String, Object?> entry(ProviderContainer container) =>
+        container.read(settingsProvider).provider('chatgpt')!.toJson();
+
+    testWidgets('shows the account, the live models and the model\'s '
+        'efforts; model and effort are two choices', (tester) async {
+      final container = await setUpChatGpt(tester);
+      expect(
+        find.textContaining('gpt-5.6-sol — cloud · ChatGPT subscription'),
+        findsOneWidget,
+      );
+      expect(find.byKey(reasoningSwitchKey), findsNothing);
+      await until(tester, () => container.read(chatGptProvider).signedIn);
+      await tester.pump();
+      expect(
+        find.textContaining('Signed in as person@example.com · pro plan'),
+        findsOneWidget,
+      );
+      expect(find.byKey(chatGptSignOutKey), findsOneWidget);
+      expect(find.byKey(chatGptSignInKey), findsNothing);
+      expect(find.text('GPT-5.6 Sol'), findsOneWidget);
+      expect(find.text('Model default (medium)'), findsOneWidget);
+      expect(find.textContaining('Plan usage: 25% used'), findsOneWidget);
+      expect(find.textContaining('\$'), findsNothing, reason: 'never money');
+      // The effort menu is the model's advertised list.
+      await tapVisible(tester, find.byKey(chatGptEffortKey));
+      await tester.pump();
+      expect(find.text('xhigh'), findsOneWidget);
+      await tester.tap(find.text('xhigh'));
+      await tester.pump();
+      expect(entry(container)['reasoning_effort'], 'xhigh');
+      // Another model: the effort stays, and is judged against the new
+      // model's list — Luna takes no xhigh, so it shows as unavailable.
+      await tapVisible(tester, find.byKey(chatGptModelKey));
+      await tester.pump();
+      await tester.tap(find.text('GPT-5.6 Luna').last);
+      await tester.pump();
+      expect(entry(container)['default_model'], 'gpt-5.6-luna');
+      expect(entry(container)['reasoning_effort'], 'xhigh');
+      expect(find.text('xhigh — unavailable'), findsOneWidget);
+      expect(find.byKey(chatGptEffortKey), findsOneWidget);
+      // Nothing of the account on disk.
+      final settings = File(container.read(settingsFileProvider).path)
+          .readAsStringSync();
+      expect(settings, isNot(contains('person@example.com')));
+      expect(settings, isNot(contains('pro plan')));
+      await close(tester);
+    });
+
+    testWidgets('a saved model the list no longer carries stays visible as '
+        'unavailable', (tester) async {
+      final container = await setUpChatGpt(tester, model: 'gpt-5.5-gone');
+      await until(tester, () => container.read(chatGptProvider).signedIn);
+      await tester.pump();
+      expect(find.text('gpt-5.5-gone — unavailable'), findsOneWidget);
+      expect(find.textContaining('not in the current list'), findsOneWidget);
+      expect(
+        entry(container)['default_model'],
+        'gpt-5.5-gone',
+        reason: 'never swapped',
+      );
+      await close(tester);
+    });
+
+    testWidgets('sign out, then sign in by device code, cancel, and browser', (
+      tester,
+    ) async {
+      final container = await setUpChatGpt(tester);
+      await until(tester, () => container.read(chatGptProvider).signedIn);
+      await tester.pump();
+      await tapVisible(tester, find.byKey(chatGptSignOutKey));
+      await until(
+        tester,
+        () =>
+            !container.read(chatGptProvider).signedIn &&
+            !container.read(chatGptProvider).loading,
+      );
+      await tester.pump();
+      expect(server.logouts, 1);
+      expect(find.textContaining('Not signed in'), findsOneWidget);
+      expect(find.byKey(chatGptSignInKey), findsOneWidget);
+      expect(find.byKey(chatGptDeviceCodeKey), findsOneWidget);
+      // Device code: the URL and the code shown, Cancel cancels.
+      await tapVisible(tester, find.byKey(chatGptDeviceCodeKey));
+      await until(
+        tester,
+        () => container.read(chatGptProvider).login.isDeviceCode,
+      );
+      await tester.pump();
+      expect(
+        find.textContaining(
+          'Open https://auth.openai.com/codex/device and enter the code ABCD-1234',
+        ),
+        findsOneWidget,
+      );
+      await tapVisible(tester, find.byKey(chatGptCancelSignInKey));
+      await until(tester, () => server.loginCancels.isNotEmpty);
+      await tester.pump();
+      expect(find.text(CodexText.loginCancelled), findsOneWidget);
+      await tapVisible(tester, find.text('OK'));
+      // Browser: without a Runner the URL is shown on the bar instead.
+      await tapVisible(tester, find.byKey(chatGptSignInKey));
+      await until(
+        tester,
+        () =>
+            container.read(chatGptProvider).login.phase ==
+            ChatGptLoginPhase.browser,
+      );
+      await tester.pump();
+      expect(
+        find.textContaining('Finish signing in in the browser'),
+        findsOneWidget,
+      );
+      // No Runner behind the channel here: the URL is handed to the bar
+      // instead of a browser; either way nothing was spawned.
+      expect(server.logins.last, {'type': 'chatgpt'});
+      // The completion lands: signed in, the list read.
+      server.account = {
+        'type': 'chatgpt',
+        'email': 'p@example.com',
+        'planType': 'plus',
+      };
+      server.runner.processes.single.notify('account/login/completed', {
+        'loginId': 'login-2',
+        'success': true,
+      });
+      await until(tester, () => container.read(chatGptProvider).signedIn);
+      await until(
+        tester,
+        () =>
+            container.read(chatGptProvider).login.phase ==
+            ChatGptLoginPhase.idle,
+      );
+      await tester.pump();
+      expect(
+        find.textContaining('Signed in as p@example.com · plus plan'),
+        findsOneWidget,
+      );
+      // No token anywhere on screen or disk.
+      expect(screen(), isNot(contains('token')));
+      await close(tester);
+    });
+
+    testWidgets('View › Set Reasoning Effort… opens the provider\'s setting', (
+      tester,
+    ) async {
+      final container = await setUpChatGpt(tester);
+      await close(tester);
+      container.read(settingsProvider.notifier).selectLlm('chatgpt');
+      await tester.pump();
+      expect(
+        menuItem(menuDelegate.menus, ['View', 'Set Reasoning Effort…']),
+        isNotNull,
+      );
+      menuItem(menuDelegate.menus, [
+        'View',
+        'Set Reasoning Effort…',
+      ]).onSelected!();
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(ProvidersPage), findsOneWidget);
+      expect(find.byKey(chatGptAccountKey), findsOneWidget);
+      // The global switch was not flipped.
+      expect(container.read(settingsProvider).reasoningOn, isFalse);
+      await close(tester);
+      container.read(settingsProvider.notifier).selectLlm('fake');
+      await tester.pump();
+      expect(
+        menuItem(menuDelegate.menus, ['View', 'Enable Reasoning']),
+        isNotNull,
+      );
+    });
+
+    testWidgets('the dev copy runs no runtime and says so', (tester) async {
+      final container = await setUpChatGpt(tester, identity: SaiIdentity.dev);
+      expect(find.text(CodexText.devRefused), findsOneWidget);
+      expect(
+        tester.widget<FilledButton>(find.byKey(chatGptSignInKey)).onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Test'))
+            .onPressed,
+        isNull,
+      );
+      expect(container.read(appServerRuntimeProvider), isNull);
+      expect(server.runner.spawns, isEmpty);
+      await close(tester);
     });
   });
 

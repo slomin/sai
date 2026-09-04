@@ -1,6 +1,8 @@
 import '../secrets/secret_store.dart';
 import '../settings/provider_config.dart';
 import 'fake.dart';
+import 'openai/openai.dart';
+import 'openai/provider.dart';
 import 'openai_compatible/provider.dart';
 import 'openrouter.dart';
 import 'provider.dart';
@@ -83,6 +85,15 @@ ProviderConfig? configFor(LlmProvider provider) => switch (provider) {
     kind: 'fake',
     defaultModel: provider.defaultModel,
     privacy: provider.privacy,
+  ),
+  // The Responses API (#26): fixed origin, cloud, keyed, its own effort.
+  OpenAiResponsesProvider() => ProviderConfig(
+    id: provider.id,
+    kind: openAiKind,
+    defaultModel: provider.defaultModel,
+    credential: provider.credential,
+    privacy: LlmPrivacy.cloud,
+    reasoningEffort: provider.reasoningEffort?.word,
   ),
   _ => null,
 };

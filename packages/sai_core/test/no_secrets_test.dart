@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:riverpod/riverpod.dart';
 import 'package:sai_core/sai_core.dart';
+import 'package:sai_core/src/llm/openai_compatible/policy.dart';
 import 'package:test/test.dart';
 
 import 'llm/stub_server.dart';
@@ -337,7 +338,7 @@ void main() {
       final recorder = await container.read(llmRecorderProvider.future);
       final request = LlmRequest(
         messages: [const LlmMessage(LlmRole.user, 'hello')],
-        reasoning: false,
+        reasoningEffort: ReasoningEffort.none,
       );
       Future<void> run() async {
         final call = await recorder.start(
@@ -395,6 +396,171 @@ void main() {
       expect(r.toString(), isNot(contains(canary)));
     }
   });
+
+  test(
+    'the openai kind takes a key the same way and leaks nothing (#26)',
+    () async {
+      final stub = await StubServer.start();
+      addTearDown(stub.close);
+      final container = ProviderContainer.test(
+        overrides: [
+          archiveRootProvider.overrideWithValue(
+            Directory('${tmp.path}/archive'),
+          ),
+          settingsFileProvider.overrideWithValue(
+            File('${tmp.path}/settings.json'),
+          ),
+          eventSourceProvider.overrideWithValue('sai/test'),
+          secretStoreProvider.overrideWithValue(secrets),
+          openAiEndpointProvider.overrideWithValue(stub.v1),
+        ],
+      );
+      final results = <LlmResult>[];
+      List<String>? catalogue;
+      LlmFailure? catalogueFailure;
+      await capturing(() async {
+        final settings = container.read(settingsProvider.notifier);
+        settings.upsertProvider(
+          ProviderConfig(
+            id: 'openai',
+            kind: openAiKind,
+            defaultModel: 'gpt-5.6-sol',
+            credential: 'provider:openai',
+            reasoningEffort: 'high',
+          ),
+        );
+        settings.selectLlm('openai');
+        container.read(credentialsProvider.notifier).set('openai', canary);
+        final recorder = await container.read(llmRecorderProvider.future);
+        final provider =
+            container.read(activeLlmProvider)! as OpenAiResponsesProvider;
+        final request = LlmRequest(
+          messages: [const LlmMessage(LlmRole.user, 'hello')],
+          reasoningEffort: container.read(requestedEffortProvider),
+        );
+        Future<void> run() async {
+          final call = await recorder.start(provider, request);
+          results.add(await call.done);
+        }
+
+        // A 401 quoting the key, an effort refusal quoting it, a failed
+        // response quoting it, a tool call, a model list quoting it, then
+        // success.
+        stub.routes['POST /v1/responses'] = (req) => StubServer.json(req, {
+          'error': {'code': 'invalid_api_key', 'message': 'bad key $canary'},
+        }, status: 401);
+        await run();
+        stub.routes['POST /v1/responses'] = (req) => StubServer.json(req, {
+          'error': {
+            'code': 'unsupported_value',
+            'param': 'reasoning.effort',
+            'message': 'no high for $canary',
+          },
+        }, status: 400);
+        await run();
+        stub.routes['POST /v1/responses'] = (req) async {
+          final response = StubServer.sse(req);
+          StubServer.event(response, {
+            'type': 'response.failed',
+            'response': {
+              'error': {'code': 'server_error', 'message': canary},
+            },
+          });
+          await response.close();
+        };
+        await run();
+        stub.routes['POST /v1/responses'] = (req) async {
+          final response = StubServer.sse(req);
+          StubServer.event(response, {
+            'type': 'response.output_item.added',
+            'item': {'type': 'function_call', 'name': canary},
+          });
+          await response.close();
+        };
+        await run();
+        stub.routes['GET /v1/models'] = (req) => StubServer.json(req, {
+          'data': [
+            {'id': 'gpt-5.6-sol', 'owned_by': canary},
+          ],
+        });
+        final list = await fetchOpenAiCatalogue(provider);
+        catalogue = list.models;
+        catalogueFailure = list.failure;
+        stub.routes['POST /v1/responses'] = (req) async {
+          final response = StubServer.sse(req);
+          StubServer.event(response, {
+            'type': 'response.output_text.delta',
+            'delta': 'ready',
+          });
+          StubServer.event(response, {
+            'type': 'response.completed',
+            'response': {
+              'id': 'resp_9',
+              'model': 'gpt-5.6-sol',
+              'usage': {
+                'input_tokens': 1,
+                'output_tokens': 1,
+                'total_tokens': 2,
+              },
+            },
+          });
+          await response.close();
+        };
+        await run();
+        for (final r in results) {
+          print('result: $r');
+        }
+        print('catalogue: $catalogue $catalogueFailure');
+      });
+      expect(results.map((r) => r.finish), [
+        LlmFinish.failed,
+        LlmFinish.failed,
+        LlmFinish.failed,
+        LlmFinish.failed,
+        LlmFinish.stop,
+      ]);
+      expect(results[1].failure!.message, TransportText.effortRefused);
+      expect(results[3].failure!.message, TransportText.toolCalled);
+      expect(catalogue, ['gpt-5.6-sol']);
+      expect(catalogueFailure, isNull);
+      for (final sent in stub.requests) {
+        expect(sent.header('authorization'), 'Bearer $canary');
+        expect(sent.path, anyOf('/v1/responses', '/v1/models'));
+        expect(sent.body, isNot(contains(canary)));
+        if (sent.path == '/v1/responses') {
+          expect(sent.body, contains('"store":false'));
+          expect(sent.body, contains('"reasoning":{"effort":"high"}'));
+        }
+      }
+      final files = allBytes();
+      final lines = [
+        for (final k in files.keys.where(
+          (k) => k.startsWith('archive/events/'),
+        ))
+          ...utf8.decode(files[k]!).split('\n').where((l) => l.isNotEmpty),
+      ];
+      // A cloud call is four lines (ADR 0010): the decision and the three.
+      expect(lines.where((l) => l.contains('"policy.decision"')), hasLength(5));
+      expect(
+        lines.where((l) => l.contains('"provider.failure"')),
+        hasLength(4),
+      );
+      for (final line in lines.where((l) => l.contains('"provider.request"'))) {
+        expect(line, contains('"reasoning_effort":"high"'));
+      }
+      for (final line in lines.where((l) => l.contains('"endpoint"'))) {
+        expect(line, contains('"endpoint":"${stub.origin}"'));
+      }
+      expect(
+        utf8.decode(files['settings.json']!),
+        allOf(contains('"kind":"openai"'), isNot(contains('sk-'))),
+      );
+      expectNoCanary(files);
+      for (final r in results) {
+        expect(r.toString(), isNot(contains(canary)));
+      }
+    },
+  );
 
   test('a key written into settings by hand is refused and not repeated', () {
     File('${tmp.path}/settings.json').writeAsStringSync(

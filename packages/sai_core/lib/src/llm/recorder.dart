@@ -25,7 +25,11 @@ Map<String, Object?> recordedRequestPayload(LlmRequest request, BlobRef hash) =>
       'messages': [for (final m in request.messages) m.toJson()],
       if (request.maxTokens != null) 'max_tokens': request.maxTokens,
       if (request.temperature != null) 'temperature': request.temperature,
-      if (request.reasoning != null) 'reasoning': request.reasoning,
+      // The explicit effort, `none` included; absent when the model's
+      // default was left to stand (#26). Older lines say `reasoning: false`
+      // for what is now `none`; they stay as written.
+      if (request.reasoningEffort case final effort?)
+        'reasoning_effort': effort.word,
       if (request.responseSchema case final schema?)
         'response_format': schema.toWire(),
       'context_hash': hash.toString(),

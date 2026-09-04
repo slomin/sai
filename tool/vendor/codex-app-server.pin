@@ -1,0 +1,19 @@
+# The one place the bundled Codex App Server is pinned (#26, ADR 0013).
+# One exact stable release of openai/codex, its two official macOS
+# slices with the digests GitHub reports for them, and the licence and
+# notice shipped beside them. tool/vendor-app-server.sh reads this;
+# packages/sai_core/lib/src/llm/codex_app_server/protocol.dart names
+# the same tag, and a test keeps them equal. Never a floating "latest",
+# never an alpha: moving this line is its own pull request, with the
+# protocol fixtures re-diffed and the whole suite rerun.
+tag rust-v0.152.0
+url_aarch64 https://github.com/openai/codex/releases/download/rust-v0.152.0/codex-app-server-aarch64-apple-darwin.tar.gz
+sha256_aarch64 d0839a9c4f0685934ae89aca89b76c56060fb0f83217b51ee72be1451bf0fd35
+size_aarch64 67582268
+url_x86_64 https://github.com/openai/codex/releases/download/rust-v0.152.0/codex-app-server-x86_64-apple-darwin.tar.gz
+sha256_x86_64 5c29e63c8fc37d6a1b05e0c48dd6f32a77e3eaf1609900a1dd455b6eabe72063
+size_x86_64 73697078
+url_license https://raw.githubusercontent.com/openai/codex/rust-v0.152.0/LICENSE
+sha256_license d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc
+url_notice https://raw.githubusercontent.com/openai/codex/rust-v0.152.0/NOTICE
+sha256_notice 9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915

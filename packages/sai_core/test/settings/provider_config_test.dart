@@ -98,6 +98,57 @@ void main() {
       );
     });
 
+    test('reasoning_effort is stored as written and round-tripped (#26)', () {
+      final tuned = ProviderConfig(
+        id: 'openai',
+        kind: 'openai',
+        defaultModel: 'gpt-5.6-sol',
+        credential: 'provider:openai',
+        reasoningEffort: 'xhigh',
+      );
+      expect(tuned.toJson()['reasoning_effort'], 'xhigh');
+      expect(ProviderConfig.fromJson(tuned.toJson()), tuned);
+      // Absent is Model default, and absent stays absent on write.
+      expect(
+        ProviderConfig(id: 'x', kind: 'openai').toJson(),
+        isNot(contains('reasoning_effort')),
+      );
+      expect(
+        tuned.copyWith(reasoningEffort: () => 'low').reasoningEffort,
+        'low',
+      );
+      expect(
+        tuned.copyWith(reasoningEffort: () => null).reasoningEffort,
+        isNull,
+      );
+      expect(
+        tuned.copyWith(defaultModel: () => 'gpt-5.6-luna').reasoningEffort,
+        'xhigh',
+        reason: 'model and effort are two choices',
+      );
+      // Known, so it is not carried in `extra`; a word this sai has never
+      // heard of survives exactly (a newer sai may know it).
+      expect(tuned.extra, isEmpty);
+      final future = ProviderConfig.fromJson({
+        ...tuned.toJson(),
+        'reasoning_effort': 'ultra',
+      });
+      expect(future.reasoningEffort, 'ultra');
+      expect(future.toJson()['reasoning_effort'], 'ultra');
+      expect(
+        () => ProviderConfig(id: 'x', kind: 'openai', reasoningEffort: ''),
+        throwsArgumentError,
+      );
+      expect(
+        () => ProviderConfig.fromJson({
+          'id': 'x',
+          'kind': 'openai',
+          'reasoning_effort': 3,
+        }),
+        throwsA(isA<SettingsFormatException>()),
+      );
+    });
+
     test('an empty provider list is not written', () {
       expect(Settings.empty.encode(), '{"llm":null,"version":0}');
     });

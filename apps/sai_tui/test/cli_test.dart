@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:riverpod/riverpod.dart';
+import 'package:sai_core/process_testing.dart';
 import 'package:sai_core/sai_core.dart';
 import 'package:sai_tui/cli.dart';
 import 'package:test/test.dart';
@@ -97,6 +98,27 @@ void main() {
       'version': 0,
       'llm': 'lan',
     });
+  });
+
+  test('provider reasoning refuses an empty word as usage, not a crash; '
+      'the switch says whose it is not', () async {
+    expect(
+      await run('provider add gpt --kind openai --model gpt-5.6-sol'),
+      cliOk,
+    );
+    out.clear();
+    final code = await run('provider reasoning gpt ');
+    expect(code, isNot(cliOk));
+    expect(err.toString(), isNot(contains('ArgumentError')));
+    expect(
+      container.read(settingsProvider).provider('gpt')!.reasoningEffort,
+      isNull,
+    );
+    // The global switch is not an OpenAI kind's: saying so, not silence.
+    expect(await run('provider use gpt'), cliOk);
+    out.clear();
+    expect(await run('reasoning on'), cliOk);
+    expect(out.toString(), contains('provider reasoning gpt'));
   });
 
   test('provider add on a built-in id starts from the built-in', () async {
@@ -504,6 +526,327 @@ void main() {
     expect(container.read(settingsProvider).providers, isEmpty);
     expect(await run('provider remove lan'), cliFailed);
     expect(err.toString(), contains("no configured provider 'lan'"));
+  });
+
+  test('the two OpenAI kinds are added apart, each with its own billing '
+      '(#26)', () async {
+    Map<String, Object?> entry(String id) =>
+        (jsonDecode(settingsFile().readAsStringSync())['providers'] as List)
+            .cast<Map<String, Object?>>()
+            .singleWhere((p) => p['id'] == id);
+    // The API key kind: cloud, keyed, one exact model, effort by default.
+    expect(
+      await run('provider add openai --kind openai --model gpt-5.6-sol'),
+      cliOk,
+    );
+    expect(out.toString(), contains('added provider openai'));
+    expect(out.toString(), contains('reasoning effort: Model default'));
+    expect(
+      out.toString(),
+      contains('set its key with: sai_tui secret set openai'),
+    );
+    expect(entry('openai'), {
+      'id': 'openai',
+      'kind': 'openai',
+      'default_model': 'gpt-5.6-sol',
+      'credential': 'provider:openai',
+      'privacy': 'cloud',
+    });
+    // The effort is its own choice: set, changed, returned to the default,
+    // never touching the model.
+    out.clear();
+    expect(await run('provider add openai --effort xhigh'), cliOk);
+    expect(out.toString(), contains('reasoning effort: xhigh'));
+    expect(entry('openai')['reasoning_effort'], 'xhigh');
+    expect(entry('openai')['default_model'], 'gpt-5.6-sol');
+    expect(await run('provider add openai --model gpt-5.6-luna'), cliOk);
+    expect(entry('openai')['reasoning_effort'], 'xhigh');
+    expect(entry('openai')['default_model'], 'gpt-5.6-luna');
+    expect(await run('provider add openai --effort default'), cliOk);
+    expect(entry('openai'), isNot(contains('reasoning_effort')));
+    // The subscription kind: cloud, no key, the model may come later.
+    out.clear();
+    expect(
+      await run('provider add chatgpt --kind chatgpt_subscription'),
+      cliOk,
+    );
+    expect(out.toString(), contains('added provider chatgpt'));
+    expect(out.toString(), contains('reasoning effort: Model default'));
+    expect(
+      out.toString(),
+      contains('sign in with: sai_tui provider login chatgpt'),
+    );
+    expect(out.toString(), isNot(contains('secret set')));
+    expect(entry('chatgpt'), {
+      'id': 'chatgpt',
+      'kind': 'chatgpt_subscription',
+      'privacy': 'cloud',
+    });
+    expect(
+      await run('provider add chatgpt --model gpt-5.6-sol --effort high'),
+      cliOk,
+    );
+    expect(entry('chatgpt')['default_model'], 'gpt-5.6-sol');
+    expect(entry('chatgpt')['reasoning_effort'], 'high');
+    // What is refused, with both entries untouched.
+    final before = (entry('openai'), entry('chatgpt'));
+    for (final (line, why) in [
+      ('provider add openai --endpoint https://x.example/v1', 'fixed endpoint'),
+      ('provider add openai --privacy local', 'cloud provider'),
+      ('provider add openai --no-key', 'needs a key'),
+      ('provider add openai --routing exact', 'openrouter only'),
+      ('provider add key --kind openai', 'needs --model'),
+      (
+        'provider add chatgpt --endpoint https://x.example/v1',
+        'fixed endpoint',
+      ),
+      ('provider add chatgpt --privacy local', 'cloud provider'),
+      ('provider add chatgpt --key', 'takes no key'),
+      ('provider add chatgpt --routing exact', 'openrouter only'),
+      (
+        'provider add plain --kind fake --effort high',
+        'openai and chatgpt_subscription only',
+      ),
+      ('provider add openai --effort', '--effort needs a value'),
+    ]) {
+      err.clear();
+      expect(await run(line), cliUsageError, reason: line);
+      expect(err.toString(), contains(why), reason: line);
+    }
+    expect(entry('openai'), before.$1);
+    expect(entry('chatgpt'), before.$2);
+    expect(container.read(settingsProvider).provider('key'), isNull);
+    expect(container.read(settingsProvider).provider('plain'), isNull);
+    // An entry changed to an OpenAI kind drops what the kind refuses.
+    expect(
+      await run(
+        'provider add box --kind openai_compatible '
+        '--endpoint http://127.0.0.1:8080/v1 --model m --key',
+      ),
+      cliOk,
+    );
+    expect(await run('provider add box --kind openai'), cliOk);
+    expect(entry('box'), {
+      'id': 'box',
+      'kind': 'openai',
+      'default_model': 'm',
+      'credential': 'provider:box',
+      'privacy': 'cloud',
+    });
+    expect(await run('provider add box --kind chatgpt_subscription'), cliOk);
+    expect(entry('box'), {
+      'id': 'box',
+      'kind': 'chatgpt_subscription',
+      'default_model': 'm',
+      'privacy': 'cloud',
+    });
+  });
+
+  group('the ChatGPT commands (#26)', () {
+    late FakeAppServer server;
+    late Directory sidecarDir;
+
+    setUp(() {
+      server = FakeAppServer();
+      sidecarDir = Directory.systemTemp.createTempSync('sai_cli_sidecar');
+      File('${sidecarDir.path}/codex-app-server').writeAsStringSync('stub');
+      container = testContainer(
+        overrides: [
+          processRunnerProvider.overrideWithValue(server.runner),
+          sidecarLocatorProvider.overrideWithValue(
+            SidecarLocator('${sidecarDir.path}/codex-app-server'),
+          ),
+          codexHomeProvider.overrideWithValue(
+            Directory('${sidecarDir.path}/home/codex'),
+          ),
+        ],
+      );
+    });
+
+    tearDown(() {
+      container.dispose();
+      sidecarDir.deleteSync(recursive: true);
+    });
+
+    test('account, models, reasoning and logout, in the fixed words', () async {
+      expect(
+        await run('provider add chatgpt --kind chatgpt_subscription'),
+        cliOk,
+      );
+      out.clear();
+      expect(await run('provider account chatgpt'), cliOk);
+      expect(
+        out.toString(),
+        contains('signed in to ChatGPT as person@example.com · pro plan'),
+      );
+      expect(out.toString(), contains('plan usage: 25% used'));
+      expect(out.toString(), isNot(contains('\$')), reason: 'never money');
+      out.clear();
+      expect(await run('provider models chatgpt'), cliOk);
+      expect(
+        out.toString(),
+        contains(
+          'gpt-5.6-sol  GPT-5.6 Sol (default) · default effort medium · efforts: low, medium, high, xhigh',
+        ),
+      );
+      expect(
+        out.toString(),
+        contains(
+          'gpt-5.6-luna  GPT-5.6 Luna · default effort medium · efforts: low, high',
+        ),
+      );
+      expect(out.toString(), isNot(contains('hidden')));
+      out.clear();
+      expect(await run('provider add chatgpt --model gpt-5.6-luna'), cliOk);
+      expect(await run('provider reasoning chatgpt'), cliOk);
+      expect(
+        out.toString(),
+        contains('chatgpt: reasoning effort Model default'),
+      );
+      out.clear();
+      expect(await run('provider reasoning chatgpt high'), cliOk);
+      expect(out.toString(), contains('chatgpt: reasoning effort high'));
+      final entry =
+          (jsonDecode(settingsFile().readAsStringSync())['providers'] as List)
+              .cast<Map<String, Object?>>()
+              .single;
+      expect(entry['reasoning_effort'], 'high');
+      expect(entry['default_model'], 'gpt-5.6-luna');
+      out.clear();
+      expect(await run('provider reasoning chatgpt default'), cliOk);
+      expect(out.toString(), contains('Model default'));
+      expect(await run('provider reasoning chatgpt a b'), cliUsageError);
+      out.clear();
+      expect(await run('provider list'), cliOk);
+      expect(
+        out.toString(),
+        contains(
+          'chatgpt  chatgpt_subscription  (gpt-5.6-luna) · cloud · ChatGPT subscription · effort default',
+        ),
+      );
+      out.clear();
+      expect(await run('provider logout chatgpt'), cliOk);
+      expect(
+        out.toString(),
+        contains('signed out of ChatGPT; not signed in to ChatGPT'),
+      );
+      expect(server.logouts, 1);
+      err.clear();
+      expect(await run('provider models chatgpt'), cliFailed);
+      expect(err.toString(), contains(CodexText.signedOut));
+      // The runtime saw sai's environment alone.
+      for (final spawn in server.runner.spawns) {
+        expect(spawn.environment.keys, isNot(contains('OPENAI_API_KEY')));
+        expect(spawn.executable, '/usr/bin/sandbox-exec');
+      }
+      // Nothing of the account on disk.
+      expect(
+        settingsFile().readAsStringSync(),
+        isNot(contains('person@example.com')),
+      );
+    });
+
+    test(
+      'login prints the URL or the code — never a token — and waits',
+      () async {
+        expect(
+          await run('provider add chatgpt --kind chatgpt_subscription'),
+          cliOk,
+        );
+        server.account = null;
+        out.clear();
+        // Device code: the completion arrives while the command waits.
+        final pending = run('provider login chatgpt --device-code');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(
+          out.toString(),
+          contains(
+            'open https://auth.openai.com/codex/device and enter the code ABCD-1234',
+          ),
+        );
+        expect(out.toString(), contains('waiting for the sign-in'));
+        server.account = {
+          'type': 'chatgpt',
+          'email': 'p@example.com',
+          'planType': 'plus',
+        };
+        server.runner.processes.single.notify('account/login/completed', {
+          'loginId': 'login-1',
+          'success': true,
+        });
+        expect(await pending, cliOk);
+        expect(
+          out.toString(),
+          contains('signed in to ChatGPT as p@example.com · plus plan'),
+        );
+        expect(out.toString(), isNot(contains('token')));
+        // Browser: the URL only.
+        out.clear();
+        server.account = null;
+        final browser = run('provider login chatgpt');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(
+          out.toString(),
+          contains('open this URL in your browser to sign in:'),
+        );
+        expect(
+          out.toString(),
+          contains('https://auth.openai.com/oauth/authorize?state=login-2'),
+        );
+        server.runner.processes.single.notify('account/login/completed', {
+          'loginId': 'login-2',
+          'success': false,
+          'error': 'expired',
+        });
+        expect(await browser, cliFailed);
+        expect(err.toString(), contains(CodexText.loginFailed));
+        expect(await run('provider login chatgpt --browser'), cliUsageError);
+      },
+    );
+
+    test('the wrong kind, a missing entry, and the openai list', () async {
+      err.clear();
+      expect(await run('provider account nothing'), cliFailed);
+      expect(err.toString(), contains('no provider nothing is configured'));
+      expect(await run('provider add lan2 --kind fake'), cliOk);
+      err.clear();
+      expect(await run('provider login lan2'), cliFailed);
+      expect(
+        err.toString(),
+        contains("provider 'lan2' is fake, not chatgpt_subscription"),
+      );
+      err.clear();
+      expect(await run('provider reasoning lan2 high'), cliFailed);
+      expect(err.toString(), contains('keeps the reasoning on|off switch'));
+      expect(
+        server.runner.spawns,
+        isEmpty,
+        reason: 'nothing spawned for the wrong kind',
+      );
+    });
+  });
+
+  test('the dev client runs no ChatGPT runtime (#26, #95)', () async {
+    container = testContainer(
+      overrides: [identityProvider.overrideWithValue(SaiIdentity.dev)],
+    );
+    expect(
+      await run('provider add chatgpt --kind chatgpt_subscription'),
+      cliOk,
+    );
+    for (final line in [
+      'provider login chatgpt',
+      'provider account chatgpt',
+      'provider models chatgpt',
+      'provider logout chatgpt',
+    ]) {
+      err.clear();
+      expect(await run(line), cliFailed, reason: line);
+      expect(err.toString(), contains(CodexText.devRefused), reason: line);
+      expect(err.toString(), contains('sai_tui'), reason: line);
+    }
+    // The effort is a setting; the dev copy may set it.
+    expect(await run('provider reasoning chatgpt high'), cliOk);
   });
 
   test('an openai_compatible provider needs an endpoint and a model', () async {

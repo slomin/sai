@@ -55,6 +55,21 @@ int main(int argc, char **argv) {
 EOF
   cc -o "$dir/stage/$slug.app/Contents/MacOS/$slug" "$work/sai.c"
   cc -o "$dir/tui/bundle/bin/$tui" "$work/tui.c"
+  # A stable release carries the App Server sidecar (#26), universal in
+  # the app; a dev or legacy one carries none.
+  if [ "$kind" = stable ]; then
+    mkdir -p "$dir/stage/$slug.app/Contents/Helpers" "$dir/stage/$slug.app/Contents/Resources" "$dir/tui/bundle/libexec"
+    cc -arch arm64 -o "$work/sidecar-arm64" "$work/sai.c"
+    cc -arch x86_64 -o "$work/sidecar-x86_64" "$work/sai.c"
+    lipo -create "$work/sidecar-arm64" "$work/sidecar-x86_64" -output "$dir/stage/$slug.app/Contents/Helpers/codex-app-server"
+    cc -o "$dir/tui/bundle/libexec/codex-app-server" "$work/sai.c"
+    for d in "$dir/stage/$slug.app/Contents/Resources" "$dir/tui/bundle/libexec"; do
+      echo fixture > "$d/codex-app-server.LICENSE"
+      echo fixture > "$d/codex-app-server.NOTICE"
+    done
+    codesign --force --sign - "$dir/stage/$slug.app/Contents/Helpers/codex-app-server" >/dev/null 2>&1
+    codesign --force --sign - "$dir/tui/bundle/libexec/codex-app-server" >/dev/null 2>&1
+  fi
   flavor_key=""
   [ "$kind" = legacy ] || flavor_key="<key>SaiFlavor</key><string>$kind</string>"
   cat > "$dir/stage/$slug.app/Contents/Info.plist" <<EOF
@@ -469,5 +484,38 @@ tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 && fail "install clobbered
 grep -q "is not a symlink" "$work/err" || fail "wrong message: $(cat "$work/err")"
 [ "$(cat "$SAI_INSTALL_BIN_DIR/sai_tui")" = stray ] || fail "the stray file was touched"
 pass "a real file where the symlink goes is refused"
+
+# --- the App Server sidecar (#26): sealed with the rest, universal, stable only
+# The case above left a real file where the symlink goes; clear it.
+rm -f "$HOME/.local/bin/sai_tui"
+fixture "$work/sidecar" 0.0.4 sidecar4 stable
+before=$(snapshot)
+cc -o "$work/sidecar/stage/sai.app/Contents/Helpers/codex-app-server" "$work/sai.c"
+codesign --force --sign - "$work/sidecar/stage/sai.app/Contents/Helpers/codex-app-server" >/dev/null 2>&1
+codesign --force --sign - "$work/sidecar/stage/sai.app" >/dev/null 2>&1
+repack "$work/sidecar" 0.0.4
+if tool/install-local.sh "$work/sidecar" >"$work/out" 2>&1; then fail "a single-arch helper installed"; fi
+grep -q "not universal" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
+[ "$(snapshot)" = "$before" ] || fail "a refused sidecar changed the install"
+fixture "$work/sidecar" 0.0.4 sidecar4 stable
+rm "$work/sidecar/stage/sai.app/Contents/Resources/codex-app-server.NOTICE"
+codesign --force --sign - "$work/sidecar/stage/sai.app" >/dev/null 2>&1
+repack "$work/sidecar" 0.0.4
+if tool/install-local.sh "$work/sidecar" >"$work/out" 2>&1; then fail "a helper without its NOTICE installed"; fi
+grep -q "without its LICENSE and NOTICE" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
+fixture "$work/sidecar-none" 0.0.4 sidecar4 stable
+rm "$work/sidecar-none/stage/sai.app/Contents/Helpers/codex-app-server" "$work/sidecar-none/tui/bundle/libexec/codex-app-server"
+codesign --force --sign - "$work/sidecar-none/stage/sai.app" >/dev/null 2>&1
+repack "$work/sidecar-none" 0.0.4
+if tool/install-local.sh "$work/sidecar-none" >"$work/out" 2>&1; then fail "a stable release without the runtime installed"; fi
+grep -q "carries no codex-app-server" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
+fixture "$work/sidecar-dev" 0.0.4 sidecar4 dev
+mkdir -p "$work/sidecar-dev/tui/bundle/libexec"
+cc -o "$work/sidecar-dev/tui/bundle/libexec/codex-app-server" "$work/sai.c"
+codesign --force --sign - "$work/sidecar-dev/tui/bundle/libexec/codex-app-server" >/dev/null 2>&1
+repack "$work/sidecar-dev" 0.0.4
+if tool/install-local.sh "$work/sidecar-dev" >"$work/out" 2>&1; then fail "a dev release with a sidecar installed"; fi
+grep -q "a dev release carries a codex-app-server" "$work/out" || fail "wrong refusal: $(cat "$work/out")"
+pass "the sidecar must be there, universal and with its notices in stable, and absent from dev"
 
 echo "# $passed passed; scratch under $work removed"

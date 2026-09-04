@@ -23,6 +23,7 @@ List<PlatformMenuItem> saiMenus({
   required bool canUndo,
   required bool chatShown,
   required bool reasoningOn,
+  bool reasoningEffortOwn = false,
   required bool taskSelected,
 }) => [
   PlatformMenu(
@@ -170,7 +171,11 @@ List<PlatformMenuItem> saiMenus({
       // same switch as Settings › Providers holds. Platform items carry
       // no checked state (ADR 0005), so the label says which way it goes.
       PlatformMenuItem(
-        label: reasoningOn ? 'Disable Reasoning' : 'Enable Reasoning',
+        label: reasoningEffortOwn
+            ? 'Set Reasoning Effort…'
+            : reasoningOn
+            ? 'Disable Reasoning'
+            : 'Enable Reasoning',
         shortcut: const SingleActivator(LogicalKeyboardKey.keyR, meta: true),
         onSelected: commands.toggleReasoning,
       ),
@@ -295,7 +300,7 @@ class SaiChrome extends ConsumerStatefulWidget {
 }
 
 class _SaiChromeState extends ConsumerState<SaiChrome> {
-  (bool, bool, bool, bool, String)? _menuState;
+  (bool, bool, bool, bool, bool, String)? _menuState;
   List<PlatformMenuItem> _menus = const [];
   // The handler lives on the node: a scope built around a node of its
   // own reads `onKeyEvent` from the node, not the widget.
@@ -390,9 +395,13 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
     final canUndo = ref.watch(canUndoProvider);
     final shown = ref.watch(chatVisibleProvider);
     final reasoning = ref.watch(reasoningProvider);
+    // An OpenAI kind (#26) carries its own effort: the menu says so.
+    final effortOwn = ref.watch(
+      activeLlmProvider.select((p) => p is ConfiguredEffort),
+    );
     final taskSelected = ref.watch(selectedTaskProvider) != null;
     final appName = ref.watch(identityProvider).displayName;
-    final state = (canUndo, shown, reasoning, taskSelected, appName);
+    final state = (canUndo, shown, reasoning, effortOwn, taskSelected, appName);
     if (state != _menuState) {
       _menuState = state;
       _menus = saiMenus(
@@ -401,6 +410,7 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
         canUndo: canUndo,
         chatShown: shown,
         reasoningOn: reasoning,
+        reasoningEffortOwn: effortOwn,
         taskSelected: taskSelected,
       );
     }

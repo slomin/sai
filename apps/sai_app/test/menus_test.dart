@@ -66,6 +66,33 @@ void main() {
 
     setUp(calls.clear);
 
+    test('a provider with its own effort turns the reasoning item into a '
+        'setting (#26)', () {
+      final own = saiMenus(
+        commands: commands,
+        canUndo: false,
+        chatShown: true,
+        reasoningOn: false,
+        reasoningEffortOwn: true,
+        taskSelected: false,
+      );
+      final item = menuItem(own, ['View', 'Set Reasoning Effort…']);
+      expect(
+        item.shortcut,
+        const SingleActivator(LogicalKeyboardKey.keyR, meta: true),
+      );
+      item.onSelected!();
+      expect(calls, ['reasoning']);
+      expect(
+        () => menuItem(own, ['View', 'Enable Reasoning']),
+        throwsA(anything),
+      );
+      expect(
+        menuItem(menus(), ['View', 'Enable Reasoning']).onSelected,
+        isNotNull,
+      );
+    });
+
     test('the seven standard menus, in order', () {
       expect(menus().map((m) => m.label), topLevel);
     });
