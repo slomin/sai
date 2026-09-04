@@ -64,6 +64,18 @@ the commit under test;
    (`settings.json` gains `"routing":"exact"`). Nothing leaves the
    machine. Evidence: a screenshot per state and the settings file. The
    keyed pass is `docs/smoke/cloud.md`, route K, 2a.
+7c. **The fallback order (#62).** Configure a dead endpoint
+   (`provider add dead --kind openai_compatible --endpoint
+   http://127.0.0.1:<unused>/v1 --model m`) and order it ahead of the
+   `fake`: the header dot goes green on the fake and the status line
+   reads `fake … · dead unreachable`; a turn answers and the archive
+   carries a `policy.fallback` line naming `dead`. Put a `cloud`-tagged
+   fake after `dead` instead, sharing off: the send is refused, naming
+   both reasons; turn sharing on and it answers. In Settings ›
+   Providers, drag and arrow the rows, add one with + and take one out
+   with ✕. Evidence:
+   a screenshot per state, the settings file's `llm`/`llm_fallback`, the
+   `policy.fallback` line.
 8. **Import.** In a second scratch profile, preview and import a Things
    database, then import again. With a generated fixture
    (`package:sai_core/things_testing.dart`) an agent runs it; with a real

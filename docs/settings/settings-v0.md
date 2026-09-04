@@ -1,6 +1,6 @@
 # Settings, v0
 
-Status: current · Issues: #21, #29, #22, #27, #23, #76, #40, #97, #24, #26 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md), [0012](../decisions/0012-plaintext-http-is-allowed-on-the-lan.md), [0015](../decisions/0015-the-workspace-is-restored-from-settings.md), [0022](../decisions/0022-openrouter-is-its-own-kind-with-pinned-routing.md)
+Status: current · Issues: #21, #29, #22, #27, #23, #76, #40, #97, #24, #26, #62 · ADRs: [0006](../decisions/0006-settings-live-in-a-file-beside-the-archive.md), [0008](../decisions/0008-secrets-live-in-the-file-keychain.md), [0009](../decisions/0009-provider-transport-is-direct-and-bounded.md), [0012](../decisions/0012-plaintext-http-is-allowed-on-the-lan.md), [0015](../decisions/0015-the-workspace-is-restored-from-settings.md), [0022](../decisions/0022-openrouter-is-its-own-kind-with-pinned-routing.md), [0024](../decisions/0024-provider-choice-is-an-order-resolved-at-send.md)
 
 The non-secret preferences both clients share: one JSON object in
 `settings.json`, beside the default archive (`SAI_SETTINGS_FILE` moves it).
@@ -13,7 +13,8 @@ and `test/no_secrets_test.dart` enforce that.
 | key | required | value |
 | --- | --- | --- |
 | `version` | yes | `0` |
-| `llm` | no | id of the selected provider — a configured one or a built-in (`fake`, `lmstudio`, `lan`; #23; `openrouter`, #24) — or `null` for none. While the file does not exist, a first run selects `lmstudio` without writing; once the file exists, its word stands |
+| `llm` | no | id of the **first choice** — a configured provider or a built-in (`fake`, `lmstudio`, `lan`; #23; `openrouter`, #24) — or `null` for none. The head of the preference order (#62, ADR 0024), and a plain string on purpose: an older sai reads this key alone and selects exactly this provider. While the file does not exist, a first run selects `lmstudio` without writing; once the file exists, its word stands |
+| `llm_fallback` | no | list of ids tried after `llm`, in order, when it cannot answer (#62). Omitted while empty, so a single choice writes the file an older sai wrote. Read strictly on type — anything but a list of non-empty strings makes the file unreadable — and leniently on content: an entry repeating `llm` or itself is dropped on read and not written again, and a tail with `llm: null` is dropped whole (a tail without a head is not an order, and an older sai reading `llm` alone sees the same nothing) |
 | `providers` | no | list of provider objects, ids unique; omitted when empty |
 | `share_tasks_with_cloud` | no | boolean, the privacy switch (#27, ADR 0010): whether a `cloud`-tagged provider may see the task list. Off when absent, and omitted while off |
 | `reasoning` | no | boolean (#34): whether a model may think before it answers. Off (absent) asks the backend not to (`reasoning_effort: none` and `chat_template_kwargs: {enable_thinking: false}` on the request) and the clients show no thinking; on lets it and shows it. Omitted while off |
@@ -66,8 +67,15 @@ and `test/no_secrets_test.dart` enforce that.
   known key, it is rewritten clean on the next write rather than kept.
 - **The app shows `problem`.** A quarantined or refused file is said in
   the first-run welcome and in Settings, not only in the status line.
-- **Removing a provider clears its selection**: `llm` never names a
-  provider that is gone.
+- **Removing a provider takes it out of the order**: neither `llm` nor
+  `llm_fallback` ever names a provider that is gone, and the next entry
+  takes a vacated head.
+- **Using a provider sets the order's first entry, never the whole
+  order** (#62). An id already in the order moves to the front and
+  nothing is dropped; a new one takes the head's place and the arranged
+  tail behind it stands. The order grows only where a person arranges it
+  — the app's Providers page or `sai_tui provider order`. Selecting none
+  clears the order whole.
 - **Moving an endpoint unbinds its key.** A new host, port or scheme
   drops `credential_origin`; the key stays in the Keychain but is not
   sent until entered again. A new path keeps it.
@@ -77,5 +85,5 @@ and `test/no_secrets_test.dart` enforce that.
 ## Example
 
 ```json
-{"llm":"lan","providers":[{"credential":"provider:lan","credential_origin":"https://lan.example:8443","default_model":"qwen","endpoint":"https://lan.example:8443/v1","id":"lan","kind":"openai_compatible"},{"default_model":"qwen","endpoint":"http://127.0.0.1:8080/v1","id":"local","kind":"openai_compatible"},{"credential":"provider:openrouter","default_model":"deepseek/deepseek-v4-flash-0731","id":"openrouter","kind":"openrouter","privacy":"cloud","routing":"deepinfra_fp8"}],"version":0}
+{"llm":"lan","llm_fallback":["local"],"providers":[{"credential":"provider:lan","credential_origin":"https://lan.example:8443","default_model":"qwen","endpoint":"https://lan.example:8443/v1","id":"lan","kind":"openai_compatible"},{"default_model":"qwen","endpoint":"http://127.0.0.1:8080/v1","id":"local","kind":"openai_compatible"},{"credential":"provider:openrouter","default_model":"deepseek/deepseek-v4-flash-0731","id":"openrouter","kind":"openrouter","privacy":"cloud","routing":"deepinfra_fp8"}],"version":0}
 ```
