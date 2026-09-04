@@ -36,6 +36,7 @@ void main() {
     expect(documented, {
       ...EventTypes.provider,
       EventTypes.policyDecision,
+      EventTypes.policyFallback,
       ...EventTypes.chat,
     });
   });

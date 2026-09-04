@@ -143,6 +143,97 @@ void main() {
     expect((usage['payload'] as Map)['cost'], 0.0042);
   });
 
+  group('the fallback line (#62)', () {
+    const skipped = [
+      SkippedProvider('lan', SkipReason.unreachable, detail: 'timeout'),
+      SkippedProvider('openrouter', SkipReason.cloudDisallowed),
+    ];
+
+    test('a call that went to the first choice writes none', () async {
+      final call = await recorder.start(FakeLlmProvider(), ask('hi'));
+      await call.done;
+      expect(call.fallback, isNull);
+      final log = lines();
+      expect(log.map((l) => l['type']), [
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+      ]);
+      expect(log[0].containsKey('refs'), isFalse);
+    });
+
+    test('a call that fell through writes one, before the request', () async {
+      final call = await recorder.start(
+        FakeLlmProvider(id: 'local'),
+        ask('hi'),
+        skipped: skipped,
+      );
+      expect(call.fallback, isNotNull);
+      await call.done;
+      final log = lines();
+      expect(log.map((l) => l['type']), [
+        'policy.fallback',
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+      ]);
+      final line = log[0];
+      expect(line['actor'], 'system');
+      expect(line['model'], {'provider': 'local', 'id': 'fake-1'});
+      expect(line.containsKey('refs'), isFalse);
+      expect(line['payload'], {
+        'first': 'lan',
+        'chosen': 'local',
+        'skipped': [
+          {'provider': 'lan', 'reason': 'unreachable', 'detail': 'timeout'},
+          {'provider': 'openrouter', 'reason': 'cloud_disallowed'},
+        ],
+      });
+      expect(log[1]['refs'], [call.fallback.toString()]);
+    });
+
+    test('a cloud call that fell through names both lines', () async {
+      policy = const PrivacyPolicy(shareTasksWithCloud: true);
+      final call = await recorder.start(
+        FakeLlmProvider(id: 'cloudy', privacy: LlmPrivacy.cloud),
+        ask('hi'),
+        skipped: const [SkippedProvider('lan', SkipReason.unreachable)],
+      );
+      await call.done;
+      final log = lines();
+      expect(log.map((l) => l['type']), [
+        'policy.fallback',
+        'policy.decision',
+        'provider.request',
+        'provider.response',
+        'provider.usage',
+      ]);
+      expect(log[0]['payload'], {
+        'first': 'lan',
+        'chosen': 'cloudy',
+        'skipped': [
+          {'provider': 'lan', 'reason': 'unreachable'},
+        ],
+      });
+      expect(log[2]['refs'], [
+        call.fallback.toString(),
+        call.decision.toString(),
+      ]);
+    });
+
+    test('a request too large to record writes no fallback line', () async {
+      expect(
+        () => recorder.start(
+          FakeLlmProvider(),
+          LlmRequest(messages: [LlmMessage(LlmRole.user, 'x' * 600 * 1024)]),
+          skipped: skipped,
+        ),
+        throwsArgumentError,
+      );
+      expect(lines(), isEmpty);
+    });
+  });
+
   group('the privacy policy (#27)', () {
     LlmRequest withTasks(String text) => LlmRequest(
       messages: [LlmMessage(LlmRole.user, text)],

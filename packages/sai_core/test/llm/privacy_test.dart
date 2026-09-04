@@ -225,7 +225,7 @@ void main() {
         final local = FakeLlmProvider();
         expect(
           selectionWarning(cloud, const PrivacyPolicy()),
-          "cloud provider 'cloudy' will not see your tasks until sharing is on",
+          "cloud provider 'cloudy' will not be used until sharing is on",
         );
         expect(
           selectionWarning(
@@ -238,7 +238,7 @@ void main() {
       },
     );
 
-    test('the status line carries the suffix while tasks are withheld', () {
+    test('the status line says a cloud provider is passed over', () {
       final cloud = FakeLlmProvider(
         id: 'cloudy',
         displayName: 'cloudy',
@@ -246,8 +246,9 @@ void main() {
       );
       expect(
         llmStatusLine(cloud, policy: const PrivacyPolicy()),
-        'cloudy (fake-1) — cloud · tasks withheld',
+        'cloudy (fake-1) — cloud · cloud not allowed',
       );
+      expect(cloudSkippedSuffix, ' · cloud not allowed');
       expect(
         llmStatusLine(
           cloud,

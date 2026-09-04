@@ -35,6 +35,7 @@ final class NewerSettingsVersion implements Exception {
 final class Settings {
   const Settings({
     this.llm,
+    this.llmFallback = const [],
     this.providers = const [],
     this.shareTasksWithCloud = false,
     this.reasoningOn = false,
@@ -51,8 +52,33 @@ final class Settings {
   /// The format this sai writes.
   static const version = 0;
 
-  /// Id of the selected `LlmProvider`, or null for none.
+  /// Id of the first-choice `LlmProvider`, or null for none. The head of
+  /// the preference order (#62), and a plain string on purpose: an older
+  /// sai reads this key alone and selects exactly this provider.
   final String? llm;
+
+  /// The ids tried after [llm], in order, when it cannot answer (#62):
+  /// what `llm_fallback` holds. Empty while there is no fallback, and
+  /// then not written at all.
+  final List<String> llmFallback;
+
+  /// The preference order: [llm] and the ids behind it, each once. Empty
+  /// while nothing is selected — a tail without a head is not an order,
+  /// and an older sai reading `llm` alone sees the same nothing.
+  List<String> get llmOrder {
+    final head = llm;
+    if (head == null) return const [];
+    final order = [head];
+    for (final id in llmFallback) {
+      if (!order.contains(id)) order.add(id);
+    }
+    return List.unmodifiable(order);
+  }
+
+  /// The order as one word, so a riverpod `select` on it wakes only when
+  /// the order itself moves — a workspace save must not re-resolve the
+  /// provider. Provider ids carry no space (`settings-v0`).
+  String get llmOrderKey => llmOrder.join(' ');
 
   /// The configured providers, in file order; ids unique.
   final List<ProviderConfig> providers;
@@ -97,23 +123,49 @@ final class Settings {
   /// Keys this sai does not know, exactly as read.
   final Map<String, Object?> extra;
 
-  /// The same settings with [id] selected. Clears [problem]: a write
-  /// after a quarantine starts the file fresh.
-  Settings withLlm(String? id) => Settings(
-    llm: id,
-    providers: providers,
-    shareTasksWithCloud: shareTasksWithCloud,
-    reasoningOn: reasoningOn,
-    workspace: workspace,
-    setupDone: setupDone,
-    finishedTaskVisibility: finishedTaskVisibility,
-    extra: extra,
-  );
+  /// The same settings with [id] as the first choice — or, for null,
+  /// nothing selected at all. It sets the order's first entry, never the
+  /// whole order (#62): an id already in the order moves to the front and
+  /// nothing is dropped, a new one takes the head's place and the
+  /// arranged tail behind it stands. The order grows only where a person
+  /// arranges it. Clears [problem]: a write after a quarantine starts the
+  /// file fresh.
+  Settings withLlm(String? id) {
+    if (id == null) return withLlmOrder(const []);
+    final order = llmOrder;
+    return withLlmOrder(
+      order.contains(id)
+          ? [id, ...order.where((entry) => entry != id)]
+          : [id, ...order.skip(1)],
+    );
+  }
+
+  /// The same settings with the preference order set (#62): the first
+  /// entry becomes [llm], the rest [llmFallback]. A repeated id keeps the
+  /// first place it takes. Clears [problem] like [withLlm].
+  Settings withLlmOrder(List<String> order) {
+    final unique = <String>[];
+    for (final id in order) {
+      if (id.isNotEmpty && !unique.contains(id)) unique.add(id);
+    }
+    return Settings(
+      llm: unique.isEmpty ? null : unique.first,
+      llmFallback: List.unmodifiable(unique.skip(1)),
+      providers: providers,
+      shareTasksWithCloud: shareTasksWithCloud,
+      reasoningOn: reasoningOn,
+      workspace: workspace,
+      setupDone: setupDone,
+      finishedTaskVisibility: finishedTaskVisibility,
+      extra: extra,
+    );
+  }
 
   /// The same settings with the reasoning display set. Clears
   /// [problem] like [withLlm].
   Settings withReasoning(bool show) => Settings(
     llm: llm,
+    llmFallback: llmFallback,
     providers: providers,
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: show,
@@ -127,6 +179,7 @@ final class Settings {
   /// [problem] like [withLlm].
   Settings withShareTasksWithCloud(bool share) => Settings(
     llm: llm,
+    llmFallback: llmFallback,
     providers: providers,
     shareTasksWithCloud: share,
     reasoningOn: reasoningOn,
@@ -146,6 +199,7 @@ final class Settings {
     ];
     return Settings(
       llm: llm,
+      llmFallback: llmFallback,
       providers: next,
       shareTasksWithCloud: shareTasksWithCloud,
       reasoningOn: reasoningOn,
@@ -156,26 +210,35 @@ final class Settings {
     );
   }
 
-  /// The same settings without the provider [id]; a selection of it is
-  /// cleared too, so `llm` never names a provider that is gone.
-  Settings withoutProvider(String id) => Settings(
-    llm: llm == id ? null : llm,
-    providers: [
-      for (final p in providers)
-        if (p.id != id) p,
-    ],
-    shareTasksWithCloud: shareTasksWithCloud,
-    reasoningOn: reasoningOn,
-    workspace: workspace,
-    setupDone: setupDone,
-    finishedTaskVisibility: finishedTaskVisibility,
-    extra: extra,
-  );
+  /// The same settings without the provider [id]; it leaves the
+  /// preference order wherever it stood, so the order never names a
+  /// provider that is gone and the next entry takes a vacated head.
+  Settings withoutProvider(String id) {
+    final order = [
+      for (final entry in llmOrder)
+        if (entry != id) entry,
+    ];
+    return Settings(
+      llm: order.isEmpty ? null : order.first,
+      llmFallback: List.unmodifiable(order.skip(1)),
+      providers: [
+        for (final p in providers)
+          if (p.id != id) p,
+      ],
+      shareTasksWithCloud: shareTasksWithCloud,
+      reasoningOn: reasoningOn,
+      workspace: workspace,
+      setupDone: setupDone,
+      finishedTaskVisibility: finishedTaskVisibility,
+      extra: extra,
+    );
+  }
 
   /// The same settings with the workspace remembered as [state]. Clears
   /// [problem] like [withLlm].
   Settings withWorkspace(WorkspaceState state) => Settings(
     llm: llm,
+    llmFallback: llmFallback,
     providers: providers,
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: reasoningOn,
@@ -189,6 +252,7 @@ final class Settings {
   /// [withLlm].
   Settings withSetupDone() => Settings(
     llm: llm,
+    llmFallback: llmFallback,
     providers: providers,
     shareTasksWithCloud: shareTasksWithCloud,
     reasoningOn: reasoningOn,
@@ -203,6 +267,7 @@ final class Settings {
   Settings withFinishedTaskVisibility(FinishedTaskVisibility visibility) =>
       Settings(
         llm: llm,
+        llmFallback: llmFallback,
         providers: providers,
         shareTasksWithCloud: shareTasksWithCloud,
         reasoningOn: reasoningOn,
@@ -235,6 +300,24 @@ final class Settings {
       throw const SettingsFormatException(
         'llm must be a non-empty string or null',
       );
+    }
+    final fallback = json[llmFallbackKey];
+    if (fallback != null &&
+        (fallback is! List ||
+            fallback.any((id) => id is! String || id.isEmpty))) {
+      throw const SettingsFormatException(
+        'llm_fallback must be a list of non-empty strings',
+      );
+    }
+    // Normalised as read: a tail entry repeating the head or itself says
+    // nothing, and a tail without a head is not an order at all — an
+    // older sai reading `llm` alone sees the same nothing. Being a known
+    // key, what is dropped is not written again.
+    final tail = <String>[];
+    if (llm != null) {
+      for (final id in fallback as List? ?? const []) {
+        if (id != llm && !tail.contains(id)) tail.add(id as String);
+      }
     }
     rejectSecretLike(json, where: 'settings');
     final share = json['share_tasks_with_cloud'];
@@ -269,6 +352,7 @@ final class Settings {
     }
     return Settings(
       llm: llm as String?,
+      llmFallback: List.unmodifiable(tail),
       providers: providers,
       shareTasksWithCloud: share as bool? ?? false,
       reasoningOn: reasoning as bool? ?? false,
@@ -293,6 +377,7 @@ final class Settings {
   static const _known = {
     'version',
     'llm',
+    llmFallbackKey,
     'providers',
     'share_tasks_with_cloud',
     'reasoning',
@@ -300,6 +385,9 @@ final class Settings {
     'setup',
     finishedTaskVisibilityKey,
   };
+
+  /// The key holding [llmFallback] — the order behind [llm].
+  static const llmFallbackKey = 'llm_fallback';
 
   /// The key holding [finishedTaskVisibility].
   static const finishedTaskVisibilityKey = 'finished_task_visibility';
@@ -331,6 +419,9 @@ final class Settings {
       ...extra,
       'version': version,
       'llm': llm,
+      // Omitted while there is no fallback, so a single choice writes the
+      // file an older sai wrote.
+      if (llmOrder.length > 1) llmFallbackKey: llmOrder.skip(1).toList(),
       if (providers.isNotEmpty)
         'providers': [for (final p in providers) p.toJson()],
       // Off is the default and is not written: an untouched file stays

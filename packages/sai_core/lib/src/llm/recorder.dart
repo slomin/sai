@@ -8,6 +8,7 @@ import '../context/hash.dart';
 import '../settings/endpoint.dart';
 import 'call.dart';
 import 'failure.dart';
+import 'fallback.dart';
 import 'privacy.dart';
 import 'provider.dart';
 
@@ -80,14 +81,24 @@ final class LlmRecorder {
   final DateTime Function() clock;
 
   /// Decides what [request] may carry to [provider], appends
-  /// `policy.decision` for a cloud provider, then `provider.request`, then
-  /// starts [provider] with the request as recorded. Returns once the
-  /// request line is in the archive — a crash after that still leaves
-  /// the request on record.
+  /// `policy.fallback` when the preference order passed something over to
+  /// reach it (#62) and `policy.decision` for a cloud provider, then
+  /// `provider.request`, then starts [provider] with the request as
+  /// recorded. Returns once the request line is in the archive — a crash
+  /// after that still leaves the request on record.
+  ///
+  /// [skipped] is what the resolver walked past, in order; empty — the
+  /// default — means the first choice answered and no fallback line is
+  /// written. A caller that names a provider itself (the Providers page's
+  /// Test) passes none: it is testing that provider, not the order.
   ///
   /// Throws [ArgumentError], before the provider is touched, when the
   /// request is too large to record: what cannot be recorded is not sent.
-  Future<RecordedCall> start(LlmProvider provider, LlmRequest request) async {
+  Future<RecordedCall> start(
+    LlmProvider provider,
+    LlmRequest request, {
+    List<SkippedProvider> skipped = const [],
+  }) async {
     final decision = policy().decide(provider.privacy, request);
     // Local goes untouched; a cloud request is governed even when there
     // is nothing to withhold — task-bearing history follows the switch,
@@ -112,8 +123,26 @@ final class LlmRecorder {
       id: request.model ?? provider.defaultModel,
     );
     final started = clock();
-    // The decision goes first: a crash between the two lines leaves the
-    // policy's word on record, and the request refers back to it.
+    // What was passed over goes first, then the decision: a crash between
+    // any two of them leaves the policy's word on record, and the request
+    // refers back to both.
+    BlobRef? fell;
+    if (skipped.isNotEmpty) {
+      final stored = await archive.append(
+        EventDraft(
+          type: EventTypes.policyFallback,
+          actor: Actor.system,
+          source: source,
+          payload: {
+            'first': skipped.first.id,
+            'chosen': provider.id,
+            'skipped': [for (final skip in skipped) skip.toJson()],
+          },
+          model: target,
+        ),
+      );
+      fell = stored.id;
+    }
     BlobRef? decided;
     if (decision != null) {
       final stored = await archive.append(
@@ -134,7 +163,7 @@ final class LlmRecorder {
         source: source,
         payload: payload,
         model: target,
-        refs: decided == null ? null : [decided],
+        refs: [?fell, ?decided],
       ),
     );
     LlmCall call;
@@ -158,6 +187,7 @@ final class LlmRecorder {
       stored.id,
       call,
       decision: decided,
+      fallback: fell,
       contextHash: hash,
       taskContextWithheld: decision?.withheld ?? false,
     );
@@ -348,6 +378,7 @@ final class RecordedCall {
     this.request,
     this._call, {
     required this.decision,
+    required this.fallback,
     required this.contextHash,
     required this.taskContextWithheld,
   });
@@ -364,6 +395,10 @@ final class RecordedCall {
   /// Id of the `policy.decision` line; null for a local provider, which
   /// has none.
   final BlobRef? decision;
+
+  /// Id of the `policy.fallback` line (#62); null when the first choice
+  /// answered, or when the caller named the provider itself.
+  final BlobRef? fallback;
 
   /// The `context_hash` on the request line: the blobref of the messages
   /// as sent, policy applied (ADR 0011).

@@ -115,4 +115,165 @@ void main() {
       expect(on.withoutProvider('x').reasoningOn, isTrue);
     });
   });
+  group('the preference order', () {
+    test('a single-id file reads as a one-entry order and writes back the '
+        'same bytes', () {
+      final one = Settings.decode('{"version":0,"llm":"lan"}');
+      expect(one.llm, 'lan');
+      expect(one.llmFallback, isEmpty);
+      expect(one.llmOrder, ['lan']);
+      expect(one.encode(), '{"llm":"lan","version":0}');
+      expect(Settings.empty.llmOrder, isEmpty);
+      expect(Settings.empty.encode(), '{"llm":null,"version":0}');
+    });
+
+    test('an order of several keeps its head in llm, so an older sai reads '
+        'the first choice', () {
+      final order = Settings.empty.withLlmOrder(['lan', 'local', 'openrouter']);
+      expect(order.llm, 'lan');
+      expect(order.llmFallback, ['local', 'openrouter']);
+      expect(order.llmOrder, ['lan', 'local', 'openrouter']);
+      final text = order.encode();
+      expect(
+        text,
+        '{"llm":"lan","llm_fallback":["local","openrouter"],"version":0}',
+      );
+      // What an older sai sees: a plain string it selects, as before.
+      expect(jsonDecode(text), containsPair('llm', 'lan'));
+      expect(Settings.decode(text).llmOrder, ['lan', 'local', 'openrouter']);
+    });
+
+    test('withLlm sets the first entry, never the whole order', () {
+      final order = Settings.empty.withLlmOrder(['a', 'b', 'c']);
+      // Already in the order: moved to the front, nothing dropped.
+      expect(order.withLlm('c').llmOrder, ['c', 'a', 'b']);
+      expect(order.withLlm('a').llmOrder, ['a', 'b', 'c']);
+      // New: it takes the head's place, and the arranged tail stands —
+      // the order never grows out of what was used before.
+      expect(order.withLlm('d').llmOrder, ['d', 'b', 'c']);
+      expect(Settings.empty.withLlm('d').llmOrder, ['d']);
+      expect(Settings.empty.withLlmOrder(['a']).withLlm('d').llmOrder, ['d']);
+    });
+
+    test('selecting none clears the whole order', () {
+      final order = Settings.empty.withLlmOrder(['a', 'b']);
+      final none = order.withLlm(null);
+      expect(none.llm, isNull);
+      expect(none.llmOrder, isEmpty);
+      expect(none.encode(), '{"llm":null,"version":0}');
+    });
+
+    test('an order of one writes no tail', () {
+      final one = Settings.empty.withLlmOrder(['a']);
+      expect(one.encode(), '{"llm":"a","version":0}');
+      expect(
+        Settings.empty.withLlmOrder(const []).encode(),
+        '{"llm":null,"version":0}',
+      );
+    });
+
+    test('a removed provider leaves the order wherever it stood', () {
+      final order = Settings.empty
+          .withLlmOrder(['a', 'b', 'c'])
+          .withProvider(ProviderConfig(id: 'b', kind: 'fake'));
+      expect(order.withoutProvider('b').llmOrder, ['a', 'c']);
+      // The head goes with it, and the next entry answers.
+      expect(order.withoutProvider('a').llmOrder, ['b', 'c']);
+      expect(order.withoutProvider('a').llm, 'b');
+    });
+
+    test('a tail entry that repeats the head, or itself, is dropped on read '
+        'and not written again', () {
+      final decoded = Settings.decode(
+        '{"version":0,"llm":"a","llm_fallback":["b","a","b","c"]}',
+      );
+      expect(decoded.llmOrder, ['a', 'b', 'c']);
+      expect(
+        decoded.encode(),
+        '{"llm":"a","llm_fallback":["b","c"],"version":0}',
+      );
+    });
+
+    test('a tail without a head is nothing selected, as an older sai reads '
+        'it', () {
+      final decoded = Settings.decode(
+        '{"version":0,"llm":null,"llm_fallback":["a","b"]}',
+      );
+      expect(decoded.llm, isNull);
+      expect(decoded.llmOrder, isEmpty);
+      expect(decoded.encode(), '{"llm":null,"version":0}');
+    });
+
+    test('a mistyped tail is a format error', () {
+      for (final bad in [
+        '{"version":0,"llm":"a","llm_fallback":"b"}',
+        '{"version":0,"llm":"a","llm_fallback":{"1":"b"}}',
+        '{"version":0,"llm":"a","llm_fallback":["b",3]}',
+        '{"version":0,"llm":"a","llm_fallback":["b",""]}',
+        '{"version":0,"llm":"a","llm_fallback":["b",null]}',
+      ]) {
+        expect(
+          () => Settings.decode(bad),
+          throwsA(
+            isA<SettingsFormatException>().having(
+              (e) => e.reason,
+              'reason',
+              'llm_fallback must be a list of non-empty strings',
+            ),
+          ),
+          reason: bad,
+        );
+      }
+    });
+
+    test('the order key moves with the order and with nothing else', () {
+      final order = Settings.empty.withLlmOrder(['a', 'b']);
+      expect(order.llmOrderKey, 'a b');
+      expect(Settings.empty.llmOrderKey, '');
+      expect(
+        order.withWorkspace(const WorkspaceState(task: 'x')).llmOrderKey,
+        order.llmOrderKey,
+      );
+      expect(order.withShareTasksWithCloud(true).llmOrderKey, 'a b');
+      expect(order.withLlm('b').llmOrderKey, 'b a');
+    });
+
+    test('every copy keeps the tail', () {
+      final order = Settings.empty.withLlmOrder(['a', 'b']);
+      expect(order.withReasoning(true).llmFallback, ['b']);
+      expect(order.withShareTasksWithCloud(true).llmFallback, ['b']);
+      expect(
+        order.withProvider(ProviderConfig(id: 'c', kind: 'fake')).llmFallback,
+        ['b'],
+      );
+      expect(order.withoutProvider('c').llmFallback, ['b']);
+      expect(order.withSetupDone().llmFallback, ['b']);
+      expect(
+        order
+            .withFinishedTaskVisibility(FinishedTaskVisibility.immediate)
+            .llmFallback,
+        ['b'],
+      );
+      expect(order.withWorkspace(const WorkspaceState(task: 'x')).llmFallback, [
+        'b',
+      ]);
+    });
+
+    test('withLlmOrder clears a stale problem', () {
+      const broken = Settings(problem: 'was unreadable');
+      expect(broken.withLlmOrder(['a']).problem, isNull);
+    });
+
+    test('unknown keys still survive a write beside the tail', () {
+      final decoded = Settings.decode(
+        '{"version":0,"llm":"a","llm_fallback":["b"],"future":1}',
+      );
+      expect(jsonDecode(decoded.encode()), {
+        'version': 0,
+        'llm': 'a',
+        'llm_fallback': ['b'],
+        'future': 1,
+      });
+    });
+  });
 }

@@ -10,6 +10,7 @@ import '../context/catalog.dart';
 import '../context/marker.dart';
 import '../llm/call.dart';
 import '../llm/failure.dart';
+import '../llm/fallback.dart';
 import '../llm/privacy.dart';
 import '../llm/provider.dart';
 import '../llm/recorder.dart';
@@ -242,8 +243,13 @@ class ChatNotifier extends Notifier<ChatState> {
     if (state.busy) return _refuse(chatBusyError);
     final message = draft.trim();
     if (message.isEmpty) return false;
-    final provider = container.read(activeLlmProvider);
-    if (provider == null) return _refuse(noProviderStatus);
+    // Which provider answers is decided here, before assembly (#62):
+    // the shape, the budget and the turn's provenance all follow it.
+    final resolution = container.read(llmResolutionProvider);
+    final provider = resolution.provider;
+    if (provider == null) {
+      return _refuse(noEligibleProviderError(resolution.skipped));
+    }
     final projection = container.read(tasksProvider).value;
     if (projection == null) return _refuse(chatNotReadyError);
 
@@ -322,7 +328,11 @@ class ChatNotifier extends Notifier<ChatState> {
 
     final RecordedCall call;
     try {
-      call = await recorder.start(provider, assembled.request);
+      call = await recorder.start(
+        provider,
+        assembled.request,
+        skipped: resolution.skipped,
+      );
     } on Object catch (error) {
       if (current()) {
         _set(state.copyWith(clearStreaming: true));
@@ -436,6 +446,7 @@ class ChatNotifier extends Notifier<ChatState> {
                 prep: prep,
                 current: current,
                 triggerRefs: [?turn.event],
+                skipped: resolution.skipped,
               );
         if (!current()) return true;
         final turns = [...state.turns];
@@ -466,8 +477,11 @@ class ChatNotifier extends Notifier<ChatState> {
     final request = draft.trim().isEmpty
         ? defaultProposalRequest
         : draft.trim();
-    final provider = container.read(activeLlmProvider);
-    if (provider == null) return _refuse(noProviderStatus);
+    final resolution = container.read(llmResolutionProvider);
+    final provider = resolution.provider;
+    if (provider == null) {
+      return _refuse(noEligibleProviderError(resolution.skipped));
+    }
     if (provider.privacy != LlmPrivacy.local) {
       return _refuse(proposalsNeedLocal);
     }
@@ -531,6 +545,7 @@ class ChatNotifier extends Notifier<ChatState> {
       prep: prep,
       current: current,
       triggerRefs: [said.id],
+      skipped: resolution.skipped,
     );
     if (!current()) return true;
     _set(
@@ -588,6 +603,7 @@ class ChatNotifier extends Notifier<ChatState> {
     required _ProposalPrep prep,
     required bool Function() current,
     required List<BlobRef> triggerRefs,
+    List<SkippedProvider> skipped = const [],
   }) async {
     final container = ref.container;
     final assembled = prep.assembled!;
@@ -601,7 +617,11 @@ class ChatNotifier extends Notifier<ChatState> {
       if (_cancelRequested) {
         return const ProposalRefused(proposalCancelledReason);
       }
-      call = await recorder.start(provider, assembled.request);
+      call = await recorder.start(
+        provider,
+        assembled.request,
+        skipped: skipped,
+      );
     } on Object catch (error) {
       return ProposalRefused('the call could not start: $error');
     }

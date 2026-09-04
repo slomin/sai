@@ -1,3 +1,4 @@
+import 'fallback.dart';
 import 'privacy.dart';
 import 'provider.dart';
 
@@ -11,13 +12,33 @@ const unreadableSettingsStatus = 'settings unreadable — local only';
 String missingProviderStatus(String id) =>
     "provider '$id' is not available — local only";
 
-/// The status line for a selected provider: name, default model, privacy
-/// tag, and whether it operates without the task list under [policy] —
-/// the same in every client.
+/// The status line for a provider: name, default model, privacy tag, and
+/// — for a cloud one the switch passes over (#62) — that it will not be
+/// used. The same in every client.
 String llmStatusLine(LlmProvider provider, {required PrivacyPolicy policy}) =>
     '${provider.displayName} (${provider.defaultModel}) — '
     '${provider.privacy.name}'
-    '${policy.withholdsFrom(provider.privacy) ? tasksWithheldSuffix : ''}';
+    '${policy.withholdsFrom(provider.privacy) ? cloudSkippedSuffix : ''}';
+
+/// Appended to a cloud provider's line while "allow cloud providers to
+/// see my tasks" is off: the order passes it over entirely (#62, ADR
+/// 0010's amendment) rather than letting it answer without the list.
+const cloudSkippedSuffix = ' · cloud not allowed';
+
+/// Appended to the answering provider's line when it is not the first
+/// choice: which entry was passed over, and why (`· lan unreachable`).
+/// Empty when the first choice answered.
+String fallbackSuffix(LlmResolution resolution) =>
+    resolution.isFallback && resolution.skipped.isNotEmpty
+    ? ' · ${resolution.skipped.first.id} ${resolution.skipped.first.word}'
+    : '';
+
+/// Why a send was refused when nothing in the preference order could
+/// answer: every entry passed over, in order, with its reason.
+String noEligibleProviderError(List<SkippedProvider> skipped) => skipped.isEmpty
+    ? noProviderStatus
+    : 'no provider can answer — '
+          '${skipped.map((skip) => '${skip.id} ${skip.word}').join(', ')}';
 
 /// What it shows when the selected provider is configured but no
 /// factory in this build knows its kind.

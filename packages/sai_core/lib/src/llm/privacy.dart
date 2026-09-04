@@ -96,9 +96,10 @@ const tasksWithheldWord = 'tasks withheld';
 const tasksWithheldSuffix = ' · $tasksWithheldWord';
 
 /// The one-line warning both clients show when a cloud provider is
-/// selected while sharing is off.
+/// chosen while sharing is off: the order passes it over entirely (#62),
+/// so it does not answer at all until the switch is on.
 String cloudSelectionWarning(String id) =>
-    "cloud provider '$id' will not see your tasks until sharing is on";
+    "cloud provider '$id' will not be used until sharing is on";
 
 /// The warning for selecting [provider] under [policy], or null when
 /// there is nothing to warn about.

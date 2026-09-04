@@ -22,6 +22,7 @@ export 'process/runner.dart';
 export 'llm/connection.dart';
 export 'llm/effort.dart';
 export 'llm/failure.dart';
+export 'llm/fallback.dart';
 export 'llm/factory.dart';
 export 'llm/fake.dart';
 export 'llm/openai/openai.dart';

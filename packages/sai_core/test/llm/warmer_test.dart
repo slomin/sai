@@ -85,6 +85,18 @@ void main() {
     ];
   }
 
+  List<Map<String, Object?>> allLines(Directory tmp) {
+    final dir = Directory('${tmp.path}/archive/events');
+    if (!dir.existsSync()) return const [];
+    final files = dir.listSync().whereType<File>().toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+    return [
+      for (final file in files)
+        for (final line in file.readAsStringSync().split('\n'))
+          if (line.isNotEmpty) jsonDecode(line) as Map<String, Object?>,
+    ];
+  }
+
   Future<void> settle() async {
     // Probe microtask, debounce timer at zero, then the warm call.
     for (var i = 0; i < 6; i++) {
@@ -114,6 +126,36 @@ void main() {
     expect((messages[1] as Map)['text'], contains('TASK CATALOG'));
     expect(messages[2], {'role': 'user', 'text': warmupPrompt});
     expect(payload['max_tokens'], 1);
+    sub.close();
+  });
+
+  test('warms the provider the order resolved to, and records what it '
+      'passed over (#62)', () async {
+    final warmy = _Warmy();
+    final c = await make(warmy);
+    final store = c.read(tasksProvider.notifier).store;
+    await store.createTask(title: 'Feed the gargoyle');
+    final settings = c.read(settingsProvider.notifier);
+    settings.upsertProvider(
+      ProviderConfig(id: 'keyed', kind: 'fake', credential: 'provider:keyed'),
+    );
+    settings.setLlmOrder(['keyed', 'warmy']);
+    expect(c.read(activeLlmProvider)?.id, 'warmy');
+    final sub = c.listen(cacheWarmerProvider, (_, _) {});
+    await settle();
+    expect(c.read(cacheWarmerProvider).phase, WarmPhase.warm);
+    final sent = requests(tmp);
+    expect(sent, hasLength(1), reason: 'the first choice was never asked');
+    expect(sent.single['model'], {'provider': 'warmy', 'id': 'fake-1'});
+    final log = allLines(tmp);
+    final fallback = log.firstWhere((l) => l['type'] == 'policy.fallback');
+    expect(fallback['payload'], {
+      'first': 'keyed',
+      'chosen': 'warmy',
+      'skipped': [
+        {'provider': 'keyed', 'reason': 'no_key', 'detail': 'no key'},
+      ],
+    });
     sub.close();
   });
 

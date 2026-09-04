@@ -284,6 +284,10 @@ abstract final class EventTypes {
   /// The privacy policy's decision before a cloud call (#27, ADR 0010).
   static const policyDecision = 'policy.decision';
 
+  /// What the preference order passed over to reach the provider that
+  /// answered, written before the request it belongs to (#62).
+  static const policyFallback = 'policy.fallback';
+
   /// The conversation rows (#34): what a chat turn writes besides its
   /// provider traffic.
   static const chat = <String>[chatMessage];
