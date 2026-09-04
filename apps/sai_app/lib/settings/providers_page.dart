@@ -8,6 +8,7 @@ import 'package:sai_core/sai_core.dart';
 
 import '../commands.dart';
 import '../platform/browser.dart';
+import '../reorder/reorder.dart';
 import '../theme/sai_tokens.dart';
 import 'settings_row.dart';
 
@@ -25,6 +26,16 @@ const reasoningSwitchKey = ValueKey('reasoning-switch');
 
 /// One provider's row, for tests.
 Key providerRowKey(String id) => ValueKey('provider-row-$id');
+
+/// The preference-order controls on a row (#62), for tests: move it up,
+/// move it down, take it out of the order.
+Key providerUpKey(String id) => ValueKey('provider-up-$id');
+Key providerDownKey(String id) => ValueKey('provider-down-$id');
+Key providerDropKey(String id) => ValueKey('provider-drop-$id');
+
+/// Puts a provider that is not in the order at the end of it (#62), for
+/// tests — `Use` makes one the first choice, this one only adds it.
+Key providerAddKey(String id) => ValueKey('provider-add-$id');
 
 /// The OpenRouter model block (#24), for tests: the recommended preset,
 /// the exact-model row, its id field and the button that applies it.
@@ -83,6 +94,14 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
   final _modelFocus = FocusNode(debugLabel: 'openrouter-model');
   String? _selected;
 
+  /// The preference order's own drag group (#62). Its rows are the only
+  /// thing that may land in it; the sidebar's areas are another group.
+  late final _reorder = ReorderController<String>(
+    group: 'llm-order',
+    onDrop: _moveAfter,
+    refusal: 'only providers reorder here',
+  );
+
   RecordedCall? _test;
   String _testText = '';
   LlmResult? _testResult;
@@ -95,6 +114,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
 
   @override
   void dispose() {
+    _reorder.dispose();
     _resetTest();
     _controller.dispose();
     _openAiModel.dispose();
@@ -113,6 +133,22 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       for (final p in settings.providers)
         if (!registry.containsKey(p.id)) p.id,
     ];
+    // The preference order first, in its own order, then everything else
+    // (#62): the order is what a person arranges, the rest is what they
+    // may put into it.
+    final order = [
+      for (final id in ref.watch(llmOrderProvider))
+        if (ids.contains(id)) id,
+    ];
+    final rest = [
+      for (final id in ids)
+        if (!order.contains(id)) id,
+    ];
+    _reorder
+      ..order = order
+      ..canAnchor = order.contains;
+    final resolution = ref.watch(llmResolutionProvider);
+    final health = ref.watch(providerHealthProvider);
     final selected = ids.contains(_selected)
         ? _selected!
         : ids.contains(settings.llm)
@@ -151,15 +187,36 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final id in ids)
-              _row(
-                id,
-                config: settings.provider(id),
-                provider: registry[id],
-                missing: misconfigured[id],
-                active: settings.llm == id,
-                selected: selected == id,
+            for (final id in order)
+              ReorderRow<String>(
+                key: ValueKey('provider-order-$id'),
+                controller: _reorder,
+                id: id,
+                title: id,
+                enabled: order.length > 1,
+                builder: (context, handle) => _row(
+                  id,
+                  config: settings.provider(id),
+                  provider: registry[id],
+                  missing: misconfigured[id],
+                  answering: resolution.provider?.id == id,
+                  selected: selected == id,
+                  place: order.indexOf(id) + 1,
+                  of: order.length,
+                  handle: handle,
+                  verdict: _verdictFor(id, resolution, health, registry[id]),
+                ),
               ),
+            if (rest.isNotEmpty)
+              for (final id in rest)
+                _row(
+                  id,
+                  config: settings.provider(id),
+                  provider: registry[id],
+                  missing: misconfigured[id],
+                  answering: false,
+                  selected: selected == id,
+                ),
             SwitchListTile(
               key: shareTasksSwitchKey,
               dense: true,
@@ -212,13 +269,40 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     );
   }
 
+  /// What the order made of the entry [id]: the reason it was passed
+  /// over, what its endpoint last said if it answered, or that it was
+  /// never asked because something above it answered (#62).
+  String _verdictFor(
+    String id,
+    LlmResolution resolution,
+    Map<String, EndpointInfo> health,
+    LlmProvider? provider,
+  ) {
+    for (final skip in resolution.skipped) {
+      if (skip.id == id) return skip.word;
+    }
+    if (resolution.provider?.id != id) return 'not asked';
+    return switch (health[id]?.health) {
+      EndpointHealth.ok => 'ready',
+      EndpointHealth.loading => 'loading',
+      EndpointHealth.unavailable =>
+        health[id]?.failure?.kind.name ?? 'unavailable',
+      null || EndpointHealth.unknown =>
+        provider is LlmEndpointProbe ? 'answering' : 'ready',
+    };
+  }
+
   Widget _row(
     String id, {
     required ProviderConfig? config,
     required LlmProvider? provider,
     required String? missing,
-    required bool active,
+    required bool answering,
     required bool selected,
+    int? place,
+    int of = 0,
+    Widget? handle,
+    String? verdict,
   }) {
     final status = ref.watch(credentialStatusProvider(id));
     final key = credentialSuffix(status, config);
@@ -235,21 +319,76 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       OpenAiResponsesProvider() => ' · OpenAI API, billed separately',
       _ => '',
     };
+    final where = verdict == null ? '' : ' · $verdict';
     final subtitle = provider == null
         ? (missing == null
               ? "kind '${config?.kind}' is not available in this build"
               : misconfiguredNote(missing))
-        : '${provider.defaultModel} — ${provider.privacy.name}$billing$routing$key';
+        : '${provider.defaultModel} — ${provider.privacy.name}$billing$routing$key$where';
+    final first = place == 1;
     return ListTile(
       key: providerRowKey(id),
       dense: true,
       selected: selected,
-      leading: Icon(active ? Icons.check : null, size: 18),
-      title: Text(provider?.displayName ?? id),
+      leading: SizedBox(
+        width: 44,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(width: 20, child: handle),
+            Icon(answering ? Icons.check : null, size: 18),
+          ],
+        ),
+      ),
+      title: Text(
+        place == null
+            ? (provider?.displayName ?? id)
+            : '$place. ${provider?.displayName ?? id}',
+      ),
       subtitle: Text(subtitle),
-      trailing: TextButton(
-        onPressed: provider == null || active ? null : () => _use(id),
-        child: const Text('Use'),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextButton(
+            onPressed: provider == null || first ? null : () => _use(id),
+            child: const Text('Use'),
+          ),
+          if (place == null)
+            IconButton(
+              key: providerAddKey(id),
+              tooltip: 'Add to the order',
+              iconSize: 16,
+              visualDensity: VisualDensity.compact,
+              onPressed: provider == null ? null : () => _addToOrder(id),
+              icon: const Icon(Icons.add),
+            ),
+          if (place != null) ...[
+            IconButton(
+              key: providerUpKey(id),
+              tooltip: 'Move up',
+              iconSize: 16,
+              visualDensity: VisualDensity.compact,
+              onPressed: first ? null : () => _nudge(id, -1),
+              icon: const Icon(Icons.arrow_upward),
+            ),
+            IconButton(
+              key: providerDownKey(id),
+              tooltip: 'Move down',
+              iconSize: 16,
+              visualDensity: VisualDensity.compact,
+              onPressed: place == of ? null : () => _nudge(id, 1),
+              icon: const Icon(Icons.arrow_downward),
+            ),
+            IconButton(
+              key: providerDropKey(id),
+              tooltip: 'Take out of the order',
+              iconSize: 16,
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _takeOut(id),
+              icon: const Icon(Icons.close),
+            ),
+          ],
+        ],
       ),
       onTap: () => setState(() {
         _selected = id;
@@ -1296,6 +1435,54 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       return;
     }
     // The warning beats the status line: the bar already shows the line.
+    notice.show(
+      ref.read(activeLlmWarningProvider) ?? ref.read(llmStatusProvider),
+    );
+  }
+
+  /// Applies a drag: [moved] lands after [after], or first when null.
+  Future<void> _moveAfter(String moved, String? after) async {
+    final order = [...ref.read(llmOrderProvider)]..remove(moved);
+    final at = after == null ? 0 : order.indexOf(after) + 1;
+    _writeOrder([...order.take(at), moved, ...order.skip(at)]);
+  }
+
+  /// Moves [id] one place up (-1) or down (1) — the keyboard's way to do
+  /// what the handle does.
+  void _nudge(String id, int by) {
+    final order = [...ref.read(llmOrderProvider)];
+    final at = order.indexOf(id);
+    final to = at + by;
+    if (at < 0 || to < 0 || to >= order.length) return;
+    order
+      ..removeAt(at)
+      ..insert(to, id);
+    _writeOrder(order);
+  }
+
+  /// Puts [id] at the end of the preference order, leaving the first
+  /// choice where it is — the app's way to build a chain, which `Use`
+  /// deliberately does not do.
+  void _addToOrder(String id) {
+    final order = ref.read(llmOrderProvider);
+    if (order.contains(id)) return;
+    _writeOrder([...order, id]);
+  }
+
+  /// Takes [id] out of the preference order; it stays configured.
+  void _takeOut(String id) => _writeOrder([
+    for (final entry in ref.read(llmOrderProvider))
+      if (entry != id) entry,
+  ]);
+
+  void _writeOrder(List<String> order) {
+    final notice = ref.read(noticeProvider.notifier);
+    try {
+      ref.read(settingsProvider.notifier).setLlmOrder(order);
+    } on StateError catch (e) {
+      notice.show(e.message);
+      return;
+    }
     notice.show(
       ref.read(activeLlmWarningProvider) ?? ref.read(llmStatusProvider),
     );

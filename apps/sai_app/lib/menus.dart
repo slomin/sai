@@ -396,8 +396,10 @@ class _SaiChromeState extends ConsumerState<SaiChrome> {
     final shown = ref.watch(chatVisibleProvider);
     final reasoning = ref.watch(reasoningProvider);
     // An OpenAI kind (#26) carries its own effort: the menu says so.
+    // The first choice, not the answer — the menu is about the provider
+    // the person chose, which the order may be passing over (#62).
     final effortOwn = ref.watch(
-      activeLlmProvider.select((p) => p is ConfiguredEffort),
+      firstChoiceLlmProvider.select((p) => p is ConfiguredEffort),
     );
     final taskSelected = ref.watch(selectedTaskProvider) != null;
     final appName = ref.watch(identityProvider).displayName;

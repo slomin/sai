@@ -544,25 +544,40 @@ void main() {
       );
     });
 
-    testWidgets('a cloud provider with sharing off answers without the list', (
-      tester,
-    ) async {
+    testWidgets('a cloud provider with sharing off is passed over, and '
+        'answers once it is on', (tester) async {
       fake = FakeLlmProvider(
         id: 'cloudy',
         privacy: LlmPrivacy.cloud,
         script: echo,
       );
       final container = await ready(tester, select: 'cloudy');
-      expect(find.textContaining(tasksWithheldSuffix), findsOneWidget);
+      expect(find.textContaining(cloudSkippedSuffix), findsOneWidget);
+      await ask(tester, 'due?');
+      await until(tester, () => container.read(chatProvider).error != null);
+      expect(
+        container.read(chatProvider).error,
+        'no provider can answer — cloudy cloud not allowed',
+      );
+      expect(container.read(chatProvider).turns, isEmpty);
+      expect(
+        archiveLines(container.read(archiveRootProvider))
+            .where((l) => !l.contains('"task.create"')),
+        isEmpty,
+        reason: 'nothing of the refused turn',
+      );
+
+      container.read(settingsProvider.notifier).setShareTasksWithCloud(true);
+      await tester.pump();
       await ask(tester, 'due?');
       await until(tester, () => container.read(chatProvider).turns.length == 2);
-      expect(find.text('sai · tasks withheld'), findsOneWidget);
+      // The compact lists only, and the policy line that says so.
       expect(
         find.descendant(
           of: find.byKey(chatTranscriptKey),
           matching: find.textContaining('Call mom'),
         ),
-        findsNothing,
+        findsOneWidget,
       );
       final log = archiveLines(container.read(archiveRootProvider));
       expect(log.where((l) => l.contains('"policy.decision"')), hasLength(1));
