@@ -228,7 +228,7 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
               subtitle: Text(
                 settings.shareTasksWithCloud
                     ? 'A cloud provider sees the task list with each request.'
-                    : 'Cloud providers answer without the task list.',
+                    : 'Cloud providers are passed over until this is on.',
               ),
               value: settings.shareTasksWithCloud,
               onChanged: _setShareTasks,

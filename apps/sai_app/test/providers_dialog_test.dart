@@ -496,7 +496,7 @@ void main() {
         isFalse,
       );
       expect(
-        find.text('Cloud providers answer without the task list.'),
+        find.text('Cloud providers are passed over until this is on.'),
         findsOneWidget,
       );
       await tester.tap(find.byKey(shareTasksSwitchKey));
