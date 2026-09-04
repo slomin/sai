@@ -1414,6 +1414,17 @@ class CacheWarmer extends Notifier<WarmState> {
     }
 
     if (!ref.watch(warmEnabledProvider)) return stopped();
+    // An endpoint the walk found unavailable may have restarted, and
+    // what it held is then gone — forgotten here rather than in the
+    // down branch below, which a provider that stopped answering at all
+    // never reaches (the resolution has no provider to bring it there).
+    final health = ref.watch(providerHealthProvider);
+    for (final id in [..._warmed.keys, ..._failed.keys]) {
+      if (health[id]?.health == EndpointHealth.unavailable) {
+        _warmed.remove(id);
+        _failed.remove(id);
+      }
+    }
     // The whole resolution, not just its answer: the warm records what
     // the order passed over, and the two must belong to the same walk
     // even though the call itself starts after an await (#62).

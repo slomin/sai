@@ -159,6 +159,44 @@ void main() {
     sub.close();
   });
 
+  test(
+    'an endpoint that went down is warmed again when it comes back',
+    () async {
+      final warmy = _Warmy();
+      final c = await make(warmy);
+      final store = c.read(tasksProvider.notifier).store;
+      await store.createTask(title: 'Feed the gargoyle');
+      c.read(settingsProvider.notifier).selectLlm('warmy');
+      final sub = c.listen(cacheWarmerProvider, (_, _) {});
+      await settle();
+      expect(c.read(cacheWarmerProvider).phase, WarmPhase.warm);
+      expect(requests(tmp), hasLength(1));
+      // The sole endpoint goes down: nothing answers, so the warmer stops —
+      // and must not keep believing the endpoint holds the prefix.
+      c
+          .read(providerHealthProvider.notifier)
+          .report(
+            'warmy',
+            const EndpointInfo(
+              health: EndpointHealth.unavailable,
+              failure: LlmFailure(LlmFailureKind.unreachable, 'no'),
+            ),
+          );
+      await settle();
+      expect(c.read(activeLlmProvider), isNull);
+      expect(c.read(cacheWarmerProvider).phase, WarmPhase.idle);
+      // Back up, same instance, same catalog: a restarted endpoint holds
+      // nothing, so the prefix goes again.
+      c
+          .read(providerHealthProvider.notifier)
+          .report('warmy', const EndpointInfo(health: EndpointHealth.ok));
+      await settle();
+      expect(c.read(cacheWarmerProvider).phase, WarmPhase.warm);
+      expect(requests(tmp), hasLength(2));
+      sub.close();
+    },
+  );
+
   test('a changed catalog re-warms; an unchanged one does not', () async {
     final warmy = _Warmy();
     final c = await make(warmy);

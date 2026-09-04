@@ -251,21 +251,36 @@ void main() {
       expect(lines(), isEmpty);
     });
 
-    test(
-      'a resolution that answers with another provider is refused',
-      () async {
-        final local = FakeLlmProvider(id: 'local');
-        expect(
-          () => recorder.start(
-            FakeLlmProvider(id: 'other'),
-            ask('hi'),
-            resolution: fellTo(local),
+    test('a resolution that did not choose this provider is refused', () async {
+      final local = FakeLlmProvider(id: 'local');
+      expect(
+        () => recorder.start(
+          FakeLlmProvider(id: 'other'),
+          ask('hi'),
+          resolution: fellTo(local),
+        ),
+        throwsStateError,
+      );
+      // One that chose nothing is not this call's either: it would
+      // start a provider the resolver found ineligible, and write no
+      // line to say what was passed over.
+      expect(
+        () => recorder.start(local, ask('hi'), resolution: LlmResolution.none),
+        throwsStateError,
+      );
+      expect(
+        () => recorder.start(
+          local,
+          ask('hi'),
+          resolution: const LlmResolution(
+            first: 'lan',
+            skipped: [SkippedProvider('lan', SkipReason.unreachable)],
           ),
-          throwsStateError,
-        );
-        expect(lines(), isEmpty);
-      },
-    );
+        ),
+        throwsStateError,
+      );
+      expect(lines(), isEmpty);
+    });
   });
 
   group('the privacy policy (#27)', () {

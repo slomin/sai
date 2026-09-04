@@ -102,12 +102,11 @@ final class LlmRecorder {
     LlmRequest request, {
     LlmResolution? resolution,
   }) async {
-    if (resolution != null &&
-        resolution.provider != null &&
-        !identical(resolution.provider, provider)) {
+    if (resolution != null && !identical(resolution.provider, provider)) {
       throw StateError(
-        'the resolution answers with ${resolution.provider!.id}, '
-        'but the call goes to ${provider.id}',
+        'the resolution answers with '
+        '${resolution.provider?.id ?? 'nothing'}, but the call goes to '
+        '${provider.id}',
       );
     }
     final decision = policy().decide(provider.privacy, request);
