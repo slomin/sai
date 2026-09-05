@@ -36,6 +36,7 @@ void main() {
       prompts.add(prompt);
       return secretToGive;
     },
+    readLine: (_) => null,
   );
 
   File settingsFile() => container.read(settingsFileProvider);

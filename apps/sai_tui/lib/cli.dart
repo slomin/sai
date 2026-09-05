@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:riverpod/riverpod.dart';
@@ -48,6 +49,10 @@ usage: sai_tui                       open the terminal client
                                     hash every line of the log, or of <root>
        sai_tui archive restore <replica>
                                     put a replica back into an empty log
+       sai_tui decision add [--from <file.json>]
+                                    record a decision made on sai's behalf
+       sai_tui decision render [<file>|-]
+                                    write the decision log beside the archive
        sai_tui version               print the version
        sai_tui help
 
@@ -110,7 +115,18 @@ is not mounted is skipped quietly (docs/archive/backup-and-restore.md).
 The app copies on its own while a destination is set, and the dogfood
 install runs archive backup hourly through launchd. archive restore
 puts a replica back into an empty log only: move a damaged root aside
-first, then verify.''';
+first, then verify.
+
+decision add records a decision the person who keeps this sai took on
+her behalf — her name, the model she runs on, what goes into her
+memory — as one decision.made line in the archive: a title, the day it
+was decided, who decided, what was decided, the alternatives and the
+reasoning, asked one at a time (a multi-line answer ends with an empty
+line) or read from a JSON file with those keys. It then renders
+decisions.md beside the archive root, in the data directory; decision
+render does only that — to that file, to <file>, or to stdout with -.
+The document is a view of the log and is never edited by hand
+(docs/archive/event-log-v0.md § Decisions).''';
 
 /// [cliUsage] for the command a flavor is installed as (`sai_tui` for
 /// stable, `sai_tui-dev` for dev, ADR 0019). The text is written once for
@@ -163,16 +179,19 @@ const cliOk = 0;
 const cliFailed = 1;
 const cliUsageError = 2;
 
-/// Runs one non-interactive command against [container] and returns the
-/// exit code. Output goes to [out] and [err], never a secret; the secret
-/// for `secret set` comes from [readSecret], which the binary wires to a
-/// hidden prompt and tests to a fixed string.
+/// Runs one command against [container] and returns the exit code. Output
+/// goes to [out] and [err], never a secret; the secret for `secret set`
+/// comes from [readSecret], which the binary wires to a hidden prompt and
+/// tests to a fixed string, and the answers `decision add` asks for come
+/// one line at a time from [readLine] — echoed at a terminal, a queue in
+/// a test, null when the input ends.
 Future<int> runCli(
   List<String> args, {
   required ProviderContainer container,
   required StringSink out,
   required StringSink err,
   required FutureOr<String?> Function(String prompt) readSecret,
+  required FutureOr<String?> Function(String prompt) readLine,
 }) async {
   final program = container.read(identityProvider).tuiCommand;
   if (args.isEmpty || args.first == 'help' || args.first == '--help') {
@@ -1144,11 +1163,115 @@ Future<int> runCli(
           '${args.join(' ')}',
         );
 
+      case ['decision', 'add', ...final rest]:
+        String? from;
+        switch (rest) {
+          case []:
+            break;
+          case ['--from', final path]:
+            from = path;
+          default:
+            throw _Usage('decision add takes --from <file.json>, or nothing');
+        }
+        final Map<String, Object?> input;
+        if (from == null) {
+          input = await _askDecision(readLine);
+        } else {
+          final file = File(from);
+          if (!file.existsSync()) {
+            err.writeln('$program: no such file: $from');
+            return cliFailed;
+          }
+          try {
+            final decoded = jsonDecode(file.readAsStringSync());
+            if (decoded is! Map<String, Object?>) {
+              throw const FormatException('the file must hold one JSON object');
+            }
+            input = decoded;
+          } on FormatException catch (e) {
+            err.writeln('$program: $from: ${e.message}');
+            return cliFailed;
+          }
+        }
+        final Decision decision;
+        try {
+          decision = Decision.fromInput(
+            input,
+            today: container.read(todayProvider),
+          );
+        } on FormatException catch (e) {
+          err.writeln('$program: ${e.message}');
+          return cliFailed;
+        }
+        // The provider's own handle: this is the live log, and holding a
+        // listener keeps the future from being disposed mid-await.
+        final sub = container.listen(archiveProvider, (_, _) {});
+        try {
+          final archive = await container.read(archiveProvider.future);
+          final stored = await archive.append(
+            decisionMadeDraft(
+              decision,
+              source: container.read(eventSourceProvider),
+            ),
+          );
+          final decisions = await readDecisions(archive);
+          final file = decisionLogFile(container.read(archiveRootProvider));
+          writeDecisionLog(file, renderDecisionLog(decisions));
+          out.writeln(
+            'recorded ${decisions.length}. ${decision.title} as ${stored.id}',
+          );
+          out.writeln('rendered ${file.path}');
+          return cliOk;
+        } on Object catch (e) {
+          err.writeln('$program: failed: ${describeArchiveError(e)}');
+          return cliFailed;
+        } finally {
+          sub.close();
+        }
+
+      case ['decision', 'render', ...final rest]:
+        final String? target;
+        switch (rest) {
+          case []:
+            target = null;
+          case [final path]:
+            target = path;
+          default:
+            throw _Usage('decision render takes one file at most, or -');
+        }
+        final sub = container.listen(archiveProvider, (_, _) {});
+        try {
+          final archive = await container.read(archiveProvider.future);
+          final decisions = await readDecisions(archive);
+          final text = renderDecisionLog(decisions);
+          if (target == '-') {
+            out.write(text);
+            return cliOk;
+          }
+          final file = target == null
+              ? decisionLogFile(container.read(archiveRootProvider))
+              : File(target);
+          writeDecisionLog(file, text);
+          out.writeln('rendered ${decisions.length} decisions to ${file.path}');
+          return cliOk;
+        } on Object catch (e) {
+          err.writeln('$program: failed: ${describeArchiveError(e)}');
+          return cliFailed;
+        } finally {
+          sub.close();
+        }
+
+      case ['decision', ...]:
+        throw _Usage('decision takes add or render: ${args.join(' ')}');
+
       default:
         return usage('unknown command: ${args.join(' ')}');
     }
   } on _Usage catch (e) {
     return usage(e.message);
+  } on _InputEnded catch (e) {
+    err.writeln('$program: input ended before ${e.field}');
+    return cliFailed;
   } on SecretStoreException catch (e) {
     err.writeln('$program: $e');
     return cliFailed;
@@ -1226,8 +1349,65 @@ String _orderLine(ProviderContainer container) {
   return order.isEmpty ? 'order: none' : 'order: ${order.join(', ')}';
 }
 
+/// The questions `decision add` asks, one field at a time through
+/// [readLine]: one line each for the title, the day and who decided;
+/// lines until an empty one for the decision, the alternatives and the
+/// reasoning (the input ending also ends a field that has something).
+/// The words themselves are judged by [Decision.fromInput] afterwards;
+/// this only collects them.
+Future<Map<String, Object?>> _askDecision(
+  FutureOr<String?> Function(String prompt) readLine,
+) async {
+  Future<String> one(String prompt, String field) async {
+    final answer = await readLine(prompt);
+    if (answer == null) throw _InputEnded(field);
+    return answer;
+  }
+
+  Future<List<String>> many(String prompt, String field) async {
+    final lines = <String>[];
+    var next = prompt;
+    while (true) {
+      final answer = await readLine(next);
+      if (answer == null) {
+        if (lines.isEmpty) throw _InputEnded(field);
+        break;
+      }
+      if (answer.trim().isEmpty) break;
+      lines.add(answer);
+      next = '';
+    }
+    return lines;
+  }
+
+  return {
+    'title': await one('Title: ', 'title'),
+    'decided': await one('Decided (YYYY-MM-DD, empty for today): ', 'decided'),
+    'by': await one('By: ', 'by'),
+    'decision': (await many(
+      'Decision (end with an empty line):\n',
+      'decision',
+    )).join('\n'),
+    'alternatives': await many(
+      'Alternatives, one per line (an empty line ends them):\n',
+      'alternatives',
+    ),
+    'reasoning': (await many(
+      'Reasoning (end with an empty line):\n',
+      'reasoning',
+    )).join('\n'),
+  };
+}
+
 final class _Usage implements Exception {
   _Usage(this.message);
 
   final String message;
+}
+
+/// The input ended before `decision add` had an answer for [field].
+final class _InputEnded implements Exception {
+  _InputEnded(this.field);
+
+  final String field;
 }

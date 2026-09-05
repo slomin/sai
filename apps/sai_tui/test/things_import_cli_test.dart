@@ -35,6 +35,7 @@ void main() {
     out: out,
     err: err,
     readSecret: (_) => null,
+    readLine: (_) => null,
   );
 
   String seed() {
