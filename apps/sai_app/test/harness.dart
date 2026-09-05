@@ -206,6 +206,7 @@ List<Override> appOverrides({
   // The shell brings up the archive follower (#118); a periodic timer
   // would outlive the test, so a test drives `tick()` by hand.
   archivePollEveryProvider.overrideWithValue(null),
+  archiveBackupDebounceProvider.overrideWithValue(null),
   // The OpenAI kinds (#26): the Responses origin moves to a loopback stub
   // only when a test brings one; the App Server is a scripted fake or
   // nothing — never the real binary, never a real home.

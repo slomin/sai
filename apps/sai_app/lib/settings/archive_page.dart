@@ -14,6 +14,10 @@ const revealInFinderKey = Key('reveal-in-finder');
 const verifyHashesKey = Key('verify-hashes');
 const verifyStatusKey = Key('verify-status');
 const importThingsKey = Key('import-things');
+const backupPathKey = Key('backup-path');
+const backupSetKey = Key('backup-set');
+const backupNowKey = Key('backup-now');
+const backupStatusKey = Key('backup-status');
 
 /// Settings › Archive (#40): where the record lives and how big it is,
 /// the Finder, the integrity pass — and nothing of what it holds.
@@ -28,6 +32,7 @@ class ArchivePage extends StatelessWidget {
         SettingsPageHeader(eyebrow: 'Archive', title: 'The record on disk'),
         ArchiveCard(),
         SizedBox(height: 18),
+        BackupRow(),
         _ImportRow(),
       ],
     );
@@ -121,6 +126,154 @@ class ArchiveCard extends ConsumerWidget {
     );
   }
 }
+
+/// Where the log is copied (#15, ADR 0025): the destination, a copy on
+/// demand, and what the last copy did — the count, never a line.
+class BackupRow extends ConsumerStatefulWidget {
+  const BackupRow({super.key});
+
+  @override
+  ConsumerState<BackupRow> createState() => _BackupRowState();
+}
+
+class _BackupRowState extends ConsumerState<BackupRow> {
+  late final TextEditingController _path;
+
+  /// Why the last Set was refused, until the next one.
+  String? _problem;
+
+  @override
+  void initState() {
+    super.initState();
+    _path = TextEditingController(
+      text: ref.read(settingsProvider).archiveBackup ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _path.dispose();
+    super.dispose();
+  }
+
+  void _set() {
+    final typed = _path.text.trim();
+    final settings = ref.read(settingsProvider.notifier);
+    if (typed.isEmpty) {
+      setState(() => _problem = null);
+      settings.setArchiveBackup(null);
+      return;
+    }
+    final reason = Settings.checkArchiveBackup(
+      typed,
+      archiveRoot: ref.read(archiveRootProvider).path,
+    );
+    setState(() => _problem = reason);
+    if (reason != null) return;
+    settings.setArchiveBackup(typed);
+    ref.read(archiveBackupProvider.notifier).backupNow();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = context.saiText;
+    final destination = ref.watch(
+      settingsProvider.select((s) => s.archiveBackup),
+    );
+    final backup = ref.watch(archiveBackupProvider);
+    final status =
+        _problem ?? backupStatus(backup, configured: destination != null);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 15),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: SaiColors.rule)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Back up to',
+            style: text.body.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            'A second copy of the record, on another disk or a mount. It '
+            'is kept in step while sai runs; every line is hashed on copy.',
+            style: text.small.copyWith(color: SaiColors.inkFaint),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  key: backupPathKey,
+                  controller: _path,
+                  style: mono(12, height: 1.5, color: SaiColors.ink),
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    hintText: '/Volumes/Backup/sai',
+                    isDense: true,
+                  ),
+                  onSubmitted: (_) => _set(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                key: backupSetKey,
+                onPressed: _set,
+                child: const Text('Set'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                key: backupNowKey,
+                onPressed: destination == null || backup is BackupRunning
+                    ? null
+                    : () =>
+                          ref.read(archiveBackupProvider.notifier).backupNow(),
+                child: const Text('Back up now'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              key: backupStatusKey,
+              status,
+              style: _problem == null
+                  ? text.meta
+                  : text.note.copyWith(color: SaiColors.redInk),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The status line under the destination: what the replica holds, or
+/// why it does not. A time is the local clock's, so a person can tell a
+/// copy from this morning from one from last week.
+String backupStatus(BackupState state, {required bool configured}) =>
+    switch (state) {
+      BackupIdle() =>
+        configured
+            ? 'waiting for the first copy'
+            : 'not backed up — set a destination',
+      BackupRunning() => 'copying…',
+      BackedUp(:final count, :final at) =>
+        'backed up: ${thousands(count)} lines, every hash matches · '
+            '${_clockTime(at.toLocal())}',
+      BackupSkipped(:final reason) => 'skipped: $reason',
+      BackupFailed(:final message) => 'failed: $message',
+    };
+
+String _clockTime(DateTime at) =>
+    '${at.hour.toString().padLeft(2, '0')}:'
+    '${at.minute.toString().padLeft(2, '0')}';
 
 /// The import, reachable after setup too: the same flow as first run.
 class _ImportRow extends StatelessWidget {
