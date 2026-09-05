@@ -27,6 +27,17 @@ Future<void> main() async {
   final target = File('${package.path}/lib/src/context/profile.g.dart');
   final bytes = source.readAsBytesSync();
   final text = utf8.decode(bytes);
+  // A single-quoted Dart literal cannot hold a raw carriage return or any
+  // other control character; the generated file would not compile, and
+  // the test that guards the text could never run. Refuse here instead.
+  if (hasControlCharacters(text)) {
+    stderr.writeln(
+      'profile/system-prompt.md holds a control character (a carriage '
+      'return, say): use LF line endings and plain text; nothing written',
+    );
+    exitCode = 1;
+    return;
+  }
   final prompt = text.endsWith('\n')
       ? text.substring(0, text.length - 1)
       : text;
@@ -60,9 +71,11 @@ String generateProfileSource({required String prompt, required String id}) {
   final literals = <String>[];
   for (final (i, line) in lines.indexed) {
     final tail = i == lines.length - 1 ? '' : r'\n';
-    final chunks = _chunks(_escape(line));
+    // Chunk the raw line, then escape each chunk whole: a cut can only
+    // fall on a space, never inside an escape or a surrogate pair.
+    final chunks = _chunks(line);
     for (final (j, chunk) in chunks.indexed) {
-      literals.add("'$chunk${j == chunks.length - 1 ? tail : ''}'");
+      literals.add("'${_escape(chunk)}${j == chunks.length - 1 ? tail : ''}'");
     }
   }
   for (final (i, literal) in literals.indexed) {
@@ -81,19 +94,27 @@ String generateProfileSource({required String prompt, required String id}) {
   return out.toString();
 }
 
+/// Whether [text] holds a character a single-quoted Dart literal cannot:
+/// a carriage return, a tab, any other C0 control or DEL. Newlines are
+/// the one exception — they are the line breaks the generator splits on.
+bool hasControlCharacters(String text) =>
+    RegExp(r'[\x00-\x09\x0b-\x1f\x7f]').hasMatch(text);
+
 String _escape(String line) =>
     line.replaceAll(r'\', r'\\').replaceAll("'", r"\'").replaceAll(r'$', r'\$');
 
-/// Splits an escaped line at spaces into pieces of at most [max]
-/// characters (the space stays at the end of the piece), so the generated
-/// literals read as prose; an empty line is one empty piece.
+/// Splits a raw line at spaces into pieces of at most [max] characters
+/// (the space stays at the end of the piece), so the generated literals
+/// read as prose. A run with no space to cut at stays one long piece —
+/// `dart format` leaves a long literal alone, and a cut inside a word
+/// could land inside a surrogate pair. An empty line is one empty piece.
 List<String> _chunks(String text, {int max = 66}) {
   if (text.isEmpty) return const [''];
   final out = <String>[];
   var rest = text;
   while (rest.length > max) {
-    var cut = rest.lastIndexOf(' ', max - 1);
-    if (cut <= 0) cut = max - 1;
+    final cut = rest.lastIndexOf(' ', max - 1);
+    if (cut <= 0) break;
     out.add(rest.substring(0, cut + 1));
     rest = rest.substring(cut + 1);
   }

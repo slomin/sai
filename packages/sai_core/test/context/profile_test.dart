@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
 
+import '../../tool/gen_profile.dart';
 import '../package_root.dart';
 
 /// `profile/system-prompt.md` is the assistant's profile (#14) and
@@ -64,6 +65,53 @@ void main() {
     expect(assistantProfile, isNot(contains('You cannot change the list.')));
     expect(assistantProfile, contains('never mention handles'));
     expect(assistantProfile, contains('cannot see the list right now'));
+  });
+
+  test('the committed copy is what the generator writes today', () {
+    final generated = File(
+      '${repo.path}/packages/sai_core/lib/src/context/profile.g.dart',
+    ).readAsStringSync();
+    expect(
+      generated,
+      generateProfileSource(
+        prompt: text.substring(0, text.length - 1),
+        id: assistantProfileId,
+      ),
+      reason: stale,
+    );
+  });
+
+  test('the generator never cuts a literal inside an escape', () {
+    // One word of 70 characters ending in an apostrophe, then more: the
+    // old chunker cut at a fixed offset and could split the \' in two.
+    final prompt = "${'x' * 69}' and a dollar \$ and a backslash \\ end";
+    final source = generateProfileSource(prompt: prompt, id: 'sha256-00');
+    final literal = RegExp(r"^\s*'((?:[^'\\]|\\.)*)'(?:;)?$");
+    // The prompt's literals only — not the id const that follows them.
+    final lines = source
+        .split('\n')
+        .where((l) => l.trimLeft().startsWith("'"))
+        .where((l) => !l.trimLeft().startsWith("'sha256-"))
+        .toList();
+    expect(lines, isNotEmpty);
+    for (final line in lines) {
+      expect(line, matches(literal), reason: 'not one well-formed literal');
+    }
+    // Every escape is a whole one, and the words come back unchanged.
+    final joined = lines
+        .map((l) => literal.firstMatch(l)![1]!)
+        .join()
+        .replaceAll(r'\$', r'$')
+        .replaceAll(r"\'", "'")
+        .replaceAll(r'\\', r'\');
+    expect(joined, prompt);
+  });
+
+  test('a control character is refused before anything is written', () {
+    expect(hasControlCharacters('plain\nlines'), isFalse);
+    expect(hasControlCharacters('crlf\r\n'), isTrue);
+    expect(hasControlCharacters('a\ttab'), isTrue);
+    expect(hasControlCharacters('nul\x00'), isTrue);
   });
 
   test('the text is clean: no trailing spaces, no carriage returns', () {
