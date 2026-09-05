@@ -314,8 +314,35 @@ void main() {
       expect(head(replica), before);
     });
 
-    test('a torn source tail is reported, not replicated over', () async {
+    test('a shorter replica day holding other bytes is refused', () async {
       final archive = await seed();
+      await archive.replicateTo(replica);
+      // Something else wrote one line of its own where the newest day
+      // should be a prefix of the archive's: shorter, but not ours.
+      final file = day(replica, '2026-08-25');
+      final foreign = '${day(root, '2026-08-23').readAsLinesSync().first}\n';
+      file.writeAsStringSync(foreign);
+      final before = head(replica);
+      await expectLater(
+        archive.replicateTo(replica),
+        throwsA(
+          isA<ReplicaRefusedError>().having(
+            (e) => e.reason,
+            'reason',
+            allOf(contains('diverged'), contains('2026-08-25.jsonl')),
+          ),
+        ),
+      );
+      expect(file.readAsStringSync(), foreign, reason: 'never overwritten');
+      expect(head(replica), before);
+    });
+
+    test('a torn source tail leaves the replica as it was', () async {
+      final archive = await seed();
+      await archive.replicateTo(replica);
+      final before = day(replica, '2026-08-25').readAsBytesSync();
+      final headBefore = head(replica);
+      await archive.append(draft('#5', DateTime.utc(2026, 8, 25, 12)));
       day(
         root,
         '2026-08-25',
@@ -324,10 +351,18 @@ void main() {
         archive.replicateTo(replica),
         throwsA(isA<TornTailError>()),
       );
+      expect(day(replica, '2026-08-25').readAsBytesSync(), before);
+      expect(head(replica), headBefore);
+      final check = await Archive.open(replica, clock: clock);
+      expect((await check.verify()).count, 5);
+      await check.close();
     });
 
-    test('a corrupted source line is reported by file and line', () async {
+    test('a corrupted source line is reported, and the replica kept', () async {
       final archive = await seed();
+      await archive.replicateTo(replica);
+      final before = day(replica, '2026-08-24').readAsBytesSync();
+      await archive.append(draft('#5', DateTime.utc(2026, 8, 25, 12)));
       final file = day(root, '2026-08-24');
       file.writeAsStringSync(file.readAsStringSync().replaceFirst('#2', '#x'));
       await expectLater(
@@ -340,6 +375,32 @@ void main() {
           ),
         ),
       );
+      expect(day(replica, '2026-08-24').readAsBytesSync(), before);
+      expect(
+        day(replica, '2026-08-25').lengthSync(),
+        lessThan(day(root, '2026-08-25').lengthSync()),
+        reason: 'the grown day was not copied',
+      );
+    });
+
+    test('a leftover temp file is swept under the replica lock', () async {
+      final archive = await seed();
+      await archive.replicateTo(replica);
+      // Hold the replica's lock from "another process" and let a copy
+      // queue behind it: the sweep and the manifest check wait too.
+      final holder = await Archive.open(replica, clock: clock);
+      final tmpFile = File('${replica.path}/events/2026-08-25.jsonl.tmp')
+        ..writeAsStringSync('half');
+      var copied = false;
+      final pending = holder.verify().then((_) async {
+        expect(tmpFile.existsSync(), isTrue, reason: 'not swept yet');
+      });
+      final copy = archive.replicateTo(replica).then((_) => copied = true);
+      await pending;
+      await copy;
+      expect(copied, isTrue);
+      expect(tmpFile.existsSync(), isFalse);
+      await holder.close();
     });
 
     test('the report says what a copy cost, and HEAD is byte-equal', () async {
@@ -468,6 +529,24 @@ void main() {
         expect((jsonDecode(head(fresh)) as Map)['count'], 6);
       },
     );
+
+    test('a replica whose manifest is another format is refused', () async {
+      await replicate();
+      File('${replica.path}/MANIFEST.json').writeAsStringSync(
+        '{"format":"sai-event-log","version":1,"created":"x"}\n',
+      );
+      await expectLater(
+        Archive.restore(from: replica, into: fresh),
+        throwsA(
+          isA<ReplicaRefusedError>().having(
+            (e) => e.reason,
+            'reason',
+            contains('not an archive'),
+          ),
+        ),
+      );
+      expect(fresh.existsSync(), isFalse);
+    });
 
     test('a directory that is not a replica is refused', () async {
       replica.createSync();

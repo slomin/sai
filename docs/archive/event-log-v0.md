@@ -173,16 +173,20 @@ of this archive:
   archive's identity, and a root whose manifest names another is another
   archive, never written to.
 - Every day file is byte-identical to the source's as of the copy; only
-  the newest can be shorter. A replica is only ever *behind* its source
-  — a day file the source lacks, a longer one, or a same-length newest
-  file ending in another line is divergence, refused, never overwritten.
+  the newest can be shorter, and then it is a byte-for-byte prefix. A
+  replica is only ever *behind* its source — a day file the source
+  lacks, a longer one, a shorter one that is not a prefix, or a
+  same-length newest file ending in another line is divergence, refused,
+  never overwritten.
 - `HEAD` is the source's HEAD as copied. A replica interrupted before
   HEAD was written has a stale-but-truthful HEAD, accepted like a crash
   trace on restore.
 - `LOCK` is per location; a replica has its own and it is never copied.
 
-Every copy ends with the full walk above against the replica. A restore
-copies a verified replica into an *empty* root only — a damaged root is
+Every copy walks the source first — nothing in the replica is replaced
+by a log that does not verify — and ends with the full walk above
+against the replica. A restore copies a verified replica, its manifest
+checked as on open, into an *empty* root only — a damaged root is
 moved aside first — and walks the copy again; nothing here rewrites a
 line.
 

@@ -163,6 +163,40 @@ void main() {
       expect(message, isNot(contains(tmp.path)));
     });
 
+    test('an archive that cannot open fails the backup, in words', () async {
+      final root = Directory('${tmp.path}/archive')..createSync();
+      File('${root.path}/MANIFEST.json').writeAsStringSync('not json\n');
+      final settings = File('${tmp.path}/settings.json')
+        ..writeAsStringSync(
+          Settings.empty.withArchiveBackup(replica.path).encode(),
+        );
+      // A failed provider is retried with backoff before its future
+      // rejects; the copy must see the rejection, not wait on the retry.
+      final container = ProviderContainer.test(
+        retry: (count, error) => null,
+        overrides: [
+          archiveRootProvider.overrideWithValue(root),
+          settingsFileProvider.overrideWithValue(settings),
+          eventSourceProvider.overrideWithValue('sai/test'),
+          secretStoreProvider.overrideWithValue(InMemorySecretStore()),
+          builtinLlmsProvider.overrideWithValue([FakeLlmProvider.new]),
+          defaultLlmIdProvider.overrideWithValue(null),
+          clockProvider.overrideWithValue(() => at),
+          connectionProbeEveryProvider.overrideWithValue(null),
+          archivePollEveryProvider.overrideWithValue(null),
+          archiveBackupDebounceProvider.overrideWithValue(null),
+        ],
+      );
+      container.listen(archiveBackupProvider, (_, _) {});
+      await container.read(archiveBackupProvider.notifier).backupNow();
+      final state = container.read(archiveBackupProvider);
+      expect(state, isA<BackupFailed>());
+      final message = (state as BackupFailed).message;
+      expect(message, contains('MANIFEST.json'));
+      expect(message, isNot(contains(tmp.path)));
+      expect(replica.existsSync(), isFalse);
+    });
+
     test('the timer follows archiveBackupDebounceProvider and disposal', () {
       expect(ArchiveBackup.debounce, const Duration(seconds: 30));
       final settings = File('${tmp.path}/settings.json')

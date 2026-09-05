@@ -66,12 +66,20 @@ extension _Replication on Archive {
       );
     }
     final replica = ArchiveStore(destination);
-    _refuseForeign(replica);
     replica.ensureRoot();
-    _removeLeftovers(replica);
     try {
-      return await replica.withLock(
-        () => _store.withLock(() async {
+      return await replica.withLock(() async {
+        // Judged under the replica's lock: another copy queued behind
+        // this one sees what this one leaves, never a half-written
+        // file of its own swept away or an empty root two archives
+        // both take for theirs.
+        _refuseForeign(replica);
+        _removeLeftovers(replica);
+        return _store.withLock(() async {
+          // The archive proves itself before a byte of the replica is
+          // replaced: a torn tail or a broken chain stops here, and the
+          // last good copy stands.
+          final head = await _proveChain();
           var filesCopied = 0;
           var bytesCopied = 0;
           if (!replica.manifestFile.existsSync()) {
@@ -80,7 +88,6 @@ extension _Replication on Archive {
               replica.manifestFile,
             );
           }
-          final head = _readHead();
           final sources = _store.dayFiles();
           final targets = {
             for (final file in replica.dayFiles()) p.basename(file.path): file,
@@ -116,6 +123,14 @@ extension _Replication on Archive {
               }
               continue;
             }
+            // Shorter is only ours if every byte of it is the archive's:
+            // a line something else wrote there is not overwritten.
+            if (target != null && !_isPrefix(target, of: source)) {
+              throw ReplicaRefusedError(
+                'the replica has diverged: its $name is not a prefix of the '
+                "archive's",
+              );
+            }
             bytesCopied += await _copyFile(
               source,
               replica.dayFile(p.basenameWithoutExtension(name)),
@@ -130,11 +145,33 @@ extension _Replication on Archive {
             filesCopied: filesCopied,
             bytesCopied: bytesCopied,
           );
-        }),
-      );
+        });
+      });
     } finally {
       await replica.close();
     }
+  }
+
+  /// The chain as this archive proves it, under the lock: the tail
+  /// against HEAD — a truthful prefix rolls forward, as on open — and
+  /// then every line, so the record copied is one that verifies.
+  Future<HeadRecord> _proveChain() async {
+    final tail = await _tailState();
+    var count = 0;
+    BlobRef? last;
+    await for (final stored in events()) {
+      count++;
+      last = stored.id;
+    }
+    if (count != tail.count || last != tail.head) {
+      throw ArchiveCorruptionError(
+        file: _store.headFile.path,
+        reason:
+            'HEAD records count ${tail.count} head ${tail.head}, '
+            'files hold count $count head $last',
+      );
+    }
+    return tail;
   }
 
   /// A replica carries its source's MANIFEST: a different `created` is
@@ -157,22 +194,31 @@ extension _Replication on Archive {
   }
 
   String? _manifestCreated(ArchiveStore store) {
-    final Object? manifest;
+    final Map<String, Object?> manifest;
     try {
-      manifest = jsonDecode(store.manifestFile.readAsStringSync());
+      manifest = store.checkManifest();
     } on FormatException catch (e) {
-      throw ArchiveCorruptionError(
-        file: store.manifestFile.path,
-        reason: 'MANIFEST.json is not JSON: ${e.message}',
-      );
-    }
-    if (manifest is! Map<String, Object?>) {
-      throw ArchiveCorruptionError(
-        file: store.manifestFile.path,
-        reason: 'MANIFEST.json is not an object',
+      throw ReplicaRefusedError(
+        '${identical(store, _store) ? 'the archive' : 'the destination'} '
+        'is not an archive: ${e.message}',
       );
     }
     return manifest['created'] as String?;
+  }
+
+  bool _isPrefix(File shorter, {required File of}) {
+    final head = shorter.readAsBytesSync();
+    final raf = of.openSync();
+    try {
+      final same = raf.readSync(head.length);
+      if (same.length != head.length) return false;
+      for (var i = 0; i < head.length; i++) {
+        if (same[i] != head[i]) return false;
+      }
+      return true;
+    } finally {
+      raf.closeSync();
+    }
   }
 
   /// A `.jsonl.tmp` under `events/` is this routine's own interrupted
@@ -210,6 +256,11 @@ Future<ArchiveReport> _restore({
       'the replica is not an archive: no MANIFEST.json, HEAD and events/',
     );
   }
+  try {
+    source.checkManifest();
+  } on FormatException catch (e) {
+    throw ReplicaRefusedError('the replica is not an archive: ${e.message}');
+  }
   final reader = Archive._(source, clock);
   if (source.dayFiles().isEmpty) {
     throw const ReplicaRefusedError('the replica holds no events');
@@ -217,21 +268,7 @@ Future<ArchiveReport> _restore({
   // What the replica proves about itself: a HEAD that is a truthful
   // prefix of its chain (a replication interrupted before HEAD was
   // written) is accepted and rolled forward in the copy, never in place.
-  final tail = await reader._tailState();
-  var count = 0;
-  BlobRef? last;
-  await for (final stored in reader.events()) {
-    count++;
-    last = stored.id;
-  }
-  if (count != tail.count || last != tail.head) {
-    throw ArchiveCorruptionError(
-      file: source.headFile.path,
-      reason:
-          'HEAD records count ${tail.count} head ${tail.head}, '
-          'files hold count $count head $last',
-    );
-  }
+  final tail = await reader._proveChain();
   final target = ArchiveStore(into);
   target.ensureRoot();
   try {

@@ -21,17 +21,24 @@ from the Finder has no environment to read a path from.
 ## Decision
 
 - **A replica is a prefix copy of the root, verified in place.**
-  `Archive.replicateTo` copies `MANIFEST.json`, every day file the
-  replica lacks or that has grown since, and a byte-equal `HEAD`, then
+  `Archive.replicateTo` first proves the archive under its own lock —
+  the tail against HEAD, then every line — so a torn tail or a broken
+  chain stops before a byte of the replica is replaced and the last
+  good copy stands; then it copies `MANIFEST.json`, every day file the
+  replica lacks or that has grown since, and a byte-equal `HEAD`, and
   runs the full chain walk against the replica — the same check
   `verify` runs — before it reports. `LOCK` is per location and never
   copied; the settings file and the Keychain items are not in it (ADR
   0006 kept settings out of the root for exactly this reason, and a
   backup never holds a key). A replica is only ever *behind* its source:
   a destination whose manifest names another creation time, that holds
-  a day file the source lacks, a longer day file, or a same-length newest
+  a day file the source lacks, a longer day file, a shorter one that is
+  not a byte-for-byte prefix of the archive's, or a same-length newest
   file that ends in another line is refused as diverged, and nothing is
-  written. There is no "make it match" path — overwriting a replica
+  written. The manifest check and the sweep of this routine's own
+  leftover temp files happen under the replica's lock, so two copies
+  queued on one replica see each other's work, never a half-written
+  file of their own swept away. There is no "make it match" path — overwriting a replica
   that disagrees would be the delete the log forbids.
 - **Copies run under both locks, the replica's first.** The source lock
   is held for the HEAD read and the copy, as `verify` holds it for a
@@ -87,10 +94,10 @@ from the Finder has no environment to read a path from.
   30 s behind while sai runs and an hour behind while it does not, and
   the drill in `docs/archive/backup-and-restore.md` — run once for #15,
   results in the doc — is the way back.
-- Every replication walks the whole replica. That is milliseconds at
-  today's sizes and stays so for years of tasks; an incremental tail
-  check (walk from the last verified id) is the next step when a copy
-  starts to cost, and changes nothing in the format.
+- Every replication walks the whole archive and then the whole replica.
+  That is milliseconds at today's sizes and stays so for years of tasks;
+  an incremental tail check (walk from the last verified id) is the next
+  step when a copy starts to cost, and changes nothing in the format.
 - `sai_tui archive verify [<root>]` exposes the integrity walk from the
   shell for the first time, so a drill needs nothing but the client — or
   nothing at all: `shasum -a 256` per line, per the spec.

@@ -2431,10 +2431,13 @@ class ArchiveBackup extends Notifier<BackupState> {
     if (epoch != _epoch || !ref.mounted) return;
     final destination = ref.read(settingsProvider).archiveBackup;
     if (destination == null) return;
-    final archive = await ref.read(archiveProvider.future);
-    if (epoch != _epoch || !ref.mounted) return;
     state = const BackupRunning();
     try {
+      // The open is part of the copy: an archive that will not open —
+      // corruption found at start, a disk that is gone — is what the
+      // status must say, not an exception off a timer.
+      final archive = await ref.read(archiveProvider.future);
+      if (epoch != _epoch || !ref.mounted) return;
       final report = await archive.replicateTo(Directory(destination));
       if (epoch != _epoch || !ref.mounted) return;
       state = BackedUp(count: report.count, at: ref.read(clockProvider)());

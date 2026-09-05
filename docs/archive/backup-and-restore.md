@@ -21,7 +21,8 @@ holds a key (ADR 0008), and settings live beside the archive, not in it
 
 A replica is only ever behind its source. sai refuses — and writes
 nothing — when the destination holds another archive (a different
-`created`), a day file the source lacks, a longer day file, or a
+`created`), a day file the source lacks, a longer day file, a shorter
+one that is not a byte-for-byte prefix of the archive's, or a
 same-length newest file that ends in another line. There is no "make it
 match": overwriting a replica that disagrees would be the delete the
 log forbids. The destination is never the archive itself, a place
@@ -56,9 +57,11 @@ or on the app's Settings › Archive page, *Back up to*. From then on:
   destination; `sai_tui archive backup <dir>` to another one, without
   remembering it.
 
-Every copy ends with the full chain walk against the replica: every
-line hashed, every `prev` checked, `HEAD` matched. A replica that does
-not verify is reported, not repaired. An unmounted volume is *skipped*,
+Every copy begins with the full chain walk of the archive — a torn tail
+or a broken chain stops it before a byte of the replica is replaced, and
+the last good copy stands — and ends with the same walk against the
+replica: every line hashed, every `prev` checked, `HEAD` matched. A
+replica that does not verify is reported, not repaired. An unmounted volume is *skipped*,
 exit 0, so the hourly job stays quiet until the disk is back.
 
 Time Machine backs the replica up like any other folder on a volume it
