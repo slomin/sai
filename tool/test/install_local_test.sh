@@ -18,7 +18,25 @@ export SAI_INSTALL_SHARE_ROOT="$work/home/.local/share"
 export SAI_INSTALL_BIN_DIR="$work/home/.local/bin"
 export SAI_INSTALL_KEEP_DIR="$work/keep"
 export SAI_INSTALL_SYSTEM_APPS_DIR="$work/system"
+export SAI_INSTALL_LAUNCH_AGENTS_DIR="$work/home/Library/LaunchAgents"
 mkdir -p "$HOME"
+# launchd is never asked for real (#15): a fake on PATH records every
+# call, and refuses a bootstrap when told to.
+mkdir -p "$work/bin"
+cat > "$work/bin/launchctl" <<'FAKE'
+#!/bin/sh
+echo "$*" >> "$LAUNCHCTL_LOG"
+if [ "$1" = bootstrap ] && [ -n "${LAUNCHCTL_REFUSE:-}" ]; then exit 1; fi
+exit 0
+FAKE
+chmod +x "$work/bin/launchctl"
+export LAUNCHCTL_LOG="$work/launchctl.log"
+export PATH="$work/bin:$PATH"
+grep -q '/bin/launchctl' tool/install-local.sh && fail "the installer names launchctl by an absolute path; a test could reach the real one"
+uid=$(id -u)
+plist_stable="$SAI_INSTALL_LAUNCH_AGENTS_DIR/me.slominski.sai.backup.plist"
+plist_dev="$SAI_INSTALL_LAUNCH_AGENTS_DIR/me.slominski.sai.dev.backup.plist"
+launch_calls() { if [ -f "$LAUNCHCTL_LOG" ]; then wc -l < "$LAUNCHCTL_LOG" | tr -d ' '; else echo 0; fi; }
 share_stable="$SAI_INSTALL_SHARE_ROOT/sai"
 share_dev="$SAI_INSTALL_SHARE_ROOT/sai-dev"
 
@@ -131,8 +149,8 @@ repack() {
 
 # snapshot: one line per installed file with its hash, for "unchanged" checks.
 snapshot() {
-  if [ -d "$HOME/Applications" ] || [ -d "$HOME/.local" ]; then
-    (cd "$HOME" && find Applications .local -type f -o -type l 2>/dev/null | sort | while read -r f; do
+  if [ -d "$HOME/Applications" ] || [ -d "$HOME/.local" ] || [ -d "$HOME/Library" ]; then
+    (cd "$HOME" && find Applications .local Library -type f -o -type l 2>/dev/null | sort | while read -r f; do
       if [ -L "$f" ]; then echo "$f -> $(readlink "$f")"; else shasum -a 256 "$f"; fi
     done)
   fi
@@ -149,8 +167,10 @@ fixture "$work/dist2" 0.0.1-test.2 "$c2"
 out=$(tool/install-local.sh "$work/dist1" --dry-run)
 echo "$out" | grep -q "dry run; nothing written" || fail "dry run did not say so: $out"
 echo "$out" | grep -q "Applications/sai.app (create)" || fail "dry run did not plan the app: $out"
-[ ! -e "$SAI_INSTALL_APPS_DIR" ] && [ ! -e "$share_stable" ] && [ ! -e "$work/keep" ] \
+echo "$out" | grep -q "LaunchAgents/me.slominski.sai.backup.plist (create)" || fail "dry run did not plan the backup job: $out"
+[ ! -e "$SAI_INSTALL_APPS_DIR" ] && [ ! -e "$share_stable" ] && [ ! -e "$work/keep" ] && [ ! -e "$SAI_INSTALL_LAUNCH_AGENTS_DIR" ] \
   || fail "dry run created something"
+[ "$(launch_calls)" = 0 ] || fail "dry run asked launchd: $(cat "$LAUNCHCTL_LOG")"
 pass "dry run prints the plan and writes nothing"
 
 # --- first install -----------------------------------------------------
@@ -167,6 +187,20 @@ grep -q "^version: 0.0.1-test.1$" "$share_stable/installed" || fail "installed f
 grep -rq "Authority\|Apple Development" "$share_stable/installed" "$work/out1" && fail "identity in metadata or log"
 ls -A "$SAI_INSTALL_APPS_DIR" | grep -q '^\.' && fail "staging left behind in Applications: $(ls -A "$SAI_INSTALL_APPS_DIR")"
 pass "first install creates the roots, the symlink, the record and the kept copy"
+
+# --- the hourly backup job (#15) -----------------------------------------
+[ -f "$plist_stable" ] || fail "no backup job written"
+plutil -lint "$plist_stable" >/dev/null || fail "the backup job is not a valid plist"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :Label' "$plist_stable")" = me.slominski.sai.backup ] || fail "wrong job label"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist_stable")" = "$share_stable/bundle/bin/sai_tui" ] || fail "the job runs the wrong program: $(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments' "$plist_stable")"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:1' "$plist_stable")" = archive ] && [ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:2' "$plist_stable")" = backup ] || fail "the job runs the wrong command"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :StartInterval' "$plist_stable")" = 3600 ] || fail "the job is not hourly"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :RunAtLoad' "$plist_stable")" = false ] || fail "the job runs at load"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :StandardOutPath' "$plist_stable")" = "$share_stable/backup.log" ] || fail "the job logs elsewhere"
+[ "$(cat "$LAUNCHCTL_LOG")" = "bootstrap gui/$uid $plist_stable" ] || fail "launchd was asked the wrong thing: $(cat "$LAUNCHCTL_LOG")"
+grep -q "^agent: $plist_stable$" "$share_stable/installed" || fail "the record lacks the job"
+grep -q "agent   $plist_stable" "$work/out1" || fail "the summary lacks the job"
+pass "the first install writes the hourly backup job and loads it"
 
 # --- a different signer is refused --------------------------------------
 # Ad-hoc signatures carry a per-build designated requirement, so every
@@ -186,7 +220,15 @@ tool/install-local.sh "$work/dist2" >"$work/out2" 2>&1 || { cat "$work/out2"; fa
 ls -A "$share_stable" | grep -q '^\.' && fail "staging or backup left behind in share: $(ls -A "$share_stable")"
 [ -d "$work/keep/sai-v0.0.1-test.1-1111111" ] && [ -d "$work/keep/sai-v0.0.1-test.2-2222222" ] || fail "kept copies missing"
 grep -q "^commit: $c2$" "$share_stable/installed" || fail "installed file not updated"
-pass "a second install upgrades in place, one sai.app, both versions kept"
+[ "$(tail -n 2 "$LAUNCHCTL_LOG" | tr '\n' '|')" = "bootout gui/$uid/me.slominski.sai.backup|bootstrap gui/$uid $plist_stable|" ] || fail "the upgrade did not unload and reload the job: $(cat "$LAUNCHCTL_LOG")"
+pass "a second install upgrades in place, one sai.app, both versions kept, the job reloaded"
+
+# --- a refused bootstrap is a warning, never a failed install ------------
+LAUNCHCTL_REFUSE=1 tool/install-local.sh "$work/dist1" >"$work/out" 2>&1 || { cat "$work/out"; fail "a refused bootstrap failed the install"; }
+grep -q "warning: could not load the backup job me.slominski.sai.backup; run: launchctl bootstrap gui/$uid $plist_stable" "$work/out" || fail "no warning naming the command: $(cat "$work/out")"
+[ "$(installed_version)" = "sai_tui 0.0.1-test.1" ] || fail "the install did not complete under a refused bootstrap"
+[ -f "$plist_stable" ] || fail "the job was not written under a refused bootstrap"
+pass "a bootstrap launchd refuses is a warning with the command, and the install stands"
 
 # --- rollback from the kept copy ---------------------------------------
 tool/install-local.sh "$work/keep/sai-v0.0.1-test.1-1111111" >/dev/null 2>&1 || fail "rollback failed"
@@ -194,9 +236,12 @@ tool/install-local.sh "$work/keep/sai-v0.0.1-test.1-1111111" >/dev/null 2>&1 || 
 pass "a kept copy reinstalls as the rollback"
 
 # --- refusals leave the install byte-identical --------------------------
-before=$(snapshot)
+# The snapshot covers the job's plist; a refusal must not ask launchd
+# either — the job keeps running through a release that does not install.
+before=$(snapshot); calls_before=$(launch_calls)
 unchanged() {
   [ "$(snapshot)" = "$before" ] || fail "$1 changed the installation"
+  [ "$(launch_calls)" = "$calls_before" ] || fail "$1 asked launchd: $(tail -n 3 "$LAUNCHCTL_LOG")"
 }
 
 fixture "$work/bad" 0.0.1-test.3 "$c2"
@@ -250,13 +295,16 @@ sleep 0.2
 tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 || { kill "$other"; fail "another checkout's sai.app blocked the install: $(cat "$work/err")"; }
 kill "$other"; wait "$other" 2>/dev/null || true
 pass "a sai.app elsewhere does not count as running"
-before=$(snapshot)
+before=$(snapshot); calls_before=$(launch_calls)
 
 # The second swap failing after the first: pin the live bundle so its
 # rename is refused, and expect the app to come back with nothing left over.
 chflags uchg "$share_stable/bundle"
 tool/install-local.sh "$work/dist2" >"$work/err" 2>&1 && { chflags nouchg "$share_stable/bundle"; fail "install succeeded with the bundle pinned"; }
 chflags nouchg "$share_stable/bundle"
+[ "$(tail -n 2 "$LAUNCHCTL_LOG" | tr '\n' '|')" = "bootout gui/$uid/me.slominski.sai.backup|bootstrap gui/$uid $plist_stable|" ] || fail "a failed swap did not put the job back: $(tail -n 3 "$LAUNCHCTL_LOG")"
+# The job was unloaded and put back — two calls launchd was meant to see.
+calls_before=$(launch_calls)
 unchanged "a failed bundle swap"
 ls -A "$SAI_INSTALL_APPS_DIR" | grep -q '^\.' && fail "orphans after the failed swap: $(ls -A "$SAI_INSTALL_APPS_DIR")"
 ls -A "$share_stable" | grep -q '^\.' && fail "orphans after the failed swap: $(ls -A "$share_stable")"
@@ -304,7 +352,7 @@ pass "a failed first install removes the app it had placed"
 # --- two flavors side by side (#90) --------------------------------------
 # Only the stable copy: the dev cases below must leave every line of this
 # exactly as it is.
-stable_snapshot() { snapshot | grep -v 'sai-dev\|sai_tui-dev' || true; }
+stable_snapshot() { snapshot | grep -v 'sai-dev\|sai_tui-dev\|sai\.dev' || true; }
 stable_before=$(stable_snapshot)
 stable_unchanged() {
   [ "$(stable_snapshot)" = "$stable_before" ] || fail "$1 changed the stable installation"
@@ -328,8 +376,12 @@ grep -q "^flavor: dev$" "$share_dev/installed" || fail "the dev record lacks its
 grep -q "^flavor: stable$" "$share_stable/installed" || fail "the stable record lacks its flavor"
 [ -f "$work/keep/sai-dev-v0.0.1-test.1-4444444/flavor" ] || fail "dev artefacts not kept under their own name"
 [ "$(/usr/libexec/PlistBuddy -c 'Print :SaiFlavor' "$SAI_INSTALL_APPS_DIR/sai-dev.app/Contents/Info.plist")" = dev ] || fail "installed dev app is not dev"
+[ -f "$plist_dev" ] && [ -f "$plist_stable" ] || fail "the two backup jobs do not sit side by side: $(ls "$SAI_INSTALL_LAUNCH_AGENTS_DIR")"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist_dev")" = "$share_dev/bundle/bin/sai_tui-dev" ] || fail "the dev job runs the wrong client"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :StandardOutPath' "$plist_dev")" = "$share_dev/backup.log" ] || fail "the dev job logs into stable's"
+[ "$(tail -n 1 "$LAUNCHCTL_LOG")" = "bootstrap gui/$uid $plist_dev" ] || fail "the dev job was not loaded: $(tail -n 2 "$LAUNCHCTL_LOG")"
 stable_unchanged "installing dev"
-pass "dev installs beside stable with its own app, bundle, symlink, record and kept copy"
+pass "dev installs beside stable with its own app, bundle, symlink, record, kept copy and backup job"
 
 tool/install-local.sh "$work/dev2" >"$work/outd2" 2>&1 || { cat "$work/outd2"; fail "dev upgrade failed"; }
 [ "$(installed_version sai_tui-dev)" = "sai_tui-dev 0.0.1-test.2" ] || fail "dev upgrade did not switch the client"
@@ -349,7 +401,7 @@ if out=$(tool/install-local.sh "$work/legacy" 2>&1); then fail "an ad-hoc legacy
 echo "$out" | grep -q "without a seal must carry a real signature" || fail "wrong refusal: $out"
 echo "$out" | grep -q "install: sai v0.0.1-test.3" || fail "the legacy release did not read as stable: $out"
 pass "a pre-flavor release reads as stable and is judged by its signature"
-before=$(snapshot)
+before=$(snapshot); calls_before=$(launch_calls)
 
 # Each artefact must say what the release says; anything else is refused
 # with nothing replaced.
@@ -425,10 +477,12 @@ pass "a download in /Applications blocks only its own flavor"
 
 # A failed dev swap puts dev back and never touches stable.
 stable_before=$(stable_snapshot)
-before=$(snapshot)
+before=$(snapshot); calls_before=$(launch_calls)
 chflags uchg "$share_dev/bundle"
 tool/install-local.sh "$work/keep/sai-dev-v0.0.1-test.1-4444444" >"$work/err" 2>&1 && { chflags nouchg "$share_dev/bundle"; fail "dev install succeeded with its bundle pinned"; }
 chflags nouchg "$share_dev/bundle"
+[ "$(tail -n 2 "$LAUNCHCTL_LOG" | tr '\n' '|')" = "bootout gui/$uid/me.slominski.sai.dev.backup|bootstrap gui/$uid $plist_dev|" ] || fail "a failed dev swap did not put its job back: $(tail -n 3 "$LAUNCHCTL_LOG")"
+calls_before=$(launch_calls)
 unchanged "a failed dev swap"
 stable_unchanged "a failed dev swap"
 [ "$(installed_version sai_tui-dev)" = "sai_tui-dev 0.0.1-test.2" ] || fail "the dev pair mismatches after the failed swap"
@@ -489,7 +543,7 @@ pass "a real file where the symlink goes is refused"
 # The case above left a real file where the symlink goes; clear it.
 rm -f "$HOME/.local/bin/sai_tui"
 fixture "$work/sidecar" 0.0.4 sidecar4 stable
-before=$(snapshot)
+before=$(snapshot); calls_before=$(launch_calls)
 cc -o "$work/sidecar/stage/sai.app/Contents/Helpers/codex-app-server" "$work/sai.c"
 codesign --force --sign - "$work/sidecar/stage/sai.app/Contents/Helpers/codex-app-server" >/dev/null 2>&1
 codesign --force --sign - "$work/sidecar/stage/sai.app" >/dev/null 2>&1

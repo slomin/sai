@@ -15,12 +15,13 @@ ProviderContainer testContainer({
   SecretStore? secrets,
   Uri? openRouterEndpoint,
   Duration? archivePollEvery,
+  Directory? archiveRoot,
 }) {
   // Archive and settings both go under one temp dir, whatever the
   // developer's environment says.
   final tmp = Directory.systemTemp.createTempSync('sai_tui_test');
   addTearDown(() => tmp.deleteSync(recursive: true));
-  final root = Directory('${tmp.path}/archive');
+  final root = archiveRoot ?? Directory('${tmp.path}/archive');
   return ProviderContainer.test(
     overrides: [
       archiveRootProvider.overrideWithValue(root),
@@ -45,6 +46,8 @@ ProviderContainer testContainer({
       // would outlive the test, so a test drives `tick()` or brings its
       // own short interval.
       archivePollEveryProvider.overrideWithValue(archivePollEvery),
+      // The replica (#15) is copied on request in a test, never on a timer.
+      archiveBackupDebounceProvider.overrideWithValue(null),
       // The product default (#97) unless a test is about the row leaving;
       // null reads the setting through, for the CLI that sets it.
       if (finishedTasks != null)

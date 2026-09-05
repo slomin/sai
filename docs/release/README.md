@@ -93,20 +93,29 @@ What the older build finds:
 | The terminal client | `~/.local/share/sai/bundle/`, `~/.local/bin/sai_tui` | `~/.local/share/sai-dev/bundle/`, `~/.local/bin/sai_tui-dev` | — |
 | What the dogfood install installed | `~/.local/share/sai/installed` | `~/.local/share/sai-dev/installed` | — |
 | Kept dogfood releases | `references/releases/sai-v<version>-<commit>/` in the checkout (gitignored) | `references/releases/sai-dev-v<version>-<commit>/` | `SAI_INSTALL_KEEP_DIR` |
+| The archive's replica (#15) | the path `archive_backup` in `settings.json` names (`sai_tui archive backup-dir`) | its own, from its own settings | — |
+| The hourly backup job | `~/Library/LaunchAgents/me.slominski.sai.backup.plist`, logging to `~/.local/share/sai/backup.log` | `…/me.slominski.sai.dev.backup.plist`, `~/.local/share/sai-dev/backup.log` | `SAI_INSTALL_LAUNCH_AGENTS_DIR` |
 
 Stable is the daily-use copy and the only one a release page ever
 carries; dev is the developer's isolated copy (ADR 0019) — its own app,
 data, settings, Keychain service and window, installed beside stable
 and never over it, and nothing is ever copied between the two. Both
 clients of a flavor read the same archive and settings; a scratch run
-sets both overrides, for either flavor. Until #15 lands, a backup by hand is a copy of the
-`Application Support/sai` directory taken while sai is quit; the Keychain
-items are not in it and are re-entered, never copied.
+sets both overrides, for either flavor. The archive is backed up by sai
+itself once a destination is set — a second copy on another disk, kept
+in step while sai runs and hourly by the job above while it is not, and
+put back with `sai_tui archive restore` —
+[docs/archive/backup-and-restore.md](../archive/backup-and-restore.md)
+(#15, ADR 0025). The Keychain items are in no backup and are re-entered,
+never copied.
 
-Uninstall: delete the app, the bundle and the symlink; delete
-`~/Library/Application Support/sai` if the archive should go too; `sai_tui
-secret clear <id>` for each provider removes the Keychain items (do that
-before removing the binary).
+Uninstall: `launchctl bootout gui/$(id -u)/me.slominski.sai.backup` and
+delete its plist under `~/Library/LaunchAgents`; delete the app, the
+bundle and the symlink; delete `~/Library/Application Support/sai` if
+the archive should go too (the replica, wherever `archive_backup`
+pointed, is yours to keep or delete); `sai_tui secret clear <id>` for
+each provider removes the Keychain items (do that before removing the
+binary).
 
 ## The dogfood install
 
@@ -122,9 +131,13 @@ self-signed `sai dev` identity when this Mac has one (ad-hoc otherwise),
 and the installer takes it. Stable is three, and only the middle one
 reaches a signing key — see *Signing* below. Both refuse a dirty
 worktree. The install puts in place: `~/Applications/sai.app`,
-`~/.local/share/sai/bundle/` and the symlink `~/.local/bin/sai_tui` —
-or, for dev, `sai-dev.app`, `~/.local/share/sai-dev/bundle/` and
-`sai_tui-dev`. The flavor is a closed word (`stable` or `dev`, ADR
+`~/.local/share/sai/bundle/`, the symlink `~/.local/bin/sai_tui` and
+the hourly backup job `~/Library/LaunchAgents/me.slominski.sai.backup.plist`
+(#15) — or, for dev, `sai-dev.app`, `~/.local/share/sai-dev/bundle/`,
+`sai_tui-dev` and `me.slominski.sai.dev.backup.plist`. The job is
+unloaded for the swap and loaded again after it; when launchd cannot
+load it (no GUI session over ssh) the install says so with the
+`launchctl bootstrap` line to run by hand. The flavor is a closed word (`stable` or `dev`, ADR
 0019), never a destination: it picks the Xcode scheme and the entry
 point, and is sealed into the staged directory (`dist/sai-dev-v…/flavor`,
 `SaiFlavor` in the app's `Info.plist`, `bundle/flavor` beside the

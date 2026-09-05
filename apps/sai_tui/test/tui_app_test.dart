@@ -66,6 +66,48 @@ void main() {
     }, size: size);
   });
 
+  test(
+    'the notice row names a copy that failed, and nothing else (#15)',
+    () async {
+      await testNocterm('backup failed', (tester) async {
+        await pumpTui(
+          tester,
+          overrides: [
+            archiveBackupProvider.overrideWithBuild(
+              (ref, notifier) => const BackupFailed('the replica has diverged'),
+            ),
+          ],
+        );
+        expect(
+          tester.terminalState,
+          containsText('backup failed: the replica has diverged'),
+        );
+      }, size: size);
+      await testNocterm('backed up', (tester) async {
+        await pumpTui(
+          tester,
+          overrides: [
+            archiveBackupProvider.overrideWithBuild(
+              (ref, notifier) => BackedUp(count: 3, at: DateTime(2026, 9, 5)),
+            ),
+          ],
+        );
+        expect(tester.terminalState, isNot(containsText('backup')));
+        expect(tester.terminalState, containsText('^C quit'));
+      }, size: size);
+      await testNocterm('destination set', (tester) async {
+        final container = await pumpTui(tester, settled: false);
+        container
+            .read(settingsProvider.notifier)
+            .setArchiveBackup('${Directory.systemTemp.path}/sai-tui-replica-x');
+        await container.read(tasksProvider.future);
+        await pumpFor(tester, const Duration(milliseconds: 200));
+        expect(tester.terminalState, containsText('^C quit'));
+        expect(tester.terminalState, isNot(containsText('exception')));
+      }, size: size);
+    },
+  );
+
   test('the dev client greets as sai dev (#90)', () async {
     await testNocterm('dev greeting', (tester) async {
       await pumpTui(

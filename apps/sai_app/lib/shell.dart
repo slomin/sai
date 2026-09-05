@@ -36,6 +36,9 @@ class SaiShell extends ConsumerWidget {
     // and keeps it alive for the app's life; the top bar shows a check
     // that failed.
     ref.listen(archiveFollowerProvider, (_, _) {});
+    // The replica (#15) is kept in step the same way: alive for the
+    // app's life, shown on the Archive card.
+    ref.listen(archiveBackupProvider, (_, _) {});
     return Scaffold(
       body: switch (ref.watch(tasksProvider)) {
         AsyncData(:final value) => _Workspace(value),

@@ -294,6 +294,23 @@ final archivePollEveryProvider = Provider<Duration?>(
   (ref) => ArchiveFollower.pollEvery,
 );
 
+/// Keeps the replica in step with the archive (#15, ADR 0025): while a
+/// backup destination is configured, [Archive.replicateTo] runs
+/// [ArchiveBackup.debounce] after the process starts and again that long
+/// after the log last grew, so a burst of edits costs one copy. The
+/// clients' shells watch it for the process's life, and the Archive card
+/// shows what it last did; `sai_tui archive backup` — the hourly job — is
+/// the same copy from outside the process.
+final archiveBackupProvider = NotifierProvider<ArchiveBackup, BackupState>(
+  ArchiveBackup.new,
+);
+
+/// How long after the log moves the copy runs — null never runs on a
+/// timer. Test harnesses override it and call [ArchiveBackup.backupNow].
+final archiveBackupDebounceProvider = Provider<Duration?>(
+  (ref) => ArchiveBackup.debounce,
+);
+
 final selectedTaskProvider = NotifierProvider<SelectedTask, TaskId?>(
   SelectedTask.new,
 );
@@ -1699,6 +1716,13 @@ class SettingsNotifier extends Notifier<Settings> {
   void setFinishedTaskVisibility(FinishedTaskVisibility visibility) =>
       _commit(state.withFinishedTaskVisibility(visibility));
 
+  /// Sets where the archive is replicated (#15), or unsets it for null.
+  /// A no-op when nothing changed.
+  void setArchiveBackup(String? path) {
+    if (path == state.archiveBackup) return;
+    _commit(state.withArchiveBackup(path));
+  }
+
   /// Remembers where the workspace was left (#76). A no-op when nothing
   /// changed, so a client may call it on every selection.
   /// Records that first-run setup is complete (#40); a second call
@@ -2071,7 +2095,7 @@ class ArchiveVerify extends Notifier<VerifyState> {
       final report = await archive.verify();
       state = Verified(report.count);
     } on Object catch (error) {
-      state = VerifyFailed(_describeArchiveError(error));
+      state = VerifyFailed(describeArchiveError(error));
     } finally {
       _running = false;
     }
@@ -2079,8 +2103,11 @@ class ArchiveVerify extends Notifier<VerifyState> {
 }
 
 /// The reason and the file's name — never its full path, never a
-/// line's content. What the verify (#40) and the follower (#118) show.
-String _describeArchiveError(Object error) => switch (error) {
+/// line's content. What the verify (#40), the follower (#118), the
+/// backup (#15) and the terminal client's archive commands show.
+String describeArchiveError(Object error) => switch (error) {
+  ReplicaRefusedError(:final reason) => reason,
+  ReplicaUnavailableError(:final reason) => reason,
   ArchiveCorruptionError(:final reason, :final file, :final line) =>
     file == null
         ? reason
@@ -2322,7 +2349,7 @@ class ArchiveFollower extends Notifier<FollowerState> {
       if (epoch != _epoch || !ref.mounted) return;
       state = FollowerState(
         reloads: state.reloads,
-        failure: _describeArchiveError(error),
+        failure: describeArchiveError(error),
       );
     }
   }
@@ -2332,6 +2359,94 @@ class ArchiveFollower extends Notifier<FollowerState> {
       return (await archive.head()).count;
     } on Object {
       return null;
+    }
+  }
+}
+
+/// Owns the replication (#15). One copy at a time; a request while one
+/// runs marks it dirty and the copy runs once more when the first is
+/// done. The timer belongs to the build that armed it — a build reruns
+/// only when the destination changes — and a late answer to a build that
+/// is gone writes nothing, the way [ArchiveFollower] scopes its checks.
+class ArchiveBackup extends Notifier<BackupState> {
+  /// How long the log has to hold still before a copy runs, when nothing
+  /// overrides [archiveBackupDebounceProvider]; the first copy after a
+  /// start waits the same.
+  static const debounce = Duration(seconds: 30);
+
+  Timer? _timer;
+  Future<void>? _run;
+  var _dirty = false;
+  var _epoch = 0;
+
+  @override
+  BackupState build() {
+    _timer?.cancel();
+    _timer = null;
+    final epoch = ++_epoch;
+    ref.onDispose(() {
+      _timer?.cancel();
+      _timer = null;
+      _epoch++;
+    });
+    final destination = ref.watch(
+      settingsProvider.select((s) => s.archiveBackup),
+    );
+    if (destination == null) return const BackupIdle();
+    // The head count folds every writer this process knows — the task
+    // store, the chat, the recorder — so a line from any of them arms
+    // the copy; listened, not watched, so the build itself stands.
+    ref.listen(archiveLineCountProvider, (_, _) => _arm(epoch));
+    _arm(epoch);
+    return const BackupIdle();
+  }
+
+  /// Copies now — or joins the copy already running and runs once more
+  /// after it, so the lines that arrived meanwhile land too.
+  Future<void> backupNow() => _start(_epoch);
+
+  void _arm(int epoch) {
+    if (epoch != _epoch || !ref.mounted) return;
+    if (ref.read(archiveBackupDebounceProvider) case final every?) {
+      _timer?.cancel();
+      _timer = Timer(every, () => _start(epoch));
+    }
+  }
+
+  Future<void> _start(int epoch) {
+    if (_run case final running?) {
+      _dirty = true;
+      return running;
+    }
+    return _run = _copy(epoch).whenComplete(() {
+      _run = null;
+      if (_dirty) {
+        _dirty = false;
+        _arm(epoch);
+      }
+    });
+  }
+
+  Future<void> _copy(int epoch) async {
+    if (epoch != _epoch || !ref.mounted) return;
+    final destination = ref.read(settingsProvider).archiveBackup;
+    if (destination == null) return;
+    state = const BackupRunning();
+    try {
+      // The open is part of the copy: an archive that will not open —
+      // corruption found at start, a disk that is gone — is what the
+      // status must say, not an exception off a timer.
+      final archive = await ref.read(archiveProvider.future);
+      if (epoch != _epoch || !ref.mounted) return;
+      final report = await archive.replicateTo(Directory(destination));
+      if (epoch != _epoch || !ref.mounted) return;
+      state = BackedUp(count: report.count, at: ref.read(clockProvider)());
+    } on ReplicaUnavailableError catch (error) {
+      if (epoch != _epoch || !ref.mounted) return;
+      state = BackupSkipped(error.reason);
+    } on Object catch (error) {
+      if (epoch != _epoch || !ref.mounted) return;
+      state = BackupFailed(describeArchiveError(error));
     }
   }
 }

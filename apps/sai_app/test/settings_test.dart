@@ -43,6 +43,35 @@ Future<void> key(WidgetTester tester, LogicalKeyboardKey key) async {
   await tester.pump();
 }
 
+/// Runs [act] — a tap that starts a copy — under real async and waits
+/// there until the copy has landed, then renders the row. The archive
+/// lock's gate is a future of the zone that took it, so a copy started
+/// under the test clock would wedge the next real-async append; every
+/// archive-touching act in these tests runs under real async, as the
+/// harness's helpers do.
+Future<String> settledBackup(
+  WidgetTester tester,
+  ProviderContainer container,
+  Future<void> Function() act,
+) async {
+  await tester.runAsync(() async {
+    await act();
+    final deadline = DateTime.now().add(settleLimit);
+    bool unsettled() {
+      final state = container.read(archiveBackupProvider);
+      return state is BackupRunning ||
+          (state is BackupIdle &&
+              container.read(settingsProvider).archiveBackup != null);
+    }
+
+    while (unsettled() && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+  });
+  await tester.pump();
+  return tester.widget<Text>(find.byKey(backupStatusKey)).data!;
+}
+
 void main() {
   group('Settings (#40)', () {
     testWidgets('opens on General, in the reference frame', (tester) async {
@@ -212,6 +241,106 @@ void main() {
       expect(status, startsWith('failed: '));
       expect(status, isNot(contains('oat milk')));
       expect(status, isNot(contains(tmp.path)));
+    });
+
+    testWidgets('the Archive card backs up to a directory and reports', (
+      tester,
+    ) async {
+      final tmp = tempDir();
+      final container = await pumpApp(tester, tmp: tmp);
+      await capture(tester, container, 'Buy oat milk');
+      await open(tester);
+      await tester.tap(find.byKey(settingsNavKey(SettingsSection.archive)));
+      await tester.pump();
+      expect(
+        tester.widget<Text>(find.byKey(backupStatusKey)).data,
+        'not backed up — set a destination',
+      );
+      final replica = '${tmp.path}/replica';
+      await tester.enterText(find.byKey(backupPathKey), replica);
+      final status = await settledBackup(
+        tester,
+        container,
+        () => tester.tap(find.byKey(backupSetKey)),
+      );
+      expect(status, startsWith('backed up: 1 lines, every hash matches · '));
+      expect(container.read(settingsProvider).archiveBackup, replica);
+      expect(
+        File('${tmp.path}/settings.json').readAsStringSync(),
+        contains('"archive_backup":"$replica"'),
+      );
+      // The replica verifies on its own; real async, so under runAsync.
+      final count = await tester.runAsync(() async {
+        final check = await Archive.open(Directory(replica));
+        try {
+          return (await check.verify()).count;
+        } finally {
+          await check.close();
+        }
+      });
+      expect(count, 1);
+      // Another line — from the store, the page stays — then the button:
+      // the replica follows.
+      await tester.runAsync(
+        () => container
+            .read(tasksProvider.notifier)
+            .store
+            .createTask(title: 'Buy bread'),
+      );
+      await tester.pump();
+      expect(
+        await settledBackup(
+          tester,
+          container,
+          () => tester.tap(find.byKey(backupNowKey)),
+        ),
+        startsWith('backed up: 2 lines'),
+      );
+    });
+
+    testWidgets('a bad destination is refused or skipped in words', (
+      tester,
+    ) async {
+      final tmp = tempDir();
+      final container = await pumpApp(tester, tmp: tmp);
+      await capture(tester, container, 'Buy oat milk');
+      await open(tester);
+      await tester.tap(find.byKey(settingsNavKey(SettingsSection.archive)));
+      await tester.pump();
+      // Inside the log: refused before anything is written.
+      await tester.enterText(
+        find.byKey(backupPathKey),
+        '${tmp.path}/archive/events/copy',
+      );
+      await tester.tap(find.byKey(backupSetKey));
+      await tester.pump();
+      expect(
+        tester.widget<Text>(find.byKey(backupStatusKey)).data,
+        'the backup destination is inside the archive',
+      );
+      expect(container.read(settingsProvider).archiveBackup, isNull);
+      // An unmounted volume: set, skipped, nothing created.
+      final gone = '${tmp.path}/Volumes/Backup/sai';
+      await tester.enterText(find.byKey(backupPathKey), gone);
+      final status = await settledBackup(
+        tester,
+        container,
+        () => tester.tap(find.byKey(backupSetKey)),
+      );
+      expect(status, startsWith('skipped: '));
+      expect(status, contains('not mounted'));
+      expect(status, isNot(contains(tmp.path)));
+      expect(container.read(settingsProvider).archiveBackup, gone);
+      expect(Directory('${tmp.path}/Volumes').existsSync(), isFalse);
+      // Cleared with an empty field.
+      await tester.enterText(find.byKey(backupPathKey), '');
+      await tester.tap(find.byKey(backupSetKey));
+      await tester.pump();
+      expect(container.read(settingsProvider).archiveBackup, isNull);
+      expect(
+        tester.widget<Text>(find.byKey(backupStatusKey)).data,
+        'not backed up — set a destination',
+      );
     });
 
     testWidgets('no Finder here is a notice, not a crash', (tester) async {

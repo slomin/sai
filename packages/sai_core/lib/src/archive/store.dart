@@ -109,23 +109,32 @@ final class ArchiveStore {
         flush: true,
       );
     } else {
-      final Object? manifest;
-      try {
-        manifest = jsonDecode(manifestFile.readAsStringSync());
-      } on FormatException catch (e) {
-        throw FormatException('MANIFEST.json is not JSON: ${e.message}');
-      }
-      if (manifest is! Map<String, Object?> ||
-          manifest['format'] != 'sai-event-log' ||
-          manifest['version'] != 0) {
-        throw const FormatException(
-          'MANIFEST.json does not describe a sai-event-log version 0 archive',
-        );
-      }
+      checkManifest();
     }
     if (!headFile.existsSync()) {
       writeHead(HeadRecord(count: 0, head: null, updated: createdTs));
     }
+  }
+
+  /// The manifest as this store requires it — a `sai-event-log` of
+  /// version 0 — returned parsed; anything else is a [FormatException].
+  /// What [ensureState] checks on open, and what a replica must pass
+  /// before it is copied from or into (#15).
+  Map<String, Object?> checkManifest() {
+    final Object? manifest;
+    try {
+      manifest = jsonDecode(manifestFile.readAsStringSync());
+    } on FormatException catch (e) {
+      throw FormatException('MANIFEST.json is not JSON: ${e.message}');
+    }
+    if (manifest is! Map<String, Object?> ||
+        manifest['format'] != 'sai-event-log' ||
+        manifest['version'] != 0) {
+      throw const FormatException(
+        'MANIFEST.json does not describe a sai-event-log version 0 archive',
+      );
+    }
+    return manifest;
   }
 
   HeadRecord readHead() => HeadRecord.parse(headFile.readAsStringSync());

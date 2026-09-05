@@ -7,6 +7,8 @@ import 'blobref.dart';
 import 'event.dart';
 import 'store.dart';
 
+part 'replicate.dart';
+
 /// An event as it exists in the log: the envelope plus the id derived from
 /// the exact bytes of its line.
 final class StoredEvent {
@@ -218,7 +220,10 @@ final class Archive {
   /// match the recomputed count and head exactly. Runs under the writer
   /// lock so a concurrent append cannot make a healthy archive look
   /// corrupt. This is what a restore drill runs against a replica.
-  Future<ArchiveReport> verify() => _store.withLock(() async {
+  Future<ArchiveReport> verify() => _store.withLock(_walkAndCheckHead);
+
+  /// [verify]'s body, for a caller that already holds the lock.
+  Future<ArchiveReport> _walkAndCheckHead() async {
     var count = 0;
     BlobRef? last;
     await for (final stored in events()) {
@@ -235,7 +240,36 @@ final class Archive {
       );
     }
     return ArchiveReport(count: count, head: last);
-  });
+  }
+
+  /// Copies this archive into [destination] so that it becomes — or stays
+  /// — a replica (#15, ADR 0025): the manifest, every day file the
+  /// replica lacks or that has grown since, and a byte-equal HEAD, then
+  /// the full integrity walk against the replica in place. A replica is
+  /// only ever behind its source: a destination holding another archive,
+  /// or bytes this one does not, is refused with [ReplicaRefusedError]
+  /// and nothing is written; one that is not there (an unmounted volume)
+  /// is [ReplicaUnavailableError]. Runs under both locks — the replica's
+  /// first, then this archive's — so a copy never catches a half-written
+  /// line and appends wait only for the copy of one day's tail.
+  Future<ReplicaReport> replicateTo(Directory destination) =>
+      _replicateTo(destination);
+
+  /// Puts a replica back (#15): copies the archive at [from] into [into]
+  /// and runs the full integrity walk against the copy. [into] must be
+  /// empty — absent, or holding no events — because restoring over a live
+  /// log would rewrite it; a damaged root is moved aside first. [from] is
+  /// read in place and never opened, so it gains no LOCK and its HEAD is
+  /// never rewritten; a HEAD that is a truthful prefix of its chain is
+  /// accepted and rolled forward in the copy. Refuses with
+  /// [ReplicaRefusedError]; a replica that does not verify throws
+  /// [ArchiveCorruptionError] or [TornTailError] before anything is
+  /// written.
+  static Future<ArchiveReport> restore({
+    required Directory from,
+    required Directory into,
+    DateTime Function()? clock,
+  }) => _restore(from: from, into: into, clock: clock ?? DateTime.timestamp);
 
   /// The `HEAD` record as it stands: how many events the log holds and the
   /// id of the newest. Read without the lock and without walking the

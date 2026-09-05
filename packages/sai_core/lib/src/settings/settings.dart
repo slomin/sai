@@ -1,6 +1,8 @@
 import 'dart:collection';
 import 'dart:convert';
 
+import 'package:path/path.dart' as p;
+
 import '../tasks/lists.dart';
 import 'provider_config.dart';
 import 'workspace.dart';
@@ -42,6 +44,7 @@ final class Settings {
     this.workspace = WorkspaceState.empty,
     this.setupDone = false,
     this.finishedTaskVisibility = FinishedTaskVisibility.endOfDay,
+    this.archiveBackup,
     this.problem,
     this.extra = const {},
   });
@@ -108,6 +111,12 @@ final class Settings {
   /// the confirm-and-collapse.
   final FinishedTaskVisibility finishedTaskVisibility;
 
+  /// Where the archive is replicated (#15, ADR 0025): the absolute path of
+  /// the replica's root on this machine — an external volume, a second
+  /// disk, a mount — or null while no backup is configured. Never inside
+  /// the archive root, and never the root itself.
+  final String? archiveBackup;
+
   /// The configured provider with [id], or null.
   ProviderConfig? provider(String id) {
     for (final p in providers) {
@@ -157,6 +166,7 @@ final class Settings {
       workspace: workspace,
       setupDone: setupDone,
       finishedTaskVisibility: finishedTaskVisibility,
+      archiveBackup: archiveBackup,
       extra: extra,
     );
   }
@@ -172,6 +182,7 @@ final class Settings {
     workspace: workspace,
     setupDone: setupDone,
     finishedTaskVisibility: finishedTaskVisibility,
+    archiveBackup: archiveBackup,
     extra: extra,
   );
 
@@ -186,6 +197,7 @@ final class Settings {
     workspace: workspace,
     setupDone: setupDone,
     finishedTaskVisibility: finishedTaskVisibility,
+    archiveBackup: archiveBackup,
     extra: extra,
   );
 
@@ -206,6 +218,7 @@ final class Settings {
       workspace: workspace,
       setupDone: setupDone,
       finishedTaskVisibility: finishedTaskVisibility,
+      archiveBackup: archiveBackup,
       extra: extra,
     );
   }
@@ -230,6 +243,7 @@ final class Settings {
       workspace: workspace,
       setupDone: setupDone,
       finishedTaskVisibility: finishedTaskVisibility,
+      archiveBackup: archiveBackup,
       extra: extra,
     );
   }
@@ -245,6 +259,7 @@ final class Settings {
     workspace: state,
     setupDone: setupDone,
     finishedTaskVisibility: finishedTaskVisibility,
+    archiveBackup: archiveBackup,
     extra: extra,
   );
 
@@ -259,6 +274,7 @@ final class Settings {
     workspace: workspace,
     setupDone: true,
     finishedTaskVisibility: finishedTaskVisibility,
+    archiveBackup: archiveBackup,
     extra: extra,
   );
 
@@ -274,8 +290,48 @@ final class Settings {
         workspace: workspace,
         setupDone: setupDone,
         finishedTaskVisibility: visibility,
+        archiveBackup: archiveBackup,
         extra: extra,
       );
+
+  /// The same settings with the backup destination set, or unset for null
+  /// (#15). Clears [problem] like [withLlm].
+  Settings withArchiveBackup(String? path) => Settings(
+    llm: llm,
+    llmFallback: llmFallback,
+    providers: providers,
+    shareTasksWithCloud: shareTasksWithCloud,
+    reasoningOn: reasoningOn,
+    workspace: workspace,
+    setupDone: setupDone,
+    finishedTaskVisibility: finishedTaskVisibility,
+    archiveBackup: path,
+    extra: extra,
+  );
+
+  /// Why [path] cannot be the backup destination for the archive at
+  /// [archiveRoot], or null when it can: it must be absolute, and neither
+  /// the archive itself, a place inside it, nor a place that contains it
+  /// — a replica inside its own source would be copied into itself, and
+  /// one above it would make the source part of the replica.
+  static String? checkArchiveBackup(
+    String path, {
+    required String archiveRoot,
+  }) {
+    if (!p.isAbsolute(path)) return 'the backup destination must be absolute';
+    final dest = p.normalize(path);
+    final root = p.normalize(archiveRoot);
+    if (p.equals(dest, root)) {
+      return 'the backup destination is the archive itself';
+    }
+    if (p.isWithin(root, dest)) {
+      return 'the backup destination is inside the archive';
+    }
+    if (p.isWithin(dest, root)) {
+      return 'the backup destination contains the archive';
+    }
+    return null;
+  }
 
   /// Parses the file's text. Throws [SettingsFormatException] on anything
   /// that is not a v0 settings object and [NewerSettingsVersion] on a
@@ -345,6 +401,12 @@ final class Settings {
         'finished_task_visibility must be end_of_day or immediate',
       );
     }
+    final backup = json[archiveBackupKey];
+    if (backup != null && (backup is! String || backup.isEmpty)) {
+      throw const SettingsFormatException(
+        'archive_backup must be a non-empty string',
+      );
+    }
     final rawProviders = json['providers'];
     if (rawProviders != null && rawProviders is! List) {
       throw const SettingsFormatException('providers must be a list');
@@ -376,6 +438,10 @@ final class Settings {
               ? null
               : FinishedTaskVisibility.fromWire(finished as String)) ??
           FinishedTaskVisibility.endOfDay,
+      // A relative path names nothing this sai can find from a launchd
+      // job or a Finder launch: read as unset and, being a known key, not
+      // carried either.
+      archiveBackup: backup is String && p.isAbsolute(backup) ? backup : null,
       extra: {
         for (final e in json.entries)
           if (!_known.contains(e.key)) e.key: e.value,
@@ -393,6 +459,7 @@ final class Settings {
     'workspace',
     'setup',
     finishedTaskVisibilityKey,
+    archiveBackupKey,
   };
 
   /// The key holding [llmFallback] — the order behind [llm].
@@ -400,6 +467,9 @@ final class Settings {
 
   /// The key holding [finishedTaskVisibility].
   static const finishedTaskVisibilityKey = 'finished_task_visibility';
+
+  /// The key holding [archiveBackup].
+  static const archiveBackupKey = 'archive_backup';
 
   /// What `setup` holds once first-run setup is complete.
   static const setupDoneValue = 'done';
@@ -441,6 +511,7 @@ final class Settings {
       if (setupDone) 'setup': setupDoneValue,
       if (finishedTaskVisibility != FinishedTaskVisibility.endOfDay)
         finishedTaskVisibilityKey: finishedTaskVisibility.wireName,
+      archiveBackupKey: ?archiveBackup,
     }),
   );
 }

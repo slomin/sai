@@ -114,8 +114,9 @@ one — or, across a power loss, several — events behind. When HEAD is a
 stale but truthful snapshot (its head id sits at its count position in a
 chain that verifies end to end), openers roll it forward; metadata only.
 A HEAD that matches no prefix of the chain — including a missing or
-hand-reset HEAD over existing events — is corruption: restore HEAD from
-a replica; the day files themselves are untouched.
+hand-reset HEAD over existing events — is corruption: restore from a
+replica ([backup-and-restore](backup-and-restore.md), #15); the day
+files themselves are untouched.
 
 This anchoring is tamper-evident against accidents, partial copies and
 silent truncation — not against an attacker who can rewrite both the
@@ -157,7 +158,37 @@ bytes is fine — zero-length day files are ignored.
 
 Anything else — a hand-edited line, a missing interior line, a tail that
 does not reach HEAD — is reported as corruption and left untouched.
-Restore from a replica (#15); do not edit the log.
+Restore from a replica (below, #15); do not edit the log.
+
+## Replicas
+
+A replica (#15, ADR [0025](../decisions/0025-the-archive-is-replicated-to-a-second-root.md))
+is a second root with this layout on another disk of the same machine,
+kept by `sai_tui archive backup` and by the clients while a destination
+is set — the procedure and the drill are in
+[backup-and-restore](backup-and-restore.md). What makes a root a replica
+of this archive:
+
+- `MANIFEST.json` carries the same `created`: that timestamp is the
+  archive's identity, and a root whose manifest names another is another
+  archive, never written to.
+- Every day file is byte-identical to the source's as of the copy; only
+  the newest can be shorter, and then it is a byte-for-byte prefix. A
+  replica is only ever *behind* its source — a day file the source
+  lacks, a longer one, a shorter one that is not a prefix, or a
+  same-length newest file ending in another line is divergence, refused,
+  never overwritten.
+- `HEAD` is the source's HEAD as copied. A replica interrupted before
+  HEAD was written has a stale-but-truthful HEAD, accepted like a crash
+  trace on restore.
+- `LOCK` is per location; a replica has its own and it is never copied.
+
+Every copy walks the source first — nothing in the replica is replaced
+by a log that does not verify — and ends with the full walk above
+against the replica. A restore copies a verified replica, its manifest
+checked as on open, into an *empty* root only — a damaged root is
+moved aside first — and walks the copy again; nothing here rewrites a
+line.
 
 ## Type registry
 
