@@ -41,6 +41,19 @@ final class _Warmy implements LlmProvider, LlmEndpointProbe {
   }
 }
 
+/// The profile a test can revise under a running container. `make()`
+/// overrides [assistantProfileProvider] to watch it, so a write here
+/// rebuilds every reader exactly as a regenerated `profile/system-prompt.md`
+/// does at build time (#14).
+final _profileProvider = NotifierProvider<_Profile, String>(_Profile.new);
+
+class _Profile extends Notifier<String> {
+  @override
+  String build() => assistantProfile;
+
+  void revise(String next) => state = next;
+}
+
 void main() {
   late Directory tmp;
 
@@ -63,6 +76,9 @@ void main() {
         connectionProbeEveryProvider.overrideWithValue(null),
         warmDebounceProvider.overrideWithValue(debounce),
         warmTickEveryProvider.overrideWithValue(null),
+        assistantProfileProvider.overrideWith(
+          (ref) => ref.watch(_profileProvider),
+        ),
         ...overrides,
       ],
     );
@@ -121,7 +137,7 @@ void main() {
     // Profile, catalog, and the one-word user line chat templates
     // demand — the shared prefix ends before it.
     expect(messages, hasLength(3));
-    expect((messages[0] as Map)['text'], defaultProfile);
+    expect((messages[0] as Map)['text'], assistantProfile);
     expect((messages[1] as Map)['text'], contains('Feed the gargoyle'));
     expect((messages[1] as Map)['text'], contains('TASK CATALOG'));
     expect(messages[2], {'role': 'user', 'text': warmupPrompt});
@@ -215,6 +231,36 @@ void main() {
     expect(sent, hasLength(2));
     final last = (sent.last['payload']! as Map)['messages']! as List;
     expect((last[1] as Map)['text'], contains('Two'));
+    sub.close();
+  });
+
+  test('a changed profile re-warms; the same profile does not', () async {
+    final warmy = _Warmy();
+    final c = await make(warmy);
+    await c.read(tasksProvider.notifier).store.createTask(title: 'One');
+    c.read(settingsProvider.notifier).selectLlm('warmy');
+    final sub = c.listen(cacheWarmerProvider, (_, _) {});
+    await settle();
+    expect(requests(tmp), hasLength(1));
+    expect(
+      ((requests(tmp).single['payload']! as Map)['messages']! as List).first,
+      {'role': 'system', 'text': assistantProfile},
+    );
+    // The same text is no revision: the endpoint still holds the prefix.
+    c.read(_profileProvider.notifier).revise(assistantProfile);
+    await settle();
+    expect(requests(tmp), hasLength(1));
+    // A revised profile is a different prefix; the whole warm goes again.
+    const revised = '$assistantProfile\nSpeak plainly.';
+    c.read(_profileProvider.notifier).revise(revised);
+    await settle();
+    final sent = requests(tmp);
+    expect(sent, hasLength(2));
+    expect(((sent.last['payload']! as Map)['messages']! as List).first, {
+      'role': 'system',
+      'text': revised,
+    });
+    expect(c.read(cacheWarmerProvider).phase, WarmPhase.warm);
     sub.close();
   });
 

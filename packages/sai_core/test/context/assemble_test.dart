@@ -105,7 +105,7 @@ void main() {
   group('assembleContext', () {
     test('profile, history, draft — and the list apart', () {
       final out = assembleContext(
-        profile: defaultProfile,
+        profile: assistantProfile,
         projection: fixture(),
         today: today,
         history: const [
@@ -116,7 +116,7 @@ void main() {
       );
       final r = out.request;
       expect(r.messages.map((m) => m.toJson()), [
-        {'role': 'system', 'text': defaultProfile},
+        {'role': 'system', 'text': assistantProfile},
         {'role': 'user', 'text': 'hi'},
         {'role': 'assistant', 'text': 'hello'},
         {'role': 'user', 'text': 'what is due today?'},
@@ -169,7 +169,7 @@ void main() {
 
     test('the same inputs give the same request and hash', () {
       AssembledContext go() => assembleContext(
-        profile: defaultProfile,
+        profile: assistantProfile,
         projection: fixture(),
         today: today,
         history: const [LlmMessage(LlmRole.user, 'a')],
@@ -267,7 +267,7 @@ void main() {
     group('catalog shape (#105)', () {
       test('carries the whole catalog, provenance and all', () {
         final out = assembleContext(
-          profile: defaultProfile,
+          profile: assistantProfile,
           projection: fixture(),
           today: today,
           history: const [],

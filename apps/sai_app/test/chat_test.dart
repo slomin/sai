@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
@@ -1179,7 +1180,13 @@ void main() {
       final log = archiveLines(container.read(archiveRootProvider));
       final request = log.singleWhere((l) => l.contains('"provider.request"'));
       expect(request, contains('"context_hash":"sha256-'));
-      expect(request, contains(defaultProfile.split('\n').first));
+      final payload =
+          (jsonDecode(request) as Map<String, Object?>)['payload']
+              as Map<String, Object?>;
+      expect((payload['messages'] as List).first, {
+        'role': 'system',
+        'text': assistantProfile,
+      });
       final said = log.last;
       expect(said, contains('"chat.message"'));
       expect(said, contains('"actor":"assistant"'));
