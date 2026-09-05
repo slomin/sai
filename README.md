@@ -15,13 +15,14 @@ This repository is a Dart workspace:
 | `packages/sai_core`  | Pure Dart. Task model, archive, provider routing, and the shared riverpod layer. No Flutter. |
 | `apps/sai_app`       | The Flutter macOS app. Depends on `sai_core`.                              |
 | `apps/sai_tui`       | The terminal client on [nocterm](https://pub.dev/packages/nocterm). Depends on `sai_core`; built with `dart build cli`. |
+| `profile/`           | Who sai is told she is: the system prompt, byte for byte, and its changelog — compiled into both clients (ADR 0027). |
 | `spikes/`            | Throwaway experiments that settled a decision. Not part of the workspace; each keeps its own `pubspec.lock`. |
 | `docs/archive/`      | The archive format contract ([event log v0](docs/archive/event-log-v0.md)) and how it is backed up and restored ([backup and restore](docs/archive/backup-and-restore.md)). |
 | `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
 | `docs/settings/`     | The settings file contract ([settings v0](docs/settings/settings-v0.md)).   |
 | `docs/release/`      | Installing, upgrading and building a release ([README](docs/release/README.md)). |
 | `tool/`              | Developer scripts (`release.sh`, `install-local.sh`, `verify-release.sh`, `build-tui.sh`, `app-icons.swift`) with their tests and smoke drivers. |
-| `docs/decisions/`    | Technical ADRs.                                                            |
+| `docs/decisions/`    | Technical ADRs. Decisions made on sai's behalf are in the person's archive, not here (ADR 0026). |
 
 Both clients read the same providers from `sai_core`; nothing in `sai_core`
 knows about either client.
@@ -363,6 +364,26 @@ only be rejected. In the terminal, Tab reaches the lane while a
 proposal is shown — arrows move, `y` accepts, `n` rejects, Esc goes
 back. Proposals need a local provider: the handles the model uses to
 name tasks live in the catalog, which never goes to the cloud.
+
+## The profile and the decision log
+
+Who sai is told she is — her name and pronoun, her voice, that she
+never changes the list herself, how she speaks about her memory — is
+`profile/system-prompt.md`, sent as the first message of every request
+to every model and compiled into both clients, so an installed sai needs
+no repository (`profile/CHANGELOG.md` names each revision by the sha256
+of the file; ADR 0027). Changing it is a reviewed diff, regenerated with
+`dart run tool/gen_profile.dart` in `packages/sai_core`.
+
+The decisions the person who keeps sai takes on her behalf — the name,
+the model, what goes into her memory — are recorded in her archive, not
+in this repository (#14, ADR 0026): `sai_tui decision add` asks for a
+title, the day, who decided, what, the alternatives and the reasoning
+(or reads them from `--from <file.json>`), appends one `decision.made`
+line and renders `decisions.md` beside the archive root, in the data
+directory; `sai_tui decision render [<file>|-]` renders it alone. The
+document is a view of the log and is never edited by hand. This
+repository is the software; your sai's history is yours.
 
 ## Importing from Things 3
 
