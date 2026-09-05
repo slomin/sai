@@ -170,6 +170,15 @@ the layout and the toolchain; this file has the rules.
   are new events. The format contract is `docs/archive/event-log-v0.md`;
   changing it means changing the spec, the ADR trail and the tests
   together.
+- The archive's replica (#15, ADR 0025) is a prefix copy verified on
+  every write — `Archive.replicateTo` refuses a destination that holds
+  another archive or more than the source, and never overwrites; a
+  restore goes into an empty root only, never over a live log. No rsync,
+  no ssh: a local path, copied in Dart. The hourly job is a LaunchAgent
+  the dogfood installer registers; a test never reaches the real
+  `launchctl` (`tool/test/install_local_test.sh` puts a fake on PATH), and
+  a smoke that registers one runs `local-install` with the sandbox off
+  and says so first.
 - Technical decisions with consequences go to `docs/decisions/` as ADRs
   (see `0001-…`). Decisions made on the assistant's behalf are a separate
   log (#14).

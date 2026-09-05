@@ -16,7 +16,7 @@ This repository is a Dart workspace:
 | `apps/sai_app`       | The Flutter macOS app. Depends on `sai_core`.                              |
 | `apps/sai_tui`       | The terminal client on [nocterm](https://pub.dev/packages/nocterm). Depends on `sai_core`; built with `dart build cli`. |
 | `spikes/`            | Throwaway experiments that settled a decision. Not part of the workspace; each keeps its own `pubspec.lock`. |
-| `docs/archive/`      | The archive format contract ([event log v0](docs/archive/event-log-v0.md)). |
+| `docs/archive/`      | The archive format contract ([event log v0](docs/archive/event-log-v0.md)) and how it is backed up and restored ([backup and restore](docs/archive/backup-and-restore.md)). |
 | `docs/tasks/`        | The task model contract ([task model v0](docs/tasks/task-model-v0.md)).     |
 | `docs/settings/`     | The settings file contract ([settings v0](docs/settings/settings-v0.md)).   |
 | `docs/release/`      | Installing, upgrading and building a release ([README](docs/release/README.md)). |
@@ -441,6 +441,9 @@ cd apps/sai_app && flutter test --update-goldens test/workspace_test.dart
 The event log under the archive root is verifiable without sai at all —
 each line's id is the SHA-256 of its exact bytes (`shasum -a 256`); the
 contract is [docs/archive/event-log-v0.md](docs/archive/event-log-v0.md).
+`sai_tui archive verify` walks it from the shell, `sai_tui archive
+backup` keeps a second copy on another disk and `archive restore` puts
+it back ([docs/archive/backup-and-restore.md](docs/archive/backup-and-restore.md), #15).
 
 ## Git hooks
 
