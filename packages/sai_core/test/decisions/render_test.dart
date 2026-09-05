@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:sai_core/sai_core.dart';
 import 'package:test/test.dart';
 
@@ -190,6 +191,32 @@ Recorded 2026-09-06 · `${unreadable.id}` · decision.by must be a non-empty str
     expect(file.readAsStringSync(), 'one\n');
     writeDecisionLog(file, 'two\n');
     expect(file.readAsStringSync(), 'two\n');
-    expect(File('${file.path}.tmp').existsSync(), isFalse);
+    // Nothing else is left beside it: no temp file of any name.
+    expect(file.parent.listSync().map((e) => p.basename(e.path)), [
+      'decisions.md',
+    ]);
+  });
+
+  test('the temp file name carries the pid', () {
+    final file = File('/tmp/scratch/decisions.md');
+    expect(
+      decisionLogTempFile(file).path,
+      '/tmp/scratch/decisions.md.$pid.tmp',
+    );
+  });
+
+  test('a write that fails takes its temp file with it', () {
+    final tmp = Directory.systemTemp.createTempSync('sai_decisions');
+    addTearDown(() => tmp.deleteSync(recursive: true));
+    final file = File('${tmp.path}/decisions.md');
+    // A directory where the document goes: the rename cannot land.
+    Directory(file.path).createSync();
+    expect(
+      () => writeDecisionLog(file, 'one\n'),
+      throwsA(
+        isA<FileSystemException>().having((e) => e.path, 'path', file.path),
+      ),
+    );
+    expect(tmp.listSync().map((e) => p.basename(e.path)), ['decisions.md']);
   });
 }

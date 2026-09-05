@@ -77,13 +77,31 @@ Future<List<StoredEvent>> readDecisions(Archive archive) async {
   }
 }
 
-/// Writes [text] to [file] whole — a temp file beside it, then a rename —
-/// creating the directory when it is missing.
+/// The per-process temp file a write goes through. The document sits in
+/// the data directory, outside the archive root and its LOCK, so no lock
+/// guards it and the name carries the pid — as the settings file's does:
+/// two renders at once cannot truncate or rename each other's temp, and
+/// the rename is last-write-wins, which a view of the log can afford.
+File decisionLogTempFile(File file) => File('${file.path}.$pid.tmp');
+
+/// Writes [text] to [file] whole — [decisionLogTempFile] beside it, then
+/// a rename — creating the directory when it is missing. A write that
+/// fails takes its own temp file with it (nothing sweeps the data
+/// directory) and names the document, never the temp file.
 void writeDecisionLog(File file, String text) {
   file.parent.createSync(recursive: true);
-  final tmp = File('${file.path}.tmp');
-  tmp.writeAsStringSync(text, flush: true);
-  tmp.renameSync(file.path);
+  final tmp = decisionLogTempFile(file);
+  try {
+    tmp.writeAsStringSync(text, flush: true);
+    tmp.renameSync(file.path);
+  } on FileSystemException catch (e) {
+    try {
+      tmp.deleteSync();
+    } on FileSystemException {
+      // Never created, or already gone.
+    }
+    throw FileSystemException(e.message, file.path, e.osError);
+  }
 }
 
 String _day(StoredEvent stored) => stored.event.tsText.substring(0, 10);
