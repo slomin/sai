@@ -68,6 +68,16 @@ void main() {
       expect(err.toString(), isNot(contains(root().path)));
     });
 
+    test('a root that is not there is no archive, and is not made', () async {
+      final nowhere = '${scratch.path}/nowhere';
+      expect(await run('archive verify $nowhere'), cliFailed);
+      expect(err.toString(), 'sai_tui: no archive at $nowhere\n');
+      expect(Directory(nowhere).existsSync(), isFalse);
+      Directory(nowhere).createSync();
+      expect(await run('archive verify $nowhere'), cliFailed);
+      expect(File('$nowhere/MANIFEST.json').existsSync(), isFalse);
+    });
+
     test('takes another root', () async {
       await capture('one');
       expect(await run('archive backup ${replica()}'), cliOk);

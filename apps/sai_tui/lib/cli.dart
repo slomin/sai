@@ -1019,6 +1019,12 @@ Future<int> runCli(
             root = container.read(archiveRootProvider);
           case [final path]:
             root = Directory(path);
+            // Opening creates a root that is not there; a mistyped
+            // backup path must say so, not verify as empty.
+            if (!File('${root.path}/MANIFEST.json').existsSync()) {
+              err.writeln('$program: no archive at ${root.path}');
+              return cliFailed;
+            }
           default:
             throw _Usage('archive verify takes one root at most');
         }
