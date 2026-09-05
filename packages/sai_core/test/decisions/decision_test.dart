@@ -8,12 +8,12 @@ void main() {
   final profileId = BlobRef.sha256OfBytes(utf8.encode('profile'));
 
   Map<String, Object?> input({
-    Object? title = 'Name and pronoun',
+    Object? title = 'Which shade of blue',
     Object? decided = '2026-08-23',
     Object? by = 'the guardian',
-    Object? decision = 'She is called sai.',
-    Object? alternatives = const ['it', 'they'],
-    Object? reasoning = 'A name is needed first.',
+    Object? decision = 'The lighter one.',
+    Object? alternatives = const ['the darker one', 'no blue at all'],
+    Object? reasoning = 'It reads better in daylight.',
     Object? profile,
   }) => {
     'title': title,
@@ -33,20 +33,20 @@ void main() {
     test('reads every field, trimmed', () {
       final d = Decision.fromInput(
         input(
-          title: '  Name and pronoun ',
+          title: '  Which shade of blue ',
           by: ' the guardian\n',
-          decision: '\nShe is called sai.\n\nLowercase.\n',
-          alternatives: [' it ', 'they'],
+          decision: '\nThe lighter one.\n\nIt was tried first.\n',
+          alternatives: [' the darker one ', 'no blue at all'],
           profile: {'id': profileId.toString()},
         ),
         today: today,
       );
-      expect(d.title, 'Name and pronoun');
+      expect(d.title, 'Which shade of blue');
       expect(d.decided, const CalendarDate(2026, 8, 23));
       expect(d.by, 'the guardian');
-      expect(d.decision, 'She is called sai.\n\nLowercase.');
-      expect(d.alternatives, ['it', 'they']);
-      expect(d.reasoning, 'A name is needed first.');
+      expect(d.decision, 'The lighter one.\n\nIt was tried first.');
+      expect(d.alternatives, ['the darker one', 'no blue at all']);
+      expect(d.reasoning, 'It reads better in daylight.');
       expect(d.profile, profileId);
     });
 
@@ -59,6 +59,12 @@ void main() {
         Decision.fromInput(input(decided: '  '), today: today).decided,
         today,
       );
+      // An explicit null — a template with every key spelled out — is
+      // today too, as alternatives and profile already read null as none.
+      expect(
+        Decision.fromInput(input()..['decided'] = null, today: today).decided,
+        today,
+      );
       expect(
         Decision.fromInput(input(decided: '2026-09-05'), today: today).decided,
         today,
@@ -66,6 +72,13 @@ void main() {
       expect(
         () => Decision.fromInput(input(decided: '2026-09-06'), today: today),
         refuses('decision.decided is after today (2026-09-05)'),
+      );
+      expect(
+        () => Decision.fromInput(input(decided: 20260905), today: today),
+        refuses(
+          'decision.decided must be a calendar date (YYYY-MM-DD), or empty '
+          'for today',
+        ),
       );
     });
 
@@ -93,10 +106,14 @@ void main() {
       }
     });
 
-    test('the title is one line', () {
+    test('the title and who decided are one line each', () {
       expect(
         () => Decision.fromInput(input(title: 'Two\nlines'), today: today),
         refuses('decision.title must be one line'),
+      );
+      expect(
+        () => Decision.fromInput(input(by: 'one\nand another'), today: today),
+        refuses('decision.by must be one line'),
       );
     });
 
@@ -113,14 +130,18 @@ void main() {
         isEmpty,
       );
       for (final bad in [
-        'it',
-        ['it', ''],
-        ['it', 2],
+        'the darker one',
+        ['the darker one', ''],
+        ['the darker one', 2],
+        ['two\nlines'],
         {},
       ]) {
         expect(
           () => Decision.fromInput(input(alternatives: bad), today: today),
-          refuses('decision.alternatives must be a list of non-empty strings'),
+          refuses(
+            'decision.alternatives must be a list of non-empty strings, one '
+            'line each',
+          ),
           reason: 'alternatives = $bad',
         );
       }
@@ -188,7 +209,7 @@ void main() {
     test('a later writer\'s key is ignored on read', () {
       final payload = Decision.fromInput(input(), today: today).toPayload()
         ..['supersedes'] = 'sha256-00';
-      expect(Decision.fromPayload(payload).title, 'Name and pronoun');
+      expect(Decision.fromPayload(payload).title, 'Which shade of blue');
     });
 
     test('a line missing a field this reader needs is refused', () {
@@ -201,6 +222,15 @@ void main() {
       expect(
         () => Decision.fromPayload({'title': 'x'}),
         refuses('decision.decided must be a non-empty string'),
+      );
+    });
+
+    test('a line whose one-line fields hold a newline is refused', () {
+      final payload = Decision.fromInput(input(), today: today).toPayload()
+        ..['by'] = 'one\ntwo';
+      expect(
+        () => Decision.fromPayload(payload),
+        refuses('decision.by must be one line'),
       );
     });
 
@@ -221,8 +251,13 @@ void main() {
     expect(a.hashCode, b.hashCode);
     expect(
       a,
-      isNot(Decision.fromInput(input(alternatives: ['it']), today: today)),
+      isNot(
+        Decision.fromInput(
+          input(alternatives: ['the darker one']),
+          today: today,
+        ),
+      ),
     );
-    expect(a.toString(), 'Decision(2026-08-23, Name and pronoun)');
+    expect(a.toString(), 'Decision(2026-08-23, Which shade of blue)');
   });
 }

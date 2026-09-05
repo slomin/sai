@@ -7,7 +7,7 @@ library;
 import 'dart:convert';
 
 import '../archive/blobref.dart';
-import '../json_codec.dart';
+import '../tasks/codec.dart';
 import '../tasks/date.dart';
 
 /// The most a decision's encoded payload may be. Prose, not a document —
@@ -33,13 +33,13 @@ final class Decision {
   /// recorded, which for a decision older than the log is later.
   final CalendarDate decided;
 
-  /// Who decided, in their own words.
+  /// Who decided, in their own words; one line.
   final String by;
 
   /// What was decided. Paragraphs are separated by blank lines.
   final String decision;
 
-  /// What else was considered; may be empty.
+  /// What else was considered, one line each; may be empty.
   final List<String> alternatives;
 
   /// Why.
@@ -62,8 +62,8 @@ final class Decision {
 
   /// A decision as a person wrote it — the `--from` file, or the answers
   /// to the prompts, as one object. Strict: an unknown key is a typo,
-  /// `decided` may be omitted (it is [today]) but never lie in the
-  /// future, and the whole must fit [maxDecisionBytes]. Throws
+  /// `decided` may be omitted, null or blank (it is [today]) but never
+  /// lie in the future, and the whole must fit [maxDecisionBytes]. Throws
   /// [FormatException] with the reason in fixed words.
   factory Decision.fromInput(
     Map<String, Object?> input, {
@@ -71,17 +71,20 @@ final class Decision {
   }) {
     const where = 'decision';
     rejectUnknownKeys(input, _keys, where: where);
-    final decidedText = optionalString(
-      input,
-      'decided',
-      where: where,
-      emptyOk: true,
-    );
+    // Absent, null or blank all mean today — the same three shapes the
+    // other optional keys accept for "none".
+    final decidedValue = input['decided'];
     final CalendarDate decided;
-    if (decidedText == null || decidedText.trim().isEmpty) {
+    if (decidedValue == null ||
+        (decidedValue is String && decidedValue.trim().isEmpty)) {
       decided = today;
+    } else if (decidedValue is! String) {
+      throw FormatException(
+        '$where.decided must be a calendar date (YYYY-MM-DD), or empty for '
+        'today',
+      );
     } else {
-      decided = _date(decidedText.trim(), where: where);
+      decided = _date(decidedValue.trim(), where: where);
       if (decided > today) {
         throw FormatException('$where.decided is after today ($today)');
       }
@@ -115,19 +118,29 @@ final class Decision {
     required CalendarDate decided,
     required String where,
   }) {
-    final title = _text(map, 'title', where: where);
-    if (title.contains('\n')) {
-      throw FormatException('$where.title must be one line');
-    }
     return Decision(
-      title: title,
+      title: _line(map, 'title', where: where),
       decided: decided,
-      by: _text(map, 'by', where: where),
+      by: _line(map, 'by', where: where),
       decision: _text(map, 'decision', where: where),
       alternatives: _alternatives(map['alternatives'], where: where),
       reasoning: _text(map, 'reasoning', where: where),
       profile: _profile(map['profile'], where: where),
     );
+  }
+
+  /// A one-line field: the title and who decided sit inside a line of
+  /// the rendered document, so a newline in them would be structure.
+  static String _line(
+    Map<String, Object?> map,
+    String key, {
+    required String where,
+  }) {
+    final text = _text(map, key, where: where);
+    if (text.contains('\n')) {
+      throw FormatException('$where.$key must be one line');
+    }
+    return text;
   }
 
   static String _text(
@@ -153,18 +166,14 @@ final class Decision {
   }
 
   static List<String> _alternatives(Object? value, {required String where}) {
+    const message =
+        'alternatives must be a list of non-empty strings, one line each';
     if (value == null) return const [];
-    if (value is! List) {
-      throw FormatException(
-        '$where.alternatives must be a list of non-empty strings',
-      );
-    }
+    if (value is! List) throw FormatException('$where.$message');
     final out = <String>[];
     for (final item in value) {
-      if (item is! String || item.trim().isEmpty) {
-        throw FormatException(
-          '$where.alternatives must be a list of non-empty strings',
-        );
+      if (item is! String || item.trim().isEmpty || item.contains('\n')) {
+        throw FormatException('$where.$message');
       }
       out.add(item.trim());
     }
@@ -175,10 +184,13 @@ final class Decision {
     if (value == null) return null;
     final message = '$where.profile must be {"id": <sha256 blobref>}';
     if (value is! Map<String, Object?>) throw FormatException(message);
-    final id = value['id'];
-    if (id is! String) throw FormatException(message);
-    final ref = BlobRef.tryParse(id);
-    if (ref == null || !ref.isSha256) throw FormatException(message);
+    final BlobRef ref;
+    try {
+      ref = requireBlobRef(value['id'], where: '$where.profile.id');
+    } on FormatException {
+      throw FormatException(message);
+    }
+    if (!ref.isSha256) throw FormatException(message);
     return ref;
   }
 
@@ -194,19 +206,15 @@ final class Decision {
   };
 
   @override
-  bool operator ==(Object other) {
-    if (other is! Decision) return false;
-    if (alternatives.length != other.alternatives.length) return false;
-    for (var i = 0; i < alternatives.length; i++) {
-      if (alternatives[i] != other.alternatives[i]) return false;
-    }
-    return title == other.title &&
-        decided == other.decided &&
-        by == other.by &&
-        decision == other.decision &&
-        reasoning == other.reasoning &&
-        profile == other.profile;
-  }
+  bool operator ==(Object other) =>
+      other is Decision &&
+      title == other.title &&
+      decided == other.decided &&
+      by == other.by &&
+      decision == other.decision &&
+      listEquals(alternatives, other.alternatives) &&
+      reasoning == other.reasoning &&
+      profile == other.profile;
 
   @override
   int get hashCode => Object.hash(

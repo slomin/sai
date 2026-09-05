@@ -11,6 +11,7 @@ import 'archive/archive.dart';
 import 'chat/chat.dart';
 import 'context/assemble.dart';
 import 'context/profile.g.dart';
+import 'decisions/render.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
 import 'archive/verify_state.dart';
@@ -411,6 +412,18 @@ final workspaceStateProvider = Provider<WorkspaceState>((ref) {
     assistantVisible: ref.watch(chatVisibleProvider),
   );
 });
+
+/// The decision document (#14, ADR 0026): `SAI_DECISIONS_FILE`, else
+/// `decisions.md` in sai's data directory, beside the settings file — and,
+/// like it, independent of the archive root, so a test that overrides
+/// [archiveRootProvider] must override this too; the harnesses do.
+final decisionLogFileProvider = Provider<File>(
+  (ref) => resolveDecisionLogFile(
+    environment: ref.watch(environmentProvider),
+    operatingSystem: Platform.operatingSystem,
+    identity: ref.watch(identityProvider),
+  ),
+);
 
 /// The settings file (ADR 0006): `SAI_SETTINGS_FILE`, else
 /// `settings.json` in sai's data directory. Independent of the archive

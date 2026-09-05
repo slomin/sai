@@ -1,5 +1,5 @@
 /// The decision log as a person reads it (#14): a Markdown view of the
-/// `decision.made` lines, rendered beside the archive. Derived, personal
+/// `decision.made` lines, kept in the data directory. Derived, personal
 /// and regenerable — never a repository file, and nothing reads it back.
 library;
 
@@ -8,21 +8,48 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../archive/archive.dart';
+import '../archive/archive_root.dart';
+import '../identity.dart';
+import '../tasks/date.dart';
 import 'decision.dart';
 import 'events.dart';
 
-/// Where the rendered log lives: `decisions.md` beside the archive root —
-/// in the data directory next to `settings.json` for an installed sai
-/// (ADR 0006), beside a scratch root's `archive/` otherwise. In the
+/// Where the rendered log lives: `SAI_DECISIONS_FILE` when set, else
+/// `decisions.md` in sai's data directory, beside the settings file (ADR
+/// 0006) — and, like it, independent of `SAI_ARCHIVE_ROOT`: pointing the
+/// archive at a scratch directory does not move the document into
+/// whatever is next to it, so a scratch run sets this too. In the
 /// person's custody, like the log it is a view of.
-File decisionLogFile(Directory archiveRoot) =>
-    File(p.join(archiveRoot.parent.path, 'decisions.md'));
+File resolveDecisionLogFile({
+  required Map<String, String> environment,
+  required String operatingSystem,
+  SaiIdentity identity = SaiIdentity.stable,
+}) {
+  final override = environment['SAI_DECISIONS_FILE'];
+  if (override != null && override.isNotEmpty) return File(override);
+  final data = resolveDataDir(
+    environment: environment,
+    operatingSystem: operatingSystem,
+    identity: identity,
+    what: 'the decision document: no SAI_DECISIONS_FILE',
+  );
+  return File(p.join(data.path, 'decisions.md'));
+}
 
 /// Renders every `decision.made` among [events], in chain order, as one
 /// Markdown document. Pure: the same lines give the same text. A line
 /// whose payload this version cannot read is one entry saying so — the
-/// document never fails as a whole.
-String renderDecisionLog(Iterable<StoredEvent> events) {
+/// document never fails as a whole. [program] is the command the reader
+/// is told to use — `sai_tui` for the stable flavor, `sai_tui-dev` for
+/// the dev one (ADR 0019), each with its own archive and document.
+///
+/// The person's words are prose inside the document's own structure: a
+/// line of theirs that would open a heading, a list, a quote, a rule or
+/// a fence is escaped, so the numbered entries are the renderer's alone.
+String renderDecisionLog(
+  Iterable<StoredEvent> events, {
+  String program = 'sai_tui',
+}) {
   final decisions = [
     for (final stored in events)
       if (stored.event.type == DecisionEventTypes.made) stored,
@@ -31,13 +58,14 @@ String renderDecisionLog(Iterable<StoredEvent> events) {
     ..writeln("# Decisions made on sai's behalf")
     ..writeln()
     ..writeln(
-      'Rendered by `sai_tui decision render` from the `decision.made` lines of',
+      'Rendered by `$program decision render` from the `decision.made` lines '
+      'of',
     )
     ..writeln(
       'the archive. A view of the log, not a record of its own: do not edit',
     )
     ..writeln(
-      'it — record a decision with `sai_tui decision add` and render again.',
+      'it — record a decision with `$program decision add` and render again.',
     )
     ..writeln(
       'The format is § Decisions (#14) of docs/archive/event-log-v0.md in the',
@@ -63,16 +91,21 @@ String renderDecisionLog(Iterable<StoredEvent> events) {
 
 /// Every `decision.made` line of [archive], oldest first. Lock-free, so a
 /// read can overlap an append in flight and see a torn tail; it is read
-/// once more, the shape the task store's replay uses.
+/// once more, and a tear that stays is the end of the log for this read
+/// — the lines before it are the whole of what settled, as the task
+/// store's replay and the usage view already hold.
 Future<List<StoredEvent>> readDecisions(Archive archive) async {
   for (var attempt = 0; ; attempt++) {
+    final decisions = <StoredEvent>[];
     try {
-      return [
-        await for (final stored in archive.events())
-          if (stored.event.type == DecisionEventTypes.made) stored,
-      ];
+      await for (final stored in archive.events()) {
+        if (stored.event.type == DecisionEventTypes.made) {
+          decisions.add(stored);
+        }
+      }
+      return decisions;
     } on TornTailError {
-      if (attempt > 0) rethrow;
+      if (attempt > 0) return decisions;
     }
   }
 }
@@ -104,7 +137,25 @@ void writeDecisionLog(File file, String text) {
   }
 }
 
-String _day(StoredEvent stored) => stored.event.tsText.substring(0, 10);
+/// The day the line was recorded, as the person counts days — local,
+/// like `decided` and like the usage view; `ts` itself is UTC.
+String _day(StoredEvent stored) =>
+    CalendarDate.fromLocal(stored.event.ts).toString();
+
+/// A line that would be Markdown structure at the start of a line — a
+/// heading, a list item, a quote, a rule, a fence — with the first mark
+/// escaped, so the person's prose stays prose.
+final _structure = RegExp(r'^(\s*)([#\-*+>=`~])');
+
+String _prose(String text) => text
+    .split('\n')
+    .map(
+      (line) => line.replaceFirstMapped(_structure, (m) => '${m[1]}\\${m[2]}'),
+    )
+    .join('\n');
+
+/// One line: whitespace runs, newlines included, become one space.
+String _oneLine(String text) => text.replaceAll(RegExp(r'\s+'), ' ').trim();
 
 void _entry(StringBuffer out, int number, StoredEvent stored) {
   final Decision decision;
@@ -114,7 +165,9 @@ void _entry(StringBuffer out, int number, StoredEvent stored) {
     out
       ..writeln('## $number. An unreadable decision')
       ..writeln()
-      ..writeln('Recorded ${_day(stored)} · `${stored.id}` · ${e.message}');
+      ..writeln(
+        'Recorded ${_day(stored)} · `${stored.id}` · ${_oneLine(e.message)}',
+      );
     return;
   }
   out
@@ -125,7 +178,7 @@ void _entry(StringBuffer out, int number, StoredEvent stored) {
       'recorded ${_day(stored)} · `${stored.id}`',
     )
     ..writeln()
-    ..writeln('**Decision.** ${decision.decision}')
+    ..writeln('**Decision.** ${_prose(decision.decision)}')
     ..writeln();
   if (decision.alternatives.isEmpty) {
     out.writeln('**Alternatives considered.** None recorded.');
@@ -139,7 +192,7 @@ void _entry(StringBuffer out, int number, StoredEvent stored) {
   }
   out
     ..writeln()
-    ..writeln('**Reasoning.** ${decision.reasoning}');
+    ..writeln('**Reasoning.** ${_prose(decision.reasoning)}');
   if (decision.profile != null) {
     out
       ..writeln()

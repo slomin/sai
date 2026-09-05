@@ -5,12 +5,12 @@ import 'package:test/test.dart';
 
 void main() {
   final decision = Decision(
-    title: 'Name and pronoun',
+    title: 'Which shade of blue',
     decided: const CalendarDate(2026, 8, 23),
     by: 'the guardian',
-    decision: 'She is called sai.',
-    alternatives: const ['it', 'they'],
-    reasoning: 'A name is needed before the first conversation.',
+    decision: 'The lighter one.',
+    alternatives: const ['the darker one', 'no blue at all'],
+    reasoning: 'It reads better in daylight.',
   );
 
   test('decision.made seals as a user event with no model and no refs', () {
@@ -22,12 +22,12 @@ void main() {
     expect(sealed.refs, isEmpty);
     expect(sealed.source, 'sai/test');
     expect(sealed.payload, {
-      'title': 'Name and pronoun',
+      'title': 'Which shade of blue',
       'decided': '2026-08-23',
       'by': 'the guardian',
-      'decision': 'She is called sai.',
-      'alternatives': ['it', 'they'],
-      'reasoning': 'A name is needed before the first conversation.',
+      'decision': 'The lighter one.',
+      'alternatives': ['the darker one', 'no blue at all'],
+      'reasoning': 'It reads better in daylight.',
     });
     // The line round-trips like any other event, without a refs key.
     final line = sealed.encode();
@@ -42,11 +42,11 @@ void main() {
     final id = BlobRef.sha256OfBytes(utf8.encode('profile'));
     final draft = decisionMadeDraft(
       Decision(
-        title: 'Profile v0',
+        title: 'A written profile',
         decided: const CalendarDate(2026, 9, 5),
         by: 'the guardian',
-        decision: 'A written profile.',
-        reasoning: 'So she can be read.',
+        decision: 'The standing instructions become a file.',
+        reasoning: 'So they can be read.',
         profile: id,
       ),
       source: 'sai/test',
