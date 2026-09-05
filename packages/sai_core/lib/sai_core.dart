@@ -9,6 +9,7 @@ export 'src/identity.dart';
 export 'src/archive.dart';
 export 'src/chat.dart';
 export 'src/context.dart';
+export 'src/decisions.dart';
 export 'src/llm.dart';
 export 'src/proposals.dart';
 export 'src/providers.dart';

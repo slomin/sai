@@ -207,13 +207,14 @@ line.
 | `proposal.accept` | user | `payload.item`; `refs` → the `proposal.made`; written before the mutations it authorises |
 | `proposal.reject` | user | `payload.item`; `refs` → the `proposal.made` |
 | `proposal.refused` | system | a proposal call whose output failed validation; `payload.reason`, `refs` → the `provider.response` |
+| `decision.made` | user | a decision the person who keeps this sai took on her behalf — the name, the model, the memory — with the alternatives and the reasoning, rendered beside the archive; see [decisions](#decisions-14) |
 | `archive.correction` | any | `refs` → the corrected event; the payload says what is wrong |
 
 Producers add rows here in the same change that starts writing a new
 type. A breaking payload change is a new type name, never a rewrite.
-`decision` is reserved for #14. Provider traffic is recorded **raw**, not
-paraphrased — the log is an audit record, and secrets must never enter
-it (#29 keeps keys in the Keychain).
+Provider traffic is recorded **raw**, not paraphrased — the log is an
+audit record, and secrets must never enter it (#29 keeps keys in the
+Keychain).
 
 ### Provider traffic (#21)
 
@@ -335,6 +336,30 @@ is stale: surfaced, refused at acceptance, and nothing is written.
 | `proposal.accept` | `item` — the index into the proposal's `items` |
 | `proposal.reject` | `item` |
 | `proposal.refused` | `reason` — fixed validation text |
+
+### Decisions (#14)
+
+sai is, for now, something like an infant: the person who keeps her
+decides on her behalf — what she is called, which model she runs on,
+what goes into her memory — and a later sai may disagree. Those
+decisions are not hidden. Each is one `decision.made` line (actor
+`user`, the guardian; `source` the client that recorded it; no `model`,
+no `refs`): what was decided, the alternatives considered, the
+reasoning and who decided, in the person's own words, with the day the
+decision was taken as payload — `ts` says when it was recorded, which
+for a decision older than the log is later. No line edits an earlier
+one: a revised decision is a new line that says so in words.
+
+The log is the record. `sai_tui decision render` writes a Markdown view
+of these lines — `decisions.md` beside the archive root, in the data
+directory — and `sai_tui decision add` records one and renders. The
+document is derived, personal and regenerable: it is never a repository
+file, and nothing reads it back (ADR
+[0026](../decisions/0026-decisions-on-the-assistants-behalf-are-archive-events.md)).
+
+| type | payload |
+| --- | --- |
+| `decision.made` | `title` — one line; `decided` — `YYYY-MM-DD`, the day the decision was taken, never later than the day it was recorded; `by` — who decided; `decision`; `alternatives` — `[string]`, may be empty; `reasoning`; optional `profile` — `{id}`, the sha256 blobref of the exact bytes of the `profile/system-prompt.md` the decision created or revised. The encoded payload is at most 64 KiB. |
 
 ### Task domain (#17)
 
