@@ -40,6 +40,14 @@ usage: sai_tui                       open the terminal client
                             [--open-only] [--skip-repeat-history]
                             [--logbook-since YYYY-MM-DD]
                                     bring the Things 3 database over
+       sai_tui archive backup [<dir>]
+                                    copy the log to its backup, or to <dir>
+       sai_tui archive backup-dir [<dir>|none]
+                                    show or set where the log is copied
+       sai_tui archive verify [<root>]
+                                    hash every line of the log, or of <root>
+       sai_tui archive restore <replica>
+                                    put a replica back into an empty log
        sai_tui version               print the version
        sai_tui help
 
@@ -92,7 +100,17 @@ writes nothing. Things itself is never written to. For a switch rather
 than a mirror, leave history behind: --open-only imports no finished
 task, --skip-repeat-history drops the completion history of repeating
 tasks (their open next instances still come), --logbook-since keeps
-only tasks finished on or after that day; each reports what it left.''';
+only tasks finished on or after that day; each reports what it left.
+
+archive backup copies the log to the backup destination — an absolute
+path on this Mac: an external volume, a second disk, a mount — and
+checks every hash of the copy; the copy only ever grows, a destination
+holding another archive or more than the log is refused, and one that
+is not mounted is skipped quietly (docs/archive/backup-and-restore.md).
+The app copies on its own while a destination is set, and the dogfood
+install runs archive backup hourly through launchd. archive restore
+puts a replica back into an empty log only: move a damaged root aside
+first, then verify.''';
 
 /// [cliUsage] for the command a flavor is installed as (`sai_tui` for
 /// stable, `sai_tui-dev` for dev, ADR 0019). The text is written once for
@@ -993,6 +1011,132 @@ Future<int> runCli(
                     '${elapsed.inMilliseconds} ms',
         );
         return cliOk;
+
+      case ['archive', 'verify', ...final rest]:
+        final Directory root;
+        switch (rest) {
+          case []:
+            root = container.read(archiveRootProvider);
+          case [final path]:
+            root = Directory(path);
+          default:
+            throw _Usage('archive verify takes one root at most');
+        }
+        try {
+          // A fresh handle on purpose: a root other than the live one is
+          // never the provider's, and a one-shot run has nothing to share.
+          final archive = await Archive.open(root);
+          try {
+            final report = await archive.verify();
+            out.writeln(
+              'verified: ${report.count} lines, head ${report.head ?? 'none'}',
+            );
+          } finally {
+            await archive.close();
+          }
+        } on Object catch (e) {
+          err.writeln('$program: failed: ${describeArchiveError(e)}');
+          return cliFailed;
+        }
+        return cliOk;
+
+      case ['archive', 'backup-dir', ...final rest]:
+        final settings = container.read(settingsProvider);
+        if (settings.problem != null) {
+          err.writeln('$program: ${settings.problem}');
+        }
+        switch (rest) {
+          case []:
+            break;
+          case ['none']:
+            container.read(settingsProvider.notifier).setArchiveBackup(null);
+          case [final dir]:
+            final reason = Settings.checkArchiveBackup(
+              dir,
+              archiveRoot: container.read(archiveRootProvider).path,
+            );
+            if (reason != null) {
+              err.writeln('$program: $reason');
+              return cliFailed;
+            }
+            container.read(settingsProvider.notifier).setArchiveBackup(dir);
+          default:
+            throw _Usage('archive backup-dir takes one directory, or none');
+        }
+        out.writeln(
+          'backup destination: '
+          '${container.read(settingsProvider).archiveBackup ?? 'none'}',
+        );
+        return cliOk;
+
+      case ['archive', 'backup', ...final rest]:
+        final String? destination;
+        switch (rest) {
+          case []:
+            destination = container.read(settingsProvider).archiveBackup;
+          case [final dir]:
+            final reason = Settings.checkArchiveBackup(
+              dir,
+              archiveRoot: container.read(archiveRootProvider).path,
+            );
+            if (reason != null) {
+              err.writeln('$program: $reason');
+              return cliFailed;
+            }
+            destination = dir;
+          default:
+            throw _Usage('archive backup takes one directory at most');
+        }
+        if (destination == null) {
+          out.writeln(
+            'no backup destination configured; set one with: '
+            '$program archive backup-dir <dir>',
+          );
+          return cliOk;
+        }
+        // The provider's own handle: this is the live log, and holding a
+        // listener keeps the future from being disposed mid-await.
+        final sub = container.listen(archiveProvider, (_, _) {});
+        try {
+          final archive = await container.read(archiveProvider.future);
+          final report = await archive.replicateTo(Directory(destination));
+          out.writeln(
+            'backed up: ${report.count} lines to $destination '
+            '(${report.filesCopied} files, ${report.bytesCopied} bytes copied)',
+          );
+          return cliOk;
+        } on ReplicaUnavailableError catch (e) {
+          out.writeln('backup skipped: $destination — ${e.reason}');
+          return cliOk;
+        } on Object catch (e) {
+          err.writeln('$program: backup failed: ${describeArchiveError(e)}');
+          return cliFailed;
+        } finally {
+          sub.close();
+        }
+
+      case ['archive', 'restore', final replica]:
+        final root = container.read(archiveRootProvider);
+        try {
+          final report = await Archive.restore(
+            from: Directory(replica),
+            into: root,
+          );
+          out.writeln(
+            'restored: ${report.count} lines into ${root.path}, every hash '
+            'checked',
+          );
+          return cliOk;
+        } on Object catch (e) {
+          err.writeln('$program: restore failed: ${describeArchiveError(e)}');
+          return cliFailed;
+        }
+
+      case ['archive', ...]:
+        throw _Usage(
+          'archive takes backup, backup-dir, verify or restore: '
+          '${args.join(' ')}',
+        );
 
       default:
         return usage('unknown command: ${args.join(' ')}');

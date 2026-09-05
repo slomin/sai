@@ -361,18 +361,24 @@ class _TuiAppState extends State<TuiApp> {
                 // and watching it here keeps it alive for the interactive
                 // client's life. A failed check shows in the row whenever
                 // no notice of the person's own action holds it.
+                // The replica (#15) is kept alive the same way; a copy
+                // that was refused or did not verify shows here too.
                 RiverpodConsumer<FollowerState>(
                   provider: archiveFollowerProvider,
-                  builder: (context, follower) =>
-                      switch (_notice.isNotEmpty ? _notice : follower.notice) {
-                        final notice? when notice.isNotEmpty => Text(
-                          notice,
-                          style: TextStyle(color: Colors.yellow),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        _ => const SizedBox.shrink(),
-                      },
+                  builder: (context, follower) => RiverpodConsumer<BackupState>(
+                    provider: archiveBackupProvider,
+                    builder: (context, backup) => switch (_notice.isNotEmpty
+                        ? _notice
+                        : follower.notice ?? backupNotice(backup)) {
+                      final notice? when notice.isNotEmpty => Text(
+                        notice,
+                        style: TextStyle(color: Colors.yellow),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      _ => const SizedBox.shrink(),
+                    },
+                  ),
                 ),
                 // One row, whatever the provider is called: a wrapped
                 // status would take its extra rows from the list above.
@@ -425,3 +431,10 @@ class _TuiAppState extends State<TuiApp> {
     );
   }
 }
+
+/// The one line the terminal client says about the replica (#15): only a
+/// copy that failed — a skipped or successful one is not news here.
+String? backupNotice(BackupState state) => switch (state) {
+  BackupFailed(:final message) => 'backup failed: $message',
+  _ => null,
+};
