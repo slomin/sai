@@ -22,7 +22,10 @@ the layout and the toolchain; this file has the rules.
 
 - A user-facing change gets a live pass on top of the tests, in a scratch
   env — never the real data dirs:
-  `SAI_ARCHIVE_ROOT=<dir>/archive SAI_SETTINGS_FILE=<dir>/settings.json`.
+  `SAI_ARCHIVE_ROOT=<dir>/archive SAI_SETTINGS_FILE=<dir>/settings.json
+  SAI_DECISIONS_FILE=<dir>/decisions.md` — the settings and the decision
+  document follow the data directory, not the archive root, so a scratch
+  run names all three.
   Seed settings with the TUI CLI (`dart run apps/sai_tui/bin/sai_tui.dart
   provider add …`) *before* launching the app: it reads the file once.
 - Drive the app yourself; do not hand the clicks to a person.
@@ -183,7 +186,7 @@ the layout and the toolchain; this file has the rules.
   (see `0001-…`). Decisions made on the assistant's behalf are not in
   this repository (#14, ADR 0026): they are `decision.made` lines in the
   person's own archive, recorded with `sai_tui decision add` and
-  rendered to `decisions.md` beside the archive root. This repository
+  rendered to `decisions.md` in the data directory. This repository
   is generic software; Jan's sai — her archive, her decisions — lives
   in his custody. Never write a person's decision text, or a seed for
   one, into the tree, a test or a PR: fixture words only.

@@ -106,7 +106,7 @@ jobs:
         run: |
           dart build cli -t apps/sai_tui/bin/sai_tui.dart --root-package=sai_tui -o build/tui
           SAI_SETTINGS_FILE="$RUNNER_TEMP/settings.json" build/tui/bundle/bin/sai_tui reasoning
-          SAI_ARCHIVE_ROOT="$RUNNER_TEMP/archive" SAI_SETTINGS_FILE="$RUNNER_TEMP/settings.json" build/tui/bundle/bin/sai_tui decision render - | grep -q "^No decisions recorded yet"
+          SAI_ARCHIVE_ROOT="$RUNNER_TEMP/archive" SAI_SETTINGS_FILE="$RUNNER_TEMP/settings.json" SAI_DECISIONS_FILE="$RUNNER_TEMP/decisions.md" build/tui/bundle/bin/sai_tui decision render - | grep -q "^No decisions recorded yet"
           [ "$(SAI_SETTINGS_FILE="$RUNNER_TEMP/settings.json" build/tui/bundle/bin/sai_tui version)" = "sai_tui $(sed -n 's/^version: //p' packages/sai_core/pubspec.yaml)" ]
           dart build cli -t apps/sai_tui/bin/sai_tui-dev.dart --root-package=sai_tui -o build/tui-dev
           [ "$(SAI_SETTINGS_FILE="$RUNNER_TEMP/settings-dev.json" build/tui-dev/bundle/bin/sai_tui-dev version)" = "sai_tui-dev $(sed -n 's/^version: //p' packages/sai_core/pubspec.yaml)" ]

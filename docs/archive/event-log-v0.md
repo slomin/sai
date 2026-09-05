@@ -351,10 +351,11 @@ for a decision older than the log is later. No line edits an earlier
 one: a revised decision is a new line that says so in words.
 
 The log is the record. `sai_tui decision render` writes a Markdown view
-of these lines — `decisions.md` beside the archive root, in the data
-directory — and `sai_tui decision add` records one and renders. The
-document is derived, personal and regenerable: it is never a repository
-file, and nothing reads it back (ADR
+of these lines — `decisions.md` in the data directory, beside
+`settings.json`; `SAI_DECISIONS_FILE` moves it — and `sai_tui decision
+add` records one and renders. The document is derived, personal and
+regenerable: it is never a repository file, and nothing reads it back
+(ADR
 [0026](../decisions/0026-decisions-on-the-assistants-behalf-are-archive-events.md)).
 
 | type | payload |

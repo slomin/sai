@@ -31,14 +31,19 @@ and the decisions made on her behalf, live in his custody.
   decision older than the log keeps its own day in the payload and is
   never backdated, so the day files stay truthful. A revision is a new
   line that says so; nothing edits an earlier one.
-- **The document is a view, rendered beside the archive.** `sai_tui
-  decision render` writes `decisions.md` into the data directory next to
-  `settings.json` (ADR 0006's place for per-install files), from the
+- **The document is a view, kept in the data directory.** `sai_tui
+  decision render` writes `decisions.md` next to `settings.json` (ADR
+  0006's place for per-install files, resolved the same way:
+  `SAI_DECISIONS_FILE` moves it, and the archive root says nothing about
+  it, so a scratch archive does not drag the document along), from the
   log, in chain order, deterministically; `decision add` records and
   renders. The document is derived, personal and regenerable — never a
-  repository path, never read back by anything, never edited by hand. A
-  line this version cannot read renders as one entry saying so; the
-  document never fails whole.
+  repository path, never read back by anything, never edited by hand.
+  The person's words are prose inside the renderer's structure: a line
+  of theirs that would open a heading, a list, a quote, a rule or a
+  fence is escaped, and a line this version cannot read renders as one
+  entry saying so; the document never fails whole, and only the renderer
+  numbers entries.
 - **Entry is interactive or from a file, never an editor.** `decision
   add` asks one field at a time through the same injected reader the
   tests script (a multi-line answer ends with an empty line), or reads
@@ -48,20 +53,20 @@ and the decisions made on her behalf, live in his custody.
 - **Nothing personal in the repository.** The issue named
   `docs/decisions/assistant/` as the document's home; it is not. The
   repository carries the event type, the spec, the command, the renderer
-  and fixture tests — fixture words, never Jan's. The seed decisions
-  (name and pronoun, the archive format, the 2025-01-11 start, the first
-  provider, the profile) are drafted privately and recorded by Jan
-  against his own archive.
+  and fixture tests — fixture words, never Jan's. The seed decisions the
+  issue names are drafted privately and recorded by Jan against his own
+  archive; not even their outline belongs here.
 
 ## Consequences
 
 - The archive gains a type whose lines a person writes by hand; the
   registry test pins it like every other family. No projection applies
   it.
-- `decisions.md` beside the archive is the first file sai writes into
-  the data directory that is neither the log nor the settings; a replica
-  (ADR 0025) does not carry it — it is regenerated from the log it
-  copies.
+- `decisions.md` is the first file sai writes into the data directory
+  that is neither the log nor the settings; a replica (ADR 0025) does
+  not carry it — it is regenerated from the log it copies. The receipt
+  of `decision add` comes before the render, so a document that could
+  not be written never reads as a decision that was not recorded.
 - A profile revision without a decision is a gap in the record, not a
   broken build: the repository cannot see a person's archive.
   `profile/CHANGELOG.md` names every revision and the ritual (ADR 0027),

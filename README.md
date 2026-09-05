@@ -97,7 +97,8 @@ entry point and lands as `sai_tui-dev`) — `tool/build-tui.sh
 point `SAI_ARCHIVE_ROOT` at a throwaway directory, e.g.
 `SAI_ARCHIVE_ROOT=/tmp/sai-demo/archive`. Non-secret settings live in
 `settings.json` in the same data directory as the default archive;
-`SAI_SETTINGS_FILE` moves them, and a scratch run sets both. Four
+`SAI_SETTINGS_FILE` moves them, `SAI_DECISIONS_FILE` moves the decision
+document (below), and a scratch run sets all three. Four
 providers are built in and need no configuration: `lmstudio` (LM
 Studio's server on this Mac, `http://127.0.0.1:1234/v1`, whatever model
 it has loaded), `lan` (the LAN inference box, #23), `fake` (answers
@@ -379,11 +380,12 @@ The decisions the person who keeps sai takes on her behalf — the name,
 the model, what goes into her memory — are recorded in her archive, not
 in this repository (#14, ADR 0026): `sai_tui decision add` asks for a
 title, the day, who decided, what, the alternatives and the reasoning
-(or reads them from `--from <file.json>`), appends one `decision.made`
-line and renders `decisions.md` beside the archive root, in the data
-directory; `sai_tui decision render [<file>|-]` renders it alone. The
-document is a view of the log and is never edited by hand. This
-repository is the software; your sai's history is yours.
+(or reads them from `--from <file.json>`; `--profile` names the profile
+revision the decision created), appends one `decision.made` line and
+renders `decisions.md` in the data directory, beside `settings.json`
+(`SAI_DECISIONS_FILE` moves it); `sai_tui decision render [<file>|-]`
+renders it alone. The document is a view of the log and is never edited
+by hand. This repository is the software; your sai's history is yours.
 
 ## Importing from Things 3
 
