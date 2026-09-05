@@ -105,12 +105,15 @@ void main() {
         out.toString(),
         matches(
           RegExp(
-            r'^recorded 1\. Name and pronoun as sha256-[a-f0-9]{64}\n'
-            r'rendered .*/decisions\.md\n$',
+            r'^recorded Name and pronoun as sha256-[a-f0-9]{64}\n'
+            r'rendered 1 decisions to .*/decisions\.md\n$',
           ),
         ),
       );
-      expect(out.toString(), endsWith('rendered ${document().path}\n'));
+      expect(
+        out.toString(),
+        endsWith('rendered 1 decisions to ${document().path}\n'),
+      );
       final text = document().readAsStringSync();
       expect(text, startsWith("# Decisions made on sai's behalf\n"));
       expect(text, contains('## 1. Name and pronoun\n'));
@@ -135,7 +138,11 @@ void main() {
       out.clear();
       answers.addAll(['Second', '', 'me', 'x', '', '', 'y', '']);
       expect(await run('decision add'), cliOk);
-      expect(out.toString(), startsWith('recorded 2. Second as sha256-'));
+      expect(out.toString(), startsWith('recorded Second as sha256-'));
+      expect(
+        out.toString(),
+        endsWith('rendered 2 decisions to ${document().path}\n'),
+      );
       expect(archiveLines(container), hasLength(2));
       expect(document().readAsStringSync(), contains('## 2. Second\n'));
     });
@@ -179,6 +186,41 @@ void main() {
       expect(archiveLines(container), isEmpty);
       expect(document().existsSync(), isFalse);
     });
+
+    test('a decision that cannot be rendered is recorded, once', () async {
+      // A directory where the document goes: the rename cannot land.
+      Directory(document().path).createSync();
+      answers.addAll(fullAnswers);
+      expect(await run('decision add'), cliOk);
+      // The receipt comes first and alone; the line is in the log.
+      expect(
+        out.toString(),
+        matches(
+          RegExp(r'^recorded Name and pronoun as sha256-[a-f0-9]{64}\n$'),
+        ),
+      );
+      expect(
+        err.toString(),
+        'sai_tui: recorded, but ${document().path} was not rendered: '
+        'is a directory; render it with: sai_tui decision render\n',
+      );
+      expect(onlyDecision()['title'], 'Name and pronoun');
+      // No temp file is left beside the document.
+      expect(
+        document().parent.listSync().map((e) => e.uri.pathSegments.last),
+        isNot(contains(endsWith('.tmp'))),
+      );
+
+      // The recovery the message names adds no second entry.
+      Directory(document().path).deleteSync();
+      out.clear();
+      err.clear();
+      expect(await run('decision render'), cliOk);
+      expect(archiveLines(container), hasLength(1));
+      final text = document().readAsStringSync();
+      expect(text, contains('## 1. Name and pronoun\n'));
+      expect(text, isNot(contains('## 2. ')));
+    });
   });
 
   group('decision add --from', () {
@@ -197,7 +239,7 @@ void main() {
       final payload = onlyDecision();
       expect(payload['title'], 'Profile v0');
       expect(payload['profile'], {'id': profileId.toString()});
-      expect(out.toString(), startsWith('recorded 1. Profile v0 as sha256-'));
+      expect(out.toString(), startsWith('recorded Profile v0 as sha256-'));
       expect(
         document().readAsStringSync(),
         contains('**Profile.** `$profileId`\n'),

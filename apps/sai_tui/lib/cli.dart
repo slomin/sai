@@ -1207,24 +1207,43 @@ Future<int> runCli(
         // listener keeps the future from being disposed mid-await.
         final sub = container.listen(archiveProvider, (_, _) {});
         try {
-          final archive = await container.read(archiveProvider.future);
-          final stored = await archive.append(
-            decisionMadeDraft(
-              decision,
-              source: container.read(eventSourceProvider),
-            ),
-          );
-          final decisions = await readDecisions(archive);
+          final Archive archive;
+          final StoredEvent stored;
+          try {
+            archive = await container.read(archiveProvider.future);
+            stored = await archive.append(
+              decisionMadeDraft(
+                decision,
+                source: container.read(eventSourceProvider),
+              ),
+            );
+          } on Object catch (e) {
+            err.writeln('$program: failed: ${describeArchiveError(e)}');
+            return cliFailed;
+          }
+          // The line is in the append-only log from here on. Say so before
+          // anything derived is attempted: a render that fails must never
+          // read as "nothing was recorded", or the decision is entered a
+          // second time and the archive keeps both.
+          out.writeln('recorded ${decision.title} as ${stored.id}');
           final file = decisionLogFile(container.read(archiveRootProvider));
-          writeDecisionLog(file, renderDecisionLog(decisions));
-          out.writeln(
-            'recorded ${decisions.length}. ${decision.title} as ${stored.id}',
-          );
-          out.writeln('rendered ${file.path}');
+          try {
+            final decisions = await readDecisions(archive);
+            writeDecisionLog(file, renderDecisionLog(decisions));
+            out.writeln(
+              'rendered ${decisions.length} decisions to ${file.path}',
+            );
+          } on Object catch (e) {
+            // Recorded, not rendered: the document is a view of the log
+            // and decision render regenerates it, so the command has done
+            // what cannot be undone and says what is left.
+            err.writeln(
+              '$program: recorded, but ${file.path} was not rendered: '
+              '${_describeFileError(e)}; render it with: '
+              '$program decision render',
+            );
+          }
           return cliOk;
-        } on Object catch (e) {
-          err.writeln('$program: failed: ${describeArchiveError(e)}');
-          return cliFailed;
         } finally {
           sub.close();
         }
@@ -1255,7 +1274,7 @@ Future<int> runCli(
           out.writeln('rendered ${decisions.length} decisions to ${file.path}');
           return cliOk;
         } on Object catch (e) {
-          err.writeln('$program: failed: ${describeArchiveError(e)}');
+          err.writeln('$program: failed: ${_describeFileError(e)}');
           return cliFailed;
         } finally {
           sub.close();
@@ -1398,6 +1417,16 @@ Future<Map<String, Object?>> _askDecision(
     )).join('\n'),
   };
 }
+
+/// A file system failure in the file system's own words, lowercase — `is
+/// a directory`, `permission denied` — and the archive's reason for
+/// anything else; never a path the person did not give.
+String _describeFileError(Object e) => switch (e) {
+  FileSystemException(:final osError?) when osError.message.isNotEmpty =>
+    osError.message.toLowerCase(),
+  FileSystemException(:final message) => message.toLowerCase(),
+  _ => describeArchiveError(e),
+};
 
 final class _Usage implements Exception {
   _Usage(this.message);
