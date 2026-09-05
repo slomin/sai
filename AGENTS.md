@@ -22,7 +22,10 @@ the layout and the toolchain; this file has the rules.
 
 - A user-facing change gets a live pass on top of the tests, in a scratch
   env — never the real data dirs:
-  `SAI_ARCHIVE_ROOT=<dir>/archive SAI_SETTINGS_FILE=<dir>/settings.json`.
+  `SAI_ARCHIVE_ROOT=<dir>/archive SAI_SETTINGS_FILE=<dir>/settings.json
+  SAI_DECISIONS_FILE=<dir>/decisions.md` — the settings and the decision
+  document follow the data directory, not the archive root, so a scratch
+  run names all three.
   Seed settings with the TUI CLI (`dart run apps/sai_tui/bin/sai_tui.dart
   provider add …`) *before* launching the app: it reads the file once.
 - Drive the app yourself; do not hand the clicks to a person.
@@ -180,15 +183,30 @@ the layout and the toolchain; this file has the rules.
   a smoke that registers one runs `local-install` with the sandbox off
   and says so first.
 - Technical decisions with consequences go to `docs/decisions/` as ADRs
-  (see `0001-…`). Decisions made on the assistant's behalf are a separate
-  log (#14).
+  (see `0001-…`). Decisions made on the assistant's behalf are not in
+  this repository (#14, ADR 0026): they are `decision.made` lines in the
+  person's own archive, recorded with `sai_tui decision add` and
+  rendered to `decisions.md` in the data directory. This repository
+  is generic software; Jan's sai — her archive, her decisions — lives
+  in his custody. Never write a person's decision text, or a seed for
+  one, into the tree, a test or a PR: fixture words only.
+- The profile is `profile/system-prompt.md`, compiled into core as
+  `assistantProfile` and `assistantProfileId` by `dart run
+  tool/gen_profile.dart` in `packages/sai_core` (ADR 0027). A revision
+  is the file, a `profile/CHANGELOG.md` entry naming the new sha256 and
+  the regenerated Dart in one change — `test/context/profile_test.dart`
+  refuses less — plus a `decision.made` recorded by whoever keeps the
+  sai it ships to. The marker is written literally in the file; nothing
+  interpolates it.
 
 ## Style
 
 - `dart format` output is canonical. Lints: `package:lints/recommended`
   in Dart packages, `package:flutter_lints/flutter` in the app.
-- No code generation in the workspace yet (no `build_runner`,
-  no `riverpod_generator`); revisit when a package earns it.
+- No code generation in the workspace (no `build_runner`, no
+  `riverpod_generator`); revisit when a package earns it. The one
+  generated file is `packages/sai_core/lib/src/context/profile.g.dart`,
+  written by a hand-run script and pinned by a test (ADR 0027).
 - Keep secrets, device identifiers, and machine-specific paths out of the
   tree.
 - Releases are built and published by hand with `tool/release.sh`

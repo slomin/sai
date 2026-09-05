@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -27,14 +28,23 @@ Future<void> runSaiTui(
     ],
   );
   if (args.isNotEmpty) {
-    exitCode = await runCli(
-      args,
-      container: container,
-      out: stdout,
-      err: stderr,
-      readSecret: _readSecret,
-    );
-    container.dispose();
+    try {
+      exitCode = await runCli(
+        args,
+        container: container,
+        out: stdout,
+        err: stderr,
+        readSecret: _readSecret,
+        readLine: _readLine,
+      );
+    } finally {
+      // On every path out, an exception's included: the archive's LOCK
+      // goes with the container, and a held stdin would keep the process
+      // alive.
+      await _stdinLines?.cancel();
+      _stdinLines = null;
+      container.dispose();
+    }
     return;
   }
   keepConnectionAlive(container);
@@ -85,9 +95,24 @@ Future<String?> _readSecret(String prompt) async {
   }
 }
 
-/// The first line of stdin, or null when it ends without one.
-Future<String?> _line() => stdin
-    .transform(utf8.decoder)
-    .transform(const LineSplitter())
-    .cast<String?>()
-    .firstWhere((_) => true, orElse: () => null);
+/// One line from the terminal, echoed — a decision is not a secret — or
+/// from a piped stdin as it is. The prompt is shown to a terminal only,
+/// so piped answers are never interleaved with questions.
+Future<String?> _readLine(String prompt) {
+  if (stdin.hasTerminal && prompt.isNotEmpty) stdout.write(prompt);
+  return _line();
+}
+
+/// stdin as lines, opened on the first read and held for the command:
+/// stdin is a single-subscription stream, and `decision add` asks more
+/// than once. Cancelled when the command ends, or the process would wait
+/// on a terminal that has nothing more to say.
+StreamIterator<String>? _stdinLines;
+
+/// The next line of stdin, or null when it ends.
+Future<String?> _line() async {
+  final lines = _stdinLines ??= StreamIterator(
+    stdin.transform(utf8.decoder).transform(const LineSplitter()),
+  );
+  return await lines.moveNext() ? lines.current : null;
+}

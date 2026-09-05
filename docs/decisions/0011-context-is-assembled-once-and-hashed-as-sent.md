@@ -1,6 +1,6 @@
 # 11. Context is assembled once and hashed as sent
 
-Date: 2026-08-25 · Status: accepted · Issues: #33, #34 · Schema: [event-log-v0](../archive/event-log-v0.md)
+Date: 2026-08-25 · Status: accepted · Issues: #33, #34 · Schema: [event-log-v0](../archive/event-log-v0.md) · Amended by: [0027](0027-the-profile-is-a-reviewed-file-compiled-into-the-clients.md)
 
 ## Context
 
@@ -185,3 +185,12 @@ provenance all belong to whichever provider answers, not to the one the
 person named first. Assembly is unchanged and still knows nothing of
 providers: the caller maps the *answering* provider's tag to a shape and
 hands in its window. The cache warmer follows the same resolution.
+
+## Amendment (2026-09-05, #14, ADR [0027](0027-the-profile-is-a-reviewed-file-compiled-into-the-clients.md))
+
+The profile slot is filled. `defaultProfile` is gone; `assembleContext`,
+`assembleProposal` and `assembleWarmup` take `assistantProfile` —
+`profile/system-prompt.md` compiled into core — through
+`assistantProfileProvider`, one source for the three readers. The
+signature did not change, as promised above; the warm key now includes
+the profile, so a revised profile re-warms. #31 was absorbed by #14.

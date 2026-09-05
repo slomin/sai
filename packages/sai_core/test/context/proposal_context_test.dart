@@ -6,7 +6,7 @@ void main() {
   final projection = TaskProjection.empty;
 
   AssembledContext proposal() => assembleProposal(
-    profile: defaultProfile,
+    profile: assistantProfile,
     projection: projection,
     today: today,
     history: const [],
@@ -16,7 +16,7 @@ void main() {
   test('the proposal prefix is byte-identical to the warm-up', () {
     final sent = proposal().request.sent;
     final warm = assembleWarmup(
-      profile: defaultProfile,
+      profile: assistantProfile,
       projection: projection,
       today: today,
     ).sent;
@@ -30,7 +30,7 @@ void main() {
     final request = proposal().request;
     expect(request.responseSchema, same(proposalResponseSchema));
     final bare = assembleContext(
-      profile: defaultProfile,
+      profile: assistantProfile,
       projection: projection,
       today: today,
       history: const [],
@@ -49,10 +49,5 @@ void main() {
     expect(text, contains('Request: drop something'));
     expect(text, contains('someday'));
     expect(text, contains('split'));
-  });
-
-  test('the profile tells the model about the marker, once', () {
-    expect(defaultProfile, contains(proposeMarker));
-    expect(defaultProfile, isNot(contains('You cannot change the list.')));
   });
 }

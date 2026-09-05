@@ -256,7 +256,7 @@ class ChatNotifier extends Notifier<ChatState> {
     final AssembledContext assembled;
     try {
       assembled = assembleContext(
-        profile: defaultProfile,
+        profile: container.read(assistantProfileProvider),
         projection: projection,
         today: container.read(todayProvider),
         history: _history(),
@@ -574,7 +574,7 @@ class ChatNotifier extends Notifier<ChatState> {
     try {
       return _ProposalPrep(
         assembleProposal(
-          profile: defaultProfile,
+          profile: container.read(assistantProfileProvider),
           projection: projection,
           today: today,
           history: _history(),

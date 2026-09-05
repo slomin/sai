@@ -7,3 +7,4 @@ export 'context/assemble.dart';
 export 'context/catalog.dart';
 export 'context/hash.dart';
 export 'context/marker.dart';
+export 'context/profile.g.dart';

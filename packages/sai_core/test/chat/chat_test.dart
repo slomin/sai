@@ -84,7 +84,7 @@ void main() {
       expect(state.turns[0].text, 'what is due today?');
       expect(state.turns[0].event, isNotNull);
       final answer = state.turns[1];
-      expect(answer.text, contains('system:$defaultProfile'));
+      expect(answer.text, contains('system:$assistantProfile'));
       expect(answer.text, contains('Call mom @today'));
       expect(answer.text, contains('Ring dentist @tomorrow'));
       expect(answer.text, endsWith('user:what is due today?'));
@@ -153,7 +153,7 @@ void main() {
     final chat = container.read(chatProvider.notifier);
     final projection = container.read(tasksProvider).value!;
     final fits =
-        estimateTokens(defaultProfile) +
+        estimateTokens(assistantProfile) +
         estimateTokens('go') +
         estimateTokens(
           taskContextFor(

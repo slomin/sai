@@ -11,7 +11,7 @@ Steps are a JSON list of [kind, arg, seconds]:
 
 Runs `dart run apps/sai_tui/bin/sai_tui.dart` (SAI_TUI_ENTRY names another
 entry point, e.g. bin/sai_tui-dev.dart; SAI_TUI_BIN a compiled binary)
-with SAI_ARCHIVE_ROOT and SAI_SETTINGS_FILE under
+with SAI_ARCHIVE_ROOT, SAI_SETTINGS_FILE and SAI_DECISIONS_FILE under
 <scratch-dir>, a 100x30 terminal, and always
 kills the process at the end. Prints one line per step.
 
@@ -103,7 +103,8 @@ class Screen:
 
 def main(scratch, steps):
     env = dict(os.environ, SAI_ARCHIVE_ROOT=f'{scratch}/archive',
-               SAI_SETTINGS_FILE=f'{scratch}/settings.json', TERM='xterm-256color')
+               SAI_SETTINGS_FILE=f'{scratch}/settings.json',
+               SAI_DECISIONS_FILE=f'{scratch}/decisions.md', TERM='xterm-256color')
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     pid, fd = pty.fork()
     if pid == 0:

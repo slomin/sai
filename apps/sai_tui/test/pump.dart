@@ -26,6 +26,11 @@ ProviderContainer testContainer({
     overrides: [
       archiveRootProvider.overrideWithValue(root),
       settingsFileProvider.overrideWithValue(File('${tmp.path}/settings.json')),
+      // The decision document follows the settings file, not the archive
+      // root (#14): a test must keep it out of the real data directory too.
+      decisionLogFileProvider.overrideWithValue(
+        File('${tmp.path}/decisions.md'),
+      ),
       eventSourceProvider.overrideWithValue(EventSources.tui),
       // Never the login keychain from a test. A test whose built-ins
       // take a key hands in the store they were built over.

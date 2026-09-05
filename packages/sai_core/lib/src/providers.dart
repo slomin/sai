@@ -10,6 +10,8 @@ import 'identity.dart';
 import 'archive/archive.dart';
 import 'chat/chat.dart';
 import 'context/assemble.dart';
+import 'context/profile.g.dart';
+import 'decisions/render.dart';
 import 'archive/archive_root.dart';
 import 'archive/event.dart';
 import 'archive/verify_state.dart';
@@ -140,6 +142,13 @@ final clockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
 final todayProvider = NotifierProvider<TodayNotifier, CalendarDate>(
   TodayNotifier.new,
 );
+
+/// The assistant's standing instructions, the first message of every
+/// request (#14): [assistantProfile], compiled from
+/// `profile/system-prompt.md`. One provider so the three readers — the
+/// chat turn, the proposal turn and the warm — send byte-identical text
+/// and the warmed prefix stays one prefix, and so a test can revise it.
+final assistantProfileProvider = Provider<String>((ref) => assistantProfile);
 
 /// The task store and its projection, replayed from the archive. Read the
 /// state for the current [TaskProjection]; use [TasksNotifier.store] for
@@ -403,6 +412,18 @@ final workspaceStateProvider = Provider<WorkspaceState>((ref) {
     assistantVisible: ref.watch(chatVisibleProvider),
   );
 });
+
+/// The decision document (#14, ADR 0026): `SAI_DECISIONS_FILE`, else
+/// `decisions.md` in sai's data directory, beside the settings file — and,
+/// like it, independent of the archive root, so a test that overrides
+/// [archiveRootProvider] must override this too; the harnesses do.
+final decisionLogFileProvider = Provider<File>(
+  (ref) => resolveDecisionLogFile(
+    environment: ref.watch(environmentProvider),
+    operatingSystem: Platform.operatingSystem,
+    identity: ref.watch(identityProvider),
+  ),
+);
 
 /// The settings file (ADR 0006): `SAI_SETTINGS_FILE`, else
 /// `settings.json` in sai's data directory. Independent of the archive
@@ -1361,6 +1382,11 @@ final warmTickEveryProvider = Provider<Duration?>(
   (ref) => const Duration(seconds: 1),
 );
 
+/// What a warmed prefix is made of (#14, #105): the profile, the catalog
+/// bytes and the reasoning effort. Any of the three moving means the
+/// endpoint holds a different prefix and must be warmed again.
+typedef _WarmKey = (String, String, ReasoningEffort?);
+
 /// Pre-warms a local endpoint's prompt cache (#105): whenever the
 /// active provider is a reachable local endpoint and the catalog prefix
 /// has changed, [assembleWarmup]'s one-token request goes through the
@@ -1379,13 +1405,14 @@ class CacheWarmer extends Notifier<WarmState> {
   RecordedCall? _call;
   var _epoch = 0;
 
-  /// The prefix each provider id last warmed (catalog bytes and the
-  /// reasoning effort), so an unchanged prefix is never re-sent.
-  final _warmed = <String, (String, ReasoningEffort?)>{};
+  /// The prefix each provider id last warmed — the profile, the catalog
+  /// bytes and the reasoning effort — so an unchanged prefix is never
+  /// re-sent.
+  final _warmed = <String, _WarmKey>{};
 
   /// The prefix each id last failed on — retried only once something
   /// changes, so a probe-ok-but-chat-failing endpoint cannot loop.
-  final _failed = <String, (String, ReasoningEffort?)>{};
+  final _failed = <String, _WarmKey>{};
 
   /// Measured ingestion per id, in recorded request bytes per second,
   /// behind the indicator's percentage.
@@ -1398,7 +1425,7 @@ class CacheWarmer extends Notifier<WarmState> {
   /// make the TUI re-read the log every two seconds, and cancelling on
   /// every content-identical projection turned one warm into a stutter
   /// of one-second bursts (measured before this guard existed).
-  (String, ReasoningEffort?)? _inFlight;
+  _WarmKey? _inFlight;
 
   /// The last fraction shown, so the keep path can return it.
   double? _lastFraction;
@@ -1470,13 +1497,17 @@ class CacheWarmer extends Notifier<WarmState> {
     }
     if (connection.level != ConnectionLevel.ready) return stopped();
     final effort = ref.watch(requestedEffortProvider);
+    // The profile is the first message of the warmed prefix (#14): a
+    // revised profile is a different prefix, and the endpoint holds
+    // nothing for it.
+    final profile = ref.watch(assistantProfileProvider);
     final request = assembleWarmup(
-      profile: defaultProfile,
+      profile: profile,
       projection: projection,
       today: ref.watch(todayProvider),
       reasoningEffort: effort,
     );
-    final key = (request.taskContext!, effort);
+    final key = (profile, request.taskContext!, effort);
     // A finished local catalog turn ingested this very prefix; note it
     // rather than re-sending 35 KB of request line after every answer.
     ref.listen(chatProvider, (previous, next) {
@@ -1518,7 +1549,7 @@ class CacheWarmer extends Notifier<WarmState> {
     int epoch,
     LlmProvider provider,
     LlmRequest request,
-    (String, ReasoningEffort?) key,
+    _WarmKey key,
     LlmResolution resolution,
   ) async {
     if (epoch != _epoch || !ref.mounted) return;

@@ -11,29 +11,12 @@ import '../tasks/projection.dart';
 import '../tasks/sidebar.dart';
 import '../tasks/views.dart';
 import 'catalog.dart';
-import 'marker.dart';
 
 /// Which task context a turn carries (#105): compact — Today and
 /// Upcoming, what a cloud provider may see; catalog — the complete
 /// collection, local providers only. The caller maps the provider's
 /// privacy tag to a shape; assembly itself knows nothing of providers.
 enum TaskContextShape { compact, catalog }
-
-/// The assistant's standing instructions until the profile (#31) exists.
-/// Provider-independent: the same text goes to every model.
-const defaultProfile =
-    'You are sai, a personal assistant for one person\'s task list.\n'
-    'Answer questions about the list from the task context you are given: '
-    'what is due, what is coming up, what the day looks like. Quote task '
-    'titles as they appear. Be brief and concrete; when you are unsure, '
-    'say so rather than guess.\n'
-    'You never change the list yourself. When a change would clearly '
-    'help — moving a task to Someday or a date, setting a deadline, '
-    'splitting a task — finish your answer, then write $proposeMarker '
-    'alone on the last line, and sai will ask you for the details '
-    'separately; never mention handles or that line otherwise. If the '
-    'task context is missing, say that you cannot see the list right '
-    'now.';
 
 /// What one call may take, in estimated tokens.
 final class ContextBudget {

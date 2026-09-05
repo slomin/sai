@@ -29,3 +29,9 @@ apps/sai_app/macos/Runner/Configs/Local.xcconfig
 !/.claude/
 /.claude/*
 !/.claude/settings.json
+
+# The rendered decision document and its temp files (#14) live in the
+# data directory, never here — a smoke that points SAI_DECISIONS_FILE
+# into the checkout must not be able to commit a person's decisions.
+decisions.md
+decisions.md.*.tmp
