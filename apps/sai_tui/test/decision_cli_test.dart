@@ -26,9 +26,9 @@ void main() {
     addTearDown(() => scratch.deleteSync(recursive: true));
   });
 
-  Future<int> run(String line) => runCli(
+  Future<int> run(String line, {ProviderContainer? on}) => runCli(
     line.split(' '),
-    container: container,
+    container: on ?? container,
     out: out,
     err: err,
     readSecret: (_) => null,
@@ -38,8 +38,7 @@ void main() {
     },
   );
 
-  File document() =>
-      File('${container.read(archiveRootProvider).parent.path}/decisions.md');
+  File document() => container.read(decisionLogFileProvider);
 
   Map<String, Object?> onlyDecision() {
     final lines = archiveLines(container);
@@ -61,18 +60,19 @@ void main() {
     return file;
   }
 
+  // Fixture words, never a person's: which shade of blue a wall was.
   const fullAnswers = [
-    'Name and pronoun',
+    'Which shade of blue',
     '2026-08-23',
-    'Jan (guardian)',
-    'She is called sai.',
-    'Lowercase.',
+    'the guardian',
+    'The lighter one.',
+    'It was tried first.',
+    '.',
+    'the darker one',
+    'no blue at all',
     '',
-    'it',
-    'they',
-    '',
-    'A name is needed first.',
-    '',
+    'It reads better in daylight.',
+    '.',
   ];
 
   group('decision add', () {
@@ -84,45 +84,66 @@ void main() {
         'Title: ',
         'Decided (YYYY-MM-DD, empty for today): ',
         'By: ',
-        'Decision (end with an empty line):\n',
+        'Decision (end with a line holding only a dot):\n',
         '',
         '',
         'Alternatives, one per line (an empty line ends them):\n',
         '',
         '',
-        'Reasoning (end with an empty line):\n',
+        'Reasoning (end with a line holding only a dot):\n',
         '',
       ]);
       expect(onlyDecision(), {
-        'title': 'Name and pronoun',
+        'title': 'Which shade of blue',
         'decided': '2026-08-23',
-        'by': 'Jan (guardian)',
-        'decision': 'She is called sai.\nLowercase.',
-        'alternatives': ['it', 'they'],
-        'reasoning': 'A name is needed first.',
+        'by': 'the guardian',
+        'decision': 'The lighter one.\nIt was tried first.',
+        'alternatives': ['the darker one', 'no blue at all'],
+        'reasoning': 'It reads better in daylight.',
       });
       expect(
         out.toString(),
         matches(
           RegExp(
-            r'^recorded Name and pronoun as sha256-[a-f0-9]{64}\n'
-            r'rendered 1 decisions to .*/decisions\.md\n$',
+            r'^recorded Which shade of blue as sha256-[a-f0-9]{64}\n'
+            r'rendered 1 decision to .*/decisions\.md\n$',
           ),
         ),
       );
       expect(
         out.toString(),
-        endsWith('rendered 1 decisions to ${document().path}\n'),
+        endsWith('rendered 1 decision to ${document().path}\n'),
       );
       final text = document().readAsStringSync();
       expect(text, startsWith("# Decisions made on sai's behalf\n"));
-      expect(text, contains('## 1. Name and pronoun\n'));
-      expect(text, contains('- they\n'));
+      expect(text, contains('with `sai_tui decision add` and render again.'));
+      expect(text, contains('## 1. Which shade of blue\n'));
+      expect(text, contains('- no blue at all\n'));
       expect(text, isNot(contains('**Profile.**')));
     });
 
+    test('a blank line inside the prose is a paragraph', () async {
+      answers.addAll([
+        'T',
+        '',
+        'me',
+        'First.',
+        '',
+        'Second.',
+        '.',
+        '',
+        'Why.',
+        '.',
+      ]);
+      expect(await run('decision add'), cliOk);
+      final payload = onlyDecision();
+      expect(payload['decision'], 'First.\n\nSecond.');
+      expect(payload['reasoning'], 'Why.');
+      expect(document().readAsStringSync(), contains('First.\n\nSecond.\n'));
+    });
+
     test('an empty day is today; the input may end the last field', () async {
-      answers.addAll(['T', '', 'me', 'Because.', '', '', 'Why not.']);
+      answers.addAll(['T', '', 'me', 'Because.', '.', '', 'Why not.']);
       expect(await run('decision add'), cliOk);
       final payload = onlyDecision();
       expect(payload['decided'], container.read(todayProvider).toString());
@@ -136,7 +157,7 @@ void main() {
       answers.addAll(fullAnswers);
       expect(await run('decision add'), cliOk);
       out.clear();
-      answers.addAll(['Second', '', 'me', 'x', '', '', 'y', '']);
+      answers.addAll(['Second', '', 'me', 'x', '.', '', 'y', '.']);
       expect(await run('decision add'), cliOk);
       expect(out.toString(), startsWith('recorded Second as sha256-'));
       expect(
@@ -145,6 +166,25 @@ void main() {
       );
       expect(archiveLines(container), hasLength(2));
       expect(document().readAsStringSync(), contains('## 2. Second\n'));
+    });
+
+    test('--profile names the revision in force, or the one given', () async {
+      answers.addAll(fullAnswers);
+      expect(await run('decision add --profile'), cliOk);
+      expect(onlyDecision()['profile'], {'id': assistantProfileId});
+      expect(
+        document().readAsStringSync(),
+        contains('**Profile.** `$assistantProfileId`\n'),
+      );
+
+      answers.addAll(fullAnswers);
+      expect(await run('decision add --profile $profileId'), cliOk);
+      final lines = archiveLines(container);
+      expect(lines, hasLength(2));
+      final second = jsonDecode(lines.last) as Map<String, Object?>;
+      expect((second['payload'] as Map)['profile'], {
+        'id': profileId.toString(),
+      });
     });
 
     test('input ending before a field records nothing', () async {
@@ -157,7 +197,7 @@ void main() {
     });
 
     test('the words are judged before anything is written', () async {
-      answers.addAll(['   ', '2026-08-23', 'me', 'x', '', '', 'y', '']);
+      answers.addAll(['   ', '2026-08-23', 'me', 'x', '.', '', 'y', '.']);
       expect(await run('decision add'), cliFailed);
       expect(
         err.toString(),
@@ -167,7 +207,7 @@ void main() {
 
       err.clear();
       final tomorrow = container.read(todayProvider).addDays(1);
-      answers.addAll(['T', '$tomorrow', 'me', 'x', '', '', 'y', '']);
+      answers.addAll(['T', '$tomorrow', 'me', 'x', '.', '', 'y', '.']);
       expect(await run('decision add'), cliFailed);
       expect(
         err.toString(),
@@ -176,7 +216,7 @@ void main() {
       );
 
       err.clear();
-      answers.addAll(['T', 'yesterday', 'me', 'x', '', '', 'y', '']);
+      answers.addAll(['T', 'yesterday', 'me', 'x', '.', '', 'y', '.']);
       expect(await run('decision add'), cliFailed);
       expect(
         err.toString(),
@@ -196,7 +236,7 @@ void main() {
       expect(
         out.toString(),
         matches(
-          RegExp(r'^recorded Name and pronoun as sha256-[a-f0-9]{64}\n$'),
+          RegExp(r'^recorded Which shade of blue as sha256-[a-f0-9]{64}\n$'),
         ),
       );
       expect(
@@ -204,7 +244,7 @@ void main() {
         'sai_tui: recorded, but ${document().path} was not rendered: '
         'is a directory; render it with: sai_tui decision render\n',
       );
-      expect(onlyDecision()['title'], 'Name and pronoun');
+      expect(onlyDecision()['title'], 'Which shade of blue');
       // No temp file is left beside the document.
       expect(
         document().parent.listSync().map((e) => e.uri.pathSegments.last),
@@ -218,38 +258,80 @@ void main() {
       expect(await run('decision render'), cliOk);
       expect(archiveLines(container), hasLength(1));
       final text = document().readAsStringSync();
-      expect(text, contains('## 1. Name and pronoun\n'));
+      expect(text, contains('## 1. Which shade of blue\n'));
       expect(text, isNot(contains('## 2. ')));
+    });
+
+    test('the dev flavor writes its own document and names itself', () async {
+      final dev = testContainer(
+        finishedTasks: null,
+        overrides: [identityProvider.overrideWithValue(SaiIdentity.dev)],
+      );
+      answers.addAll(fullAnswers);
+      expect(await run('decision add', on: dev), cliOk);
+      final file = dev.read(decisionLogFileProvider);
+      expect(out.toString(), endsWith('rendered 1 decision to ${file.path}\n'));
+      final text = file.readAsStringSync();
+      expect(text, contains('Rendered by `sai_tui-dev decision render`'));
+      expect(
+        text,
+        contains('with `sai_tui-dev decision add` and render again.'),
+      );
+      expect(text, isNot(contains('`sai_tui decision')));
     });
   });
 
   group('decision add --from', () {
     test('reads one JSON object, the profile included', () async {
       final file = fromFile({
-        'title': 'Profile v0',
+        'title': 'A written profile',
         'decided': '2026-09-05',
-        'by': 'Jan (guardian)',
-        'decision': 'A written profile.',
+        'by': 'the guardian',
+        'decision': 'The standing instructions become a file.',
         'alternatives': ['a constant in the code'],
-        'reasoning': 'So she can be read.',
+        'reasoning': 'So they can be read.',
         'profile': {'id': profileId.toString()},
       });
       expect(await run('decision add --from ${file.path}'), cliOk);
       expect(prompts, isEmpty);
       final payload = onlyDecision();
-      expect(payload['title'], 'Profile v0');
+      expect(payload['title'], 'A written profile');
       expect(payload['profile'], {'id': profileId.toString()});
-      expect(out.toString(), startsWith('recorded Profile v0 as sha256-'));
+      expect(
+        out.toString(),
+        startsWith('recorded A written profile as sha256-'),
+      );
       expect(
         document().readAsStringSync(),
         contains('**Profile.** `$profileId`\n'),
       );
     });
 
-    test('a missing or malformed file is refused', () async {
+    test('--profile fills in what the file leaves out', () async {
+      final file = fromFile({
+        'title': 'A written profile',
+        'by': 'the guardian',
+        'decision': 'x',
+        'reasoning': 'y',
+      });
+      expect(await run('decision add --from ${file.path} --profile'), cliOk);
+      expect(onlyDecision()['profile'], {'id': assistantProfileId});
+    });
+
+    test('a missing, unreadable or malformed file is refused', () async {
       final missing = '${scratch.path}/nope.json';
       expect(await run('decision add --from $missing'), cliFailed);
       expect(err.toString(), 'sai_tui: no such file: $missing\n');
+
+      err.clear();
+      final bytes = File('${scratch.path}/bytes.json')
+        ..writeAsBytesSync([0xff, 0xfe, 0x00]);
+      expect(await run('decision add --from ${bytes.path}'), cliFailed);
+      expect(
+        err.toString(),
+        'sai_tui: ${bytes.path}: failed to decode data using encoding '
+        "'utf-8'\n",
+      );
 
       err.clear();
       final broken = fromFile('{not json', name: 'broken.json');
@@ -271,22 +353,21 @@ void main() {
       expect(archiveLines(container), isEmpty);
     });
 
-    test('anything else is a usage error', () async {
+    test('anything else is a usage error, a flag is never a file', () async {
       expect(await run('decision add --from'), cliUsageError);
-      expect(
-        err.toString(),
-        startsWith(
-          'sai_tui: decision add takes --from <file.json>, or nothing\n',
-        ),
-      );
+      expect(err.toString(), startsWith('sai_tui: --from needs a file\n'));
+      err.clear();
+      expect(await run('decision add --from --json'), cliUsageError);
+      expect(err.toString(), startsWith('sai_tui: --from needs a file\n'));
       err.clear();
       expect(await run('decision add extra'), cliUsageError);
+      expect(err.toString(), startsWith('sai_tui: unknown option: extra\n'));
       expect(prompts, isEmpty);
     });
   });
 
   group('decision render', () {
-    test('an empty log renders beside the archive', () async {
+    test('an empty log renders the document', () async {
       expect(await run('decision render'), cliOk);
       expect(out.toString(), 'rendered 0 decisions to ${document().path}\n');
       expect(
@@ -301,17 +382,21 @@ void main() {
       out.clear();
       expect(await run('decision render -'), cliOk);
       expect(out.toString(), startsWith("# Decisions made on sai's behalf\n"));
-      expect(out.toString(), contains('## 1. Name and pronoun\n'));
+      expect(out.toString(), contains('## 1. Which shade of blue\n'));
       expect(out.toString(), document().readAsStringSync());
 
       out.clear();
       final elsewhere = '${scratch.path}/log.md';
       expect(await run('decision render $elsewhere'), cliOk);
-      expect(out.toString(), 'rendered 1 decisions to $elsewhere\n');
+      expect(out.toString(), 'rendered 1 decision to $elsewhere\n');
       expect(File(elsewhere).readAsStringSync(), document().readAsStringSync());
     });
 
-    test('two arguments are a usage error', () async {
+    test('a flag is a usage error, not a file name', () async {
+      expect(await run('decision render --help'), cliUsageError);
+      expect(err.toString(), startsWith('sai_tui: unknown option: --help\n'));
+      expect(File('--help').existsSync(), isFalse);
+      err.clear();
       expect(await run('decision render a b'), cliUsageError);
       expect(
         err.toString(),
@@ -332,7 +417,9 @@ void main() {
     expect(await run('help'), cliOk);
     expect(
       out.toString(),
-      contains('sai_tui decision add [--from <file.json>]'),
+      contains(
+        'sai_tui decision add [--from <file.json>] [--profile [<sha256-…>]]',
+      ),
     );
     expect(out.toString(), contains('sai_tui decision render [<file>|-]'));
   });

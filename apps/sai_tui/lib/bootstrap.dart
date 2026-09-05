@@ -28,16 +28,23 @@ Future<void> runSaiTui(
     ],
   );
   if (args.isNotEmpty) {
-    exitCode = await runCli(
-      args,
-      container: container,
-      out: stdout,
-      err: stderr,
-      readSecret: _readSecret,
-      readLine: _readLine,
-    );
-    await _stdinLines?.cancel();
-    container.dispose();
+    try {
+      exitCode = await runCli(
+        args,
+        container: container,
+        out: stdout,
+        err: stderr,
+        readSecret: _readSecret,
+        readLine: _readLine,
+      );
+    } finally {
+      // On every path out, an exception's included: the archive's LOCK
+      // goes with the container, and a held stdin would keep the process
+      // alive.
+      await _stdinLines?.cancel();
+      _stdinLines = null;
+      container.dispose();
+    }
     return;
   }
   keepConnectionAlive(container);

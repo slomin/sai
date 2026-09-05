@@ -49,10 +49,10 @@ usage: sai_tui                       open the terminal client
                                     hash every line of the log, or of <root>
        sai_tui archive restore <replica>
                                     put a replica back into an empty log
-       sai_tui decision add [--from <file.json>]
+       sai_tui decision add [--from <file.json>] [--profile [<sha256-…>]]
                                     record a decision made on sai's behalf
        sai_tui decision render [<file>|-]
-                                    write the decision log beside the archive
+                                    write the decision log to its document
        sai_tui version               print the version
        sai_tui help
 
@@ -121,12 +121,17 @@ decision add records a decision the person who keeps this sai took on
 her behalf — her name, the model she runs on, what goes into her
 memory — as one decision.made line in the archive: a title, the day it
 was decided, who decided, what was decided, the alternatives and the
-reasoning, asked one at a time (a multi-line answer ends with an empty
-line) or read from a JSON file with those keys. It then renders
-decisions.md beside the archive root, in the data directory; decision
-render does only that — to that file, to <file>, or to stdout with -.
-The document is a view of the log and is never edited by hand
-(docs/archive/event-log-v0.md § Decisions).''';
+reasoning, asked one at a time (what was decided and the reasoning end
+with a line holding only a dot, so blank lines are paragraphs; the
+alternatives come one per line and an empty line ends them) or read
+from a JSON file with those keys. --profile names the profile the
+decision created or revised: alone, the one compiled into this build;
+with a sha256 id, that revision. It then renders the document —
+decisions.md in the data directory beside settings.json;
+SAI_DECISIONS_FILE moves it, and a scratch run sets it with the other
+two — and decision render does only that: to the document, to <file>,
+or to stdout with -. The document is a view of the log and is never
+edited by hand (docs/archive/event-log-v0.md § Decisions).''';
 
 /// [cliUsage] for the command a flavor is installed as (`sai_tui` for
 /// stable, `sai_tui-dev` for dev, ADR 0019). The text is written once for
@@ -1119,26 +1124,25 @@ Future<int> runCli(
           );
           return cliOk;
         }
-        // The provider's own handle: this is the live log, and holding a
-        // listener keeps the future from being disposed mid-await.
-        final sub = container.listen(archiveProvider, (_, _) {});
-        try {
-          final archive = await container.read(archiveProvider.future);
-          final report = await archive.replicateTo(Directory(destination));
-          out.writeln(
-            'backed up: ${report.count} lines to $destination '
-            '(${report.filesCopied} files, ${report.bytesCopied} bytes copied)',
-          );
-          return cliOk;
-        } on ReplicaUnavailableError catch (e) {
-          out.writeln('backup skipped: $destination — ${e.reason}');
-          return cliOk;
-        } on Object catch (e) {
-          err.writeln('$program: backup failed: ${describeArchiveError(e)}');
-          return cliFailed;
-        } finally {
-          sub.close();
-        }
+        final target = Directory(destination);
+        return await _withLiveArchive(container, (opening) async {
+          try {
+            final archive = await opening;
+            final report = await archive.replicateTo(target);
+            out.writeln(
+              'backed up: ${report.count} lines to $destination '
+              '(${report.filesCopied} files, ${report.bytesCopied} bytes '
+              'copied)',
+            );
+            return cliOk;
+          } on ReplicaUnavailableError catch (e) {
+            out.writeln('backup skipped: $destination — ${e.reason}');
+            return cliOk;
+          } on Object catch (e) {
+            err.writeln('$program: backup failed: ${describeArchiveError(e)}');
+            return cliFailed;
+          }
+        });
 
       case ['archive', 'restore', final replica]:
         final root = container.read(archiveRootProvider);
@@ -1165,13 +1169,22 @@ Future<int> runCli(
 
       case ['decision', 'add', ...final rest]:
         String? from;
-        switch (rest) {
-          case []:
-            break;
-          case ['--from', final path]:
-            from = path;
-          default:
-            throw _Usage('decision add takes --from <file.json>, or nothing');
+        String? profile;
+        for (var i = 0; i < rest.length; i++) {
+          switch (rest[i]) {
+            case '--from':
+              if (i + 1 >= rest.length || rest[i + 1].startsWith('-')) {
+                throw _Usage('--from needs a file');
+              }
+              from = rest[++i];
+            case '--profile':
+              // The revision in force in this build, unless one is named.
+              profile = i + 1 < rest.length && rest[i + 1].startsWith('sha256-')
+                  ? rest[++i]
+                  : assistantProfileId;
+            default:
+              throw _Usage('unknown option: ${rest[i]}');
+          }
         }
         final Map<String, Object?> input;
         if (from == null) {
@@ -1191,8 +1204,12 @@ Future<int> runCli(
           } on FormatException catch (e) {
             err.writeln('$program: $from: ${e.message}');
             return cliFailed;
+          } on FileSystemException catch (e) {
+            err.writeln('$program: $from: ${_describeFileError(e)}');
+            return cliFailed;
           }
         }
+        if (profile != null) input['profile'] = {'id': profile};
         final Decision decision;
         try {
           decision = Decision.fromInput(
@@ -1203,14 +1220,11 @@ Future<int> runCli(
           err.writeln('$program: ${e.message}');
           return cliFailed;
         }
-        // The provider's own handle: this is the live log, and holding a
-        // listener keeps the future from being disposed mid-await.
-        final sub = container.listen(archiveProvider, (_, _) {});
-        try {
+        return await _withLiveArchive(container, (opening) async {
           final Archive archive;
           final StoredEvent stored;
           try {
-            archive = await container.read(archiveProvider.future);
+            archive = await opening;
             stored = await archive.append(
               decisionMadeDraft(
                 decision,
@@ -1226,13 +1240,14 @@ Future<int> runCli(
           // read as "nothing was recorded", or the decision is entered a
           // second time and the archive keeps both.
           out.writeln('recorded ${decision.title} as ${stored.id}');
-          final file = decisionLogFile(container.read(archiveRootProvider));
+          final file = container.read(decisionLogFileProvider);
           try {
             final decisions = await readDecisions(archive);
-            writeDecisionLog(file, renderDecisionLog(decisions));
-            out.writeln(
-              'rendered ${decisions.length} decisions to ${file.path}',
+            writeDecisionLog(
+              file,
+              renderDecisionLog(decisions, program: program),
             );
+            out.writeln('rendered ${_decisions(decisions)} to ${file.path}');
           } on Object catch (e) {
             // Recorded, not rendered: the document is a view of the log
             // and decision render regenerates it, so the command has done
@@ -1244,41 +1259,39 @@ Future<int> runCli(
             );
           }
           return cliOk;
-        } finally {
-          sub.close();
-        }
+        });
 
       case ['decision', 'render', ...final rest]:
         final String? target;
         switch (rest) {
           case []:
             target = null;
+          case [final option] when option != '-' && option.startsWith('-'):
+            throw _Usage('unknown option: $option');
           case [final path]:
             target = path;
           default:
             throw _Usage('decision render takes one file at most, or -');
         }
-        final sub = container.listen(archiveProvider, (_, _) {});
-        try {
-          final archive = await container.read(archiveProvider.future);
-          final decisions = await readDecisions(archive);
-          final text = renderDecisionLog(decisions);
-          if (target == '-') {
-            out.write(text);
+        return await _withLiveArchive(container, (opening) async {
+          try {
+            final decisions = await readDecisions(await opening);
+            final text = renderDecisionLog(decisions, program: program);
+            if (target == '-') {
+              out.write(text);
+              return cliOk;
+            }
+            final file = target == null
+                ? container.read(decisionLogFileProvider)
+                : File(target);
+            writeDecisionLog(file, text);
+            out.writeln('rendered ${_decisions(decisions)} to ${file.path}');
             return cliOk;
+          } on Object catch (e) {
+            err.writeln('$program: failed: ${_describeFileError(e)}');
+            return cliFailed;
           }
-          final file = target == null
-              ? decisionLogFile(container.read(archiveRootProvider))
-              : File(target);
-          writeDecisionLog(file, text);
-          out.writeln('rendered ${decisions.length} decisions to ${file.path}');
-          return cliOk;
-        } on Object catch (e) {
-          err.writeln('$program: failed: ${_describeFileError(e)}');
-          return cliFailed;
-        } finally {
-          sub.close();
-        }
+        });
 
       case ['decision', ...]:
         throw _Usage('decision takes add or render: ${args.join(' ')}');
@@ -1370,10 +1383,9 @@ String _orderLine(ProviderContainer container) {
 
 /// The questions `decision add` asks, one field at a time through
 /// [readLine]: one line each for the title, the day and who decided;
-/// lines until an empty one for the decision, the alternatives and the
-/// reasoning (the input ending also ends a field that has something).
-/// The words themselves are judged by [Decision.fromInput] afterwards;
-/// this only collects them.
+/// lines until a lone dot for the decision and the reasoning, until an
+/// empty line for the alternatives. The words themselves are judged by
+/// [Decision.fromInput] afterwards; this only collects them.
 Future<Map<String, Object?>> _askDecision(
   FutureOr<String?> Function(String prompt) readLine,
 ) async {
@@ -1383,7 +1395,15 @@ Future<Map<String, Object?>> _askDecision(
     return answer;
   }
 
-  Future<List<String>> many(String prompt, String field) async {
+  // Lines until one that is only [end] — a lone dot for prose, so a
+  // blank line is a paragraph break; an empty line for the alternatives,
+  // which are one per line. The input ending also ends a field that has
+  // something.
+  Future<List<String>> many(
+    String prompt,
+    String field, {
+    String end = '',
+  }) async {
     final lines = <String>[];
     var next = prompt;
     while (true) {
@@ -1392,7 +1412,7 @@ Future<Map<String, Object?>> _askDecision(
         if (lines.isEmpty) throw _InputEnded(field);
         break;
       }
-      if (answer.trim().isEmpty) break;
+      if (answer.trim() == end) break;
       lines.add(answer);
       next = '';
     }
@@ -1404,19 +1424,41 @@ Future<Map<String, Object?>> _askDecision(
     'decided': await one('Decided (YYYY-MM-DD, empty for today): ', 'decided'),
     'by': await one('By: ', 'by'),
     'decision': (await many(
-      'Decision (end with an empty line):\n',
+      'Decision (end with a line holding only a dot):\n',
       'decision',
+      end: '.',
     )).join('\n'),
     'alternatives': await many(
       'Alternatives, one per line (an empty line ends them):\n',
       'alternatives',
     ),
     'reasoning': (await many(
-      'Reasoning (end with an empty line):\n',
+      'Reasoning (end with a line holding only a dot):\n',
       'reasoning',
+      end: '.',
     )).join('\n'),
   };
 }
+
+/// Runs [body] with the live log's provider handle held for the call —
+/// a listener keeps the future from being disposed mid-await — and lets
+/// [body] await the opening itself, so each verb says what a log that
+/// will not open means for it.
+Future<int> _withLiveArchive(
+  ProviderContainer container,
+  Future<int> Function(Future<Archive> opening) body,
+) async {
+  final sub = container.listen(archiveProvider, (_, _) {});
+  try {
+    return await body(container.read(archiveProvider.future));
+  } finally {
+    sub.close();
+  }
+}
+
+/// `1 decision`, `3 decisions` — the count as the document itself says it.
+String _decisions(List<StoredEvent> decisions) =>
+    decisions.length == 1 ? '1 decision' : '${decisions.length} decisions';
 
 /// A file system failure in the file system's own words, lowercase — `is
 /// a directory`, `permission denied` — and the archive's reason for
